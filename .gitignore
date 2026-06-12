@@ -1,0 +1,18 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Output images and data (too large for git, experiment-specific)
+*/sweep_output/
+output/
+
+# The C: folder created by the Windows path
+signal_generator_project/C:/
+
+# VS Code
+.vscode/
