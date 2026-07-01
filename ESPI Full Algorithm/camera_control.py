@@ -37,6 +37,7 @@ HOW THIS FILE IS ORGANIZED
   Section 5 — ESPI Image Processing : subtract, amplify, threshold frames, average image
   Section 6 — Node Detection        : find nodal regions in difference images
   Section 7 — File Logging          : save images and session data to disk
+  Section 8 — Quick View            : save an image as B&W and display it
 
 DEPENDENCIES (install with pip if missing):
     pip install pypylon numpy opencv-python
@@ -54,6 +55,8 @@ DEPENDENCIES (install with pip if missing):
 #   os       — file and folder path operations (built into Python, no install needed)
 #   datetime — reading the current date/time (built into Python, no install needed)
 # ==============================================================================
+from __future__ import annotations
+
 from pypylon import pylon
 from pypylon import genicam
 import numpy as np
@@ -824,16 +827,17 @@ def build_filename(frequency_hz: float, exposure_us: float, step: str,
     # %d = day. 
     date_str = datetime.now().strftime("%Y-%m-%d")
 
-    # f-string format specifiers control how numbers become text:
-    #
-    #   {frequency_hz:07.1f}  →  "07" = pad with zeros to 7 characters wide,
-    #                            ".1f" = show 1 digit after the decimal point.
-    #                            So 440.0 becomes "00440.0".
-    #
-    #   {exposure_us:06.0f}   →  6 characters wide, 0 decimals.
-    #                            So 10000 becomes "010000".
-    
-    return f"{step}_{date_str}_{frequency_hz:07.1f}Hz_{exposure_us:06.0f}us.{extension}"
+    # Round to 6 decimal places to remove floating-point noise, then count how
+    # many decimal places are actually needed for this frequency value.
+    # Example: 170.225 needs 3; 440.0 needs 1; 170.27499999999998 rounds to
+    # 170.275 and needs 3.  We use at least 1 so whole numbers still show "0.0".
+    _cleaned = f"{round(frequency_hz, 6):.6f}".rstrip("0")
+    _dec = len(_cleaned.split(".")[1]) if "." in _cleaned else 0
+    _dec = max(1, _dec)
+    _width = 5 + 1 + _dec  # 5 integer digits + dot + decimal digits, zero-padded
+    freq_str = f"{frequency_hz:0{_width}.{_dec}f}"
+
+    return f"{step}_{date_str}_{freq_str}Hz_{exposure_us:06.0f}us.{extension}"
 
 
 def save_image(image: np.ndarray, output_dir: str = None, frequency_hz: float = 0.0,
@@ -973,6 +977,115 @@ def log_frame_metadata(frame_index: int, exposure_us: float, mean_brightness: fl
 
 
 # ==============================================================================
+# SECTION 8 — QUICK VIEW
+# ==============================================================================
+# Use this when you want a one-liner that both saves and shows an image without
+# having to call save_image() and cv2.imshow() separately.
+#
+# The image is always written as greyscale (black and white) regardless of
+# whether the input is already mono or was captured in colour.
+# ==============================================================================
+
+def show_live_feed_from_camera(camera) -> None:
+    """
+    Show a live camera feed using a Basler camera handle you already have open.
+
+    Grabs frames continuously with the LatestImageOnly strategy and displays
+    them in a window.  Press 'e' to close the feed and return to the caller.
+
+    Args:
+        camera : the Basler camera object returned by connect_camera()
+
+    Example:
+        camera = connect_camera()
+        show_live_feed_from_camera(camera)   # aim and focus, press 'e'
+        set_exposure_manual(camera, 10000)   # now lock settings for measurement
+    """
+    print("Live feed open — aim the camera at the plate, then press 'e' to begin.")
+
+    try:
+        camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+        while camera.IsGrabbing():
+            grab_result = camera.RetrieveResult(
+                5000, pylon.TimeoutHandling_ThrowException
+            )
+
+            if grab_result.GrabSucceeded():
+                frame = grab_result.Array.copy()
+                grab_result.Release()
+                cv2.putText(
+                    frame,
+                    "Press 'e' to continue",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (255, 255, 255),
+                    2,
+                )
+                cv2.imshow("ESPI Preview", frame)
+            else:
+                grab_result.Release()
+
+            if cv2.waitKey(1) & 0xFF == ord("e"):
+                break
+
+    finally:
+        camera.StopGrabbing()
+        cv2.destroyWindow("ESPI Preview")
+
+
+def save_and_display_img(image: np.ndarray, filename: str = None) -> str | None:
+    """
+    Convert an image to black and white, save it to the current working
+    directory, and display it in a new window.
+
+    If the image has colour channels it is converted to greyscale first.
+    The window blocks until any key is pressed, then closes automatically.
+
+    Args:
+        image    : the image to process (numpy array, any shape / dtype)
+        filename : optional filename with or without the .png extension.
+                   If omitted, a timestamped name is generated automatically,
+                   e.g. "bw_image_2026-06-15_14-30-00.png".
+
+    Returns the full path of the saved file, or None if saving failed.
+
+    Example:
+        save_and_display_bw(frame)
+        save_and_display_bw(frame, "result.png")
+    """
+    # Convert to greyscale if the array has a colour (third) dimension.
+    if image.ndim == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+
+    if filename is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"ref_image_{timestamp}.png"
+    elif not filename.lower().endswith(".png"):
+        filename += f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.png"
+
+    filepath = os.path.join(os.getcwd(), filename)
+
+    # Save before opening the display window so a write failure is caught early.
+    success = cv2.imwrite(filepath, gray)
+    if not success:
+        print(f"[save_and_display_bw] Failed to save: {filepath}")
+        return None
+    print(f"[save_and_display_bw] Saved: {filepath}")
+
+    # Open a named window so only this window is destroyed on key press,
+    # leaving any other cv2 windows (e.g. show_diff) untouched.
+    cv2.imshow("Reference Image", gray)
+    cv2.waitKey(0)
+    cv2.destroyWindow("Reference Image")
+
+    return filepath
+
+
+# ==============================================================================
 # __all__ — WHAT GETS EXPORTED WITH "from camera_control import *"
 # ==============================================================================
 # This list controls which names are exported when someone writes:
@@ -1022,4 +1135,10 @@ __all__ = [
     "save_image",
     "save_session_log",
     "log_frame_metadata",
+
+    # Section 8: Live Feed
+    "show_live_feed_from_camera",
+
+    # Section 9: Quick View
+    "save_and_display_img",
 ]

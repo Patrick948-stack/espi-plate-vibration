@@ -1,15 +1,25 @@
 # Python
 venv/
+venv_physics/
 __pycache__/
 *.pyc
 *.pyo
 
+# pytest
+.pytest_cache/
+
 # macOS
 .DS_Store
 
-# Output images and data (too large for git, experiment-specific)
+# Output images and data — experiment results, not code
 */sweep_output/
 output/
+elp test/
+plate/
+plate1/
+plate2/
+plate3/
+plate4/
 
 # The C: folder created by the Windows path
 signal_generator_project/C:/

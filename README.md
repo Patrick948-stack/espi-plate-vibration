@@ -1,206 +1,198 @@
-# ESPI Plate Vibration Analysis — Whitman College
+# ESPI Plate Vibration — Whitman College
 
-**An open-source replacement for LabView to study how violin and viola plates vibrate.**
+**A Python project for studying how violin and viola plates vibrate, built at Professor Hoffman's lab at Whitman College.**
 
-This project is being developed in Professor Hoffman's lab at Whitman College.
-It is an ongoing, active research effort.
+This is an active research project. We are still adding things and fixing things as we go.
 
----
 
-## The Research Question
+## What is this project actually about?
 
-Acoustical systems offer a rich experimental window into wave phenomena that parallel more abstract problems in quantum mechanics. Vibrating plates exhibit the same standing wave mathematics as two-dimensional quantum wells, and periodic tube resonators display band gap behavior analogous to solid-state systems. This research program at Whitman College, led by Professor Kurt Hoffman, develops low-cost experimental platforms to study these systems, with a particular focus on using Electronic Speckle Pattern Interferometry (ESPI) to map the vibrational normal modes of stringed instrument plates. In the ESPI technique, laser light scattered from a vibrating surface produces interference patterns that reveal regions of maximum and minimum displacement at a given driving frequency. By sweeping across a range of frequencies and capturing these fringe images non-invasively, the lab characterizes how vibrational mode shapes evolve across the acoustic spectrum of viola and violin top plates, including how those modes shift as an instrument undergoes successive stages of fabrication.
+When you play a violin, the wooden top plate vibrates. Depending on the frequency of the note, different parts of the plate move — some parts swing back and forth a lot, others barely move at all. The spots that don't move are called nodes, and the full pattern is called a vibrational mode shape.
 
-A parallel objective of the program is to develop the measurement infrastructure itself as a pedagogically shareable resource for undergraduate physics education. This has required transitioning the data acquisition and control system from proprietary LabVIEW software to an open, Python-based pipeline that encompasses camera control, signal generator synchronization, image subtraction, and automated frequency sweeping, making the experimental workflow reproducible, extensible, and accessible to non-specialists. Complementary work in the lab has addressed acoustic impedance measurements in periodic tube resonators, harmonic analysis of compound strings, and finite element modeling in COMSOL, together forming a suite of advanced laboratory experiments grounded in the shared mathematics of wave mechanics. Machine learning classifiers have also been applied to automate the identification of nodal regions in ESPI images, pointing toward a future where large-scale modal datasets can be analyzed without manual inspection.
+What's interesting is that vibrating plates actually behave very similarly to quantum systems. The same wave equations that describe how an electron moves in a box also describe how a plate vibrates. So studying a violin plate is genuinely useful for understanding physics beyond just acoustics.
 
----
+The technique we use to see these patterns is called ESPI — Electronic Speckle Pattern Interferometry. Here is the short version of how it works:
 
-## How the Experiment Works
+1. You shine a laser on the plate. Laser light is special because all its waves are in sync — this creates a grainy texture on the surface called a speckle pattern.
+2. You drive a speaker near the plate at a chosen frequency. The plate vibrates.
+3. You take two photos. The parts that moved between the two photos look different. The parts that stayed still look the same.
+4. You subtract the two photos. Where the plate moved, you get bright patches. Where it didn't move, you get black. The result is a fringe pattern — a picture of the vibration.
 
-The setup has three main pieces of hardware working together:
+By stepping through many frequencies and saving a fringe image at each one, you build a full map of how the plate behaves across its acoustic range.
 
-1. **A signal generator** drives a speaker at a chosen frequency. The speaker
-   vibrates the plate without touching it.
+This project is replacing an older LabVIEW setup with open Python code that anyone can run, modify, and learn from.
 
-2. **A laser** shines on the plate's surface. Because of a property of coherent
-   light called interference, the reflected light forms a grainy texture (speckle)
-   that shifts slightly wherever the surface moves.
 
-3. **A Basler camera** captures that speckle pattern. The system takes two frames —
-   one before excitation and one during — and subtracts them. Where the surface
-   moved, the subtraction produces bright regions. Where it stayed still (nodes),
-   it produces dark regions. The result is a **fringe pattern**: a visual map of
-   how the plate is vibrating at that exact frequency.
+## How the hardware is connected
 
-This technique is called **ESPI** — Electronic Speckle Pattern Interferometry.
+Three devices work together:
 
-By sweeping through a range of frequencies and saving an ESPI image at each step,
-the lab builds up a full picture of the plate's vibrational behavior.
+1. **Signal generator** — sends an electrical signal to a speaker at the chosen frequency
+2. **Speaker** — vibrates the plate without touching it
+3. **Camera** — photographs the speckle pattern on the plate's surface
 
----
+The software connects to both the signal generator and the camera, steps through a range of frequencies, and saves an image at each step.
 
-## What This Software Does
 
-LabView is the commercial software currently used to coordinate the hardware and
-capture images. This project is building an open-source Python replacement that
-does the same job, and eventually more.
+## What the software does
 
-The Python system:
+The whole experiment is run by a single file: `run_experiment.py`
 
-- Connects to the signal generator and sets its frequency, waveform, and amplitude
-- Connects to the Basler camera and controls exposure time and gain
-- Runs a full frequency sweep automatically — stepping from a start frequency to
-  an end frequency, capturing and saving ESPI images at each step
-- Returns the images as data you can immediately analyze in Python
+It asks you four questions:
 
-Downstream analysis (not yet in this codebase) includes Python modeling,
-COMSOL finite element simulations, and machine learning classifiers that try to
-connect vibrational patterns to measurable instrument quality.
+* Which camera are you using?
+* Which subtraction method do you want?
+* What frequency range and camera settings do you want?
+* Does everything look right? Start?
 
----
+Then it opens a live camera preview so you can aim and focus. After that, you can adjust any settings as many times as you need — the program shows you the live feed again after each change so you can see the effect. When you are happy, you confirm and it runs the sweep.
 
-## Hardware Requirements
+After the sweep, the program opens an image viewer that shows your results one frequency at a time. Use the left and right arrow keys to move between images, and press Escape to close the viewer. A grid image with all frequencies is also saved to your output folder automatically.
 
-| Device                       | Details                                                           |
-| ---------------------------- | ----------------------------------------------------------------- |
-| Basler camera                | USB3 Vision compatible — must be on a USB 3.0 port (the blue one) |
-| Siglent SDG signal generator | SDG1000 series, connected via USB                                 |
-| Speaker / excitation source  | Driven by the signal generator output                             |
 
----
+## Two subtraction modes
 
-## Getting Started
+| Mode | What it does | When to use it |
+|---|---|---|
+| Pair subtraction | Two frames are grabbed at each frequency and subtracted from each other | High-frequency vibration |
+| Reference subtraction | One frame is captured with the plate at rest — every measurement frame is then compared to that baseline | Low-amplitude or slow vibration |
 
-### 1. Create a virtual environment
 
-```bash
-cd "Physics Research"
-python3 -m venv venv
-source venv/bin/activate
-```
+## Three supported cameras
 
-### 2. Install dependencies
+| Camera | What you need to install |
+|---|---|
+| Basler (USB3) | `pip install pypylon` |
+| Any USB webcam or ELP camera | `pip install opencv-python` (probably already installed) |
+| Allied Vision (Vimba X) | Download vmbpy from the Allied Vision GitHub |
+
+You only need one camera. The program detects which one you chose and handles everything else.
+
+
+## Running the experiment
+
+**Step 1 — set up the environment**
 
 ```bash
-pip install pypylon numpy opencv-python pyvisa pyvisa-py
+cd "ESPI Full Algorithm"
+python3 -m venv venv_physics
+source venv_physics/bin/activate
+pip install numpy opencv-python pyvisa pyvisa-py
 ```
 
-### 3. Run a frequency sweep
+If you have a Basler camera: `pip install pypylon`
 
-Edit `signal_generator_project/test_complete_pypeline.py` with your parameters,
-then run it:
+**Step 2 — run it**
 
 ```bash
-cd signal_generator_project
-python3 test_complete_pypeline.py
+python3 run_experiment.py
 ```
 
-A minimal example:
+That's the only file you ever need to run. It will guide you through the rest.
 
-```python
-from complete_pipeline import frequency_sweep
 
-results = frequency_sweep(
-    start_freq  = 100,       # Hz — first frequency to test
-    end_freq    = 1000,      # Hz — last frequency to test
-    step        = 100,       # Hz — increment between measurements
-    n_averages  = 5,         # frame pairs averaged per frequency (more = less noise)
-    exposure_us = 10000,     # camera exposure in microseconds (10 ms)
-    gain        = 0.0,       # camera gain in dB (start at 0, increase if too dark)
-    output_dir  = "/Users/yourname/Desktop/sweep_output",
-)
-```
-
-Images are saved to `output_dir` as PNG files, named automatically with the
-frequency, date, and exposure time so they sort correctly in any file browser.
-
----
-
-## Project Structure
+## What is inside the project folder
 
 ```
 Physics Research/
 │
-├── signal_generator_project/      ← THE MAIN CODE — start here
-│   ├── complete_pipeline.py       ← runs a full frequency sweep end-to-end
-│   ├── camera_control.py          ← all camera functions (connect, capture, process)
-│   ├── control_signal_generator.py← all signal generator functions
-│   ├── test_complete_pypeline.py  ← example script to run a sweep
-│   ├── README_camera_control.md   ← detailed guide for camera_control.py
-│   └── examples/
-│       └── basic_usage.py
+├── ESPI Full Algorithm/              ← all the working code lives here
+│   │
+│   ├── run_experiment.py             ← the one file you run to do an experiment
+│   │
+│   ├── complete_pipeline.py          ← sweep logic — Basler camera
+│   ├── complete_pipeline_inclusive.py       ← sweep logic — any USB camera
+│   ├── complete_pipeline_allied_vision.py   ← sweep logic — Allied Vision
+│   │
+│   ├── camera_control.py             ← camera functions — Basler
+│   ├── camera_control_inclusive.py   ← camera functions — any USB camera
+│   ├── camera_control_allied_vision.py  ← camera functions — Allied Vision
+│   │
+│   ├── signal_generator_control.py   ← talks to the Siglent signal generator
+│   │
+│   ├── capture_and_display.py        ← quick preview script — Basler
+│   ├── capture_and_display_cv2.py    ← quick preview script — USB cameras
+│   ├── capture_and_display_allied.py ← quick preview script — Allied Vision
+│   │
+│   ├── tests/                        ← automated tests (435 tests, no hardware needed)
+│   │   ├── conftest.py
+│   │   ├── test_camera_control.py
+│   │   ├── test_camera_control_inclusive.py
+│   │   ├── test_camera_control_allied_vision.py
+│   │   ├── test_complete_pipeline.py
+│   │   ├── test_complete_pipeline_inclusive.py
+│   │   ├── test_complete_pipeline_allied_vision.py
+│   │   ├── test_run_experiment.py
+│   │   └── test_signal_generator_control.py
+│   │
+│   ├── README.md                     ← detailed guide for this folder
+│   └── README_camera_control.md      ← guide for the camera library files
 │
-├── camera/                        ← earlier modular version of the camera code
-│   ├── connection.py              ← camera connect/disconnect
-│   ├── capture.py                 ← frame grabbing
-│   ├── settings.py                ← exposure, gain, pixel format
-│   ├── roi.py                     ← region of interest
-│   └── processing/
-│       ├── substraction.py        ← frame subtraction
-│       └── node_detection.py      ← node finding (in progress)
-│
-├── signal_generator/              ← earlier version of signal generator code
-│   ├── control_signal_generator.py
-│   ├── fcts_siglent.py
-│   └── find_instruments.py
-│
-├── image_processing/              ← LEARNING FILES — not part of the system
-│   └── learn_openCV/              ← experiments while learning OpenCV and pypylon
-│
-└── venv/                          ← Python virtual environment (not committed)
+├── image_processing/                 ← standalone image subtraction demo
+└── learn_testing/                    ← scratch space used while learning pytest
 ```
 
-**The folder to work in is `signal_generator_project/`.** Everything else is
-either an earlier iteration or files used while learning the libraries.
+Everything useful is inside `ESPI Full Algorithm/`. The other folders are earlier experiments or learning exercises.
 
----
 
-## Key Files Explained
+## Key files
 
-### `complete_pipeline.py`
+**`run_experiment.py`**
+The single entry point. Run this to do an experiment. It figures out which pipeline and camera library to use based on your answers. You never need to open the other files unless you want to understand or modify the internals.
 
-The top-level script. Call `frequency_sweep()` from here to run a full experiment.
-It handles connecting both devices, stepping through frequencies, capturing and
-averaging frames, and saving results — then disconnects everything cleanly when done.
+**`complete_pipeline_*.py`**
+There is one pipeline file per camera type. Each one handles connecting the camera and signal generator, showing the live preview, stepping through frequencies, grabbing and averaging frames, and saving images. They all return the same thing: a dictionary where the keys are frequencies in Hz and the values are images as NumPy arrays.
 
-### `camera_control.py`
+**`camera_control_*.py`**
+Lower-level camera libraries. The pipeline files use these, but you can also call them directly in your own scripts if you want to do something custom. Full guide: [README_camera_control.md](ESPI%20Full%20Algorithm/README_camera_control.md)
 
-A self-contained library for the Basler camera. Has its own detailed README:
-[README_camera_control.md](signal_generator_project/README_camera_control.md).
+**`signal_generator_control.py`**
+Talks to the Siglent SDG signal generator over USB. Handles connecting, setting frequency and waveform, turning output on and off, and closing the connection cleanly.
 
-### `control_signal_generator.py`
+**`tests/`**
+435 automated tests covering every function in every file. None of them require a real camera or signal generator — all hardware is replaced with fakes during testing. To run them:
 
-A self-contained library for the Siglent signal generator. Handles connecting via
-USB, setting frequency/amplitude/waveform, turning output on and off, and
-disconnecting safely.
+```bash
+cd "ESPI Full Algorithm"
+source venv_physics/bin/activate
+python -m pytest tests/ -v
+```
 
----
 
-## Project Status
+## Two subtraction methods in detail
 
-This is an active, ongoing project. The core measurement loop — connect, sweep,
-save — is working. The following areas are still in development:
+**Pair subtraction**
 
-- **Node detection** (`detect_nodes`, `has_nodes` in `camera_control.py`) —
-  the function stubs are written but the logic is not yet implemented
-- **Downstream analysis** — ML classifiers and COMSOL integration are planned
-  but not yet part of this codebase
+At each frequency, two frames are grabbed back to back while the plate is already vibrating, then subtracted from each other. Their difference shows the speckle shift between two moments in time. This process repeats N times and all the differences are averaged together to reduce noise.
 
----
+**Reference subtraction**
+
+Before the signal generator is turned on, the camera captures one photo of the resting plate. That photo is saved as the reference. Then at each frequency, every measurement frame is subtracted from that same reference photo. The results are averaged. This method gives a consistent baseline across all frequencies because the reference never changes.
+
+
+## What is still being worked on
+
+The core pipeline works end to end for all three camera types. Things still in progress:
+
+* **Node detection** — functions exist (`detect_nodes`, `has_nodes`) but the logic inside is not written yet
+* **Analysis and classification** — using machine learning to automatically identify mode shapes is planned but not in the code yet
+
 
 ## Dependencies
 
 ```
-pypylon        pip install pypylon
-numpy          pip install numpy
-opencv-python  pip install opencv-python
-pyvisa         pip install pyvisa
-pyvisa-py      pip install pyvisa-py
+numpy            pip install numpy
+opencv-python    pip install opencv-python
+pyvisa           pip install pyvisa
+pyvisa-py        pip install pyvisa-py
+
+pypylon          pip install pypylon           (Basler cameras only)
+vmbpy            install from wheel            (Allied Vision cameras only)
+                 https://github.com/alliedvision/VmbPy
 ```
 
-`os` and `datetime` are part of Python's standard library — no install needed.
+Standard library modules (`os`, `json`, `math`, `time`, `datetime`) come with Python — nothing to install.
 
----
 
-_Whitman College — Professor Hoffman's Lab_
-_Developed by Patrick Mulikuza_
+Patrick Mulikuza
+Professor Hoffman's Lab, Whitman College

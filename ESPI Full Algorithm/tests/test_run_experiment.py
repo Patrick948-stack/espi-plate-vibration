@@ -1,0 +1,381 @@
+"""
+test_run_experiment.py
+Tests for run_experiment.py — the interactive entry point for all ESPI sweeps.
+
+Sections covered
+----------------
+  ask()
+    Prompt helper that wraps input().  Tests cover: default values, type
+    casting, allowlist validation, and rejection of bad input.
+
+  run_pipeline()
+    Exposure unit conversion.  The user always enters seconds; the function
+    must convert to microseconds (camera 1/3) or log2 scale (camera 2) before
+    forwarding the value to the pipeline.  All pipeline imports are replaced
+    with in-memory mock modules so no hardware is needed.
+
+  confirm_settings()
+    Smoke-test that the confirmation screen runs without error and emits the
+    expected exposure unit label.
+"""
+
+import io
+import math
+import sys
+import os
+import types
+import pytest
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import run_experiment
+
+_SENTINEL = object()  # distinguishes "key was absent" from "key was None"
+
+
+# ===========================================================================
+# HELPERS
+# ===========================================================================
+
+def _default_params(**overrides):
+    """Return a minimal valid params dict, optionally overriding fields."""
+    base = dict(
+        start_freq = 100.0,
+        end_freq   = 200.0,
+        step       = 100.0,
+        n_averages = 5,
+        exposure   = 0.01,     # 10 ms in seconds
+        gain       = 0.0,
+        output_dir = "out",
+    )
+    base.update(overrides)
+    return base
+
+
+def _mock_pipeline_module(name):
+    """
+    Inject a mock module into sys.modules so that the local imports inside
+    run_pipeline() resolve to our mocks instead of the real hardware modules.
+    Returns the mock module so tests can inspect what was called.
+    """
+    mod = types.ModuleType(name)
+    mod.frequency_sweep                        = MagicMock(return_value={100.0: None})
+    mod.reference_frequency_sweep              = MagicMock(return_value={100.0: None})
+    mod.frequency_sweep_inclusive              = MagicMock(return_value={100.0: None})
+    mod.reference_frequency_sweep_inclusive    = MagicMock(return_value={100.0: None})
+    mod.frequency_sweep_allied_vision          = MagicMock(return_value={100.0: None})
+    mod.reference_frequency_sweep_allied_vision = MagicMock(return_value={100.0: None})
+    sys.modules[name] = mod
+    return mod
+
+
+# ===========================================================================
+# ask() — interactive input helper
+# ===========================================================================
+
+class TestAsk:
+    def test_returns_default_on_empty_input(self):
+        with patch("builtins.input", return_value=""):
+            result = run_experiment.ask("prompt", default="hello")
+        assert result == "hello"
+
+    def test_default_is_cast_to_requested_type(self):
+        with patch("builtins.input", return_value=""):
+            result = run_experiment.ask("prompt", default="3.14", cast=float)
+        assert result == pytest.approx(3.14)
+        assert isinstance(result, float)
+
+    def test_typed_value_is_cast(self):
+        with patch("builtins.input", return_value="42"):
+            result = run_experiment.ask("prompt", cast=int)
+        assert result == 42
+
+    def test_typed_float_is_cast(self):
+        with patch("builtins.input", return_value="1000.5"):
+            result = run_experiment.ask("prompt", cast=float)
+        assert result == pytest.approx(1000.5)
+
+    def test_accepts_value_in_valid_list(self):
+        with patch("builtins.input", return_value="2"):
+            result = run_experiment.ask("prompt", valid=["1", "2", "3"])
+        assert result == "2"
+
+    def test_rejects_then_accepts_valid_value(self):
+        # First call returns an invalid value, second returns a valid one.
+        with patch("builtins.input", side_effect=["9", "1"]):
+            result = run_experiment.ask("prompt", valid=["1", "2"])
+        assert result == "1"
+
+    def test_rejects_bad_cast_then_accepts_good_value(self):
+        with patch("builtins.input", side_effect=["not_a_number", "5"]):
+            result = run_experiment.ask("prompt", cast=int)
+        assert result == 5
+
+    def test_empty_with_no_default_re_prompts(self):
+        # Empty input with no default should loop; provide a valid answer second.
+        with patch("builtins.input", side_effect=["", "yes"]):
+            result = run_experiment.ask("prompt")
+        assert result == "yes"
+
+    def test_returns_string_by_default(self):
+        with patch("builtins.input", return_value="abc"):
+            result = run_experiment.ask("prompt")
+        assert isinstance(result, str)
+
+
+# ===========================================================================
+# run_pipeline() — exposure unit conversion
+# ===========================================================================
+
+class TestRunPipelineExposureConversion:
+
+    def setup_method(self):
+        """Inject mock pipeline modules before each test."""
+        self._basler_mod = _mock_pipeline_module("complete_pipeline")
+        self._cv_mod     = _mock_pipeline_module("complete_pipeline_inclusive")
+        self._av_mod     = _mock_pipeline_module("complete_pipeline_allied_vision")
+
+    def teardown_method(self):
+        """Remove injected modules after each test."""
+        for name in ("complete_pipeline",
+                     "complete_pipeline_inclusive",
+                     "complete_pipeline_allied_vision"):
+            sys.modules.pop(name, None)
+
+    # --- Camera 1 (Basler) ---
+
+    def test_basler_converts_seconds_to_microseconds(self):
+        run_experiment.run_pipeline("1", "1", _default_params(exposure=0.01))
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["exposure_us"] == pytest.approx(10_000.0)
+
+    def test_basler_reference_mode_converts_seconds_to_microseconds(self):
+        run_experiment.run_pipeline("1", "2", _default_params(exposure=0.005))
+        kwargs = self._basler_mod.reference_frequency_sweep.call_args[1]
+        assert kwargs["exposure_us"] == pytest.approx(5_000.0)
+
+    def test_basler_longer_exposure_converts_correctly(self):
+        run_experiment.run_pipeline("1", "1", _default_params(exposure=0.1))
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["exposure_us"] == pytest.approx(100_000.0)
+
+    # --- Camera 2 (OpenCV / USB) ---
+
+    def test_opencv_converts_seconds_to_log2_scale(self):
+        # 0.015625 s = 2^(-6) → log2 value of -6
+        run_experiment.run_pipeline("2", "1", _default_params(exposure=0.015625))
+        kwargs = self._cv_mod.frequency_sweep_inclusive.call_args[1]
+        assert kwargs["exposure"] == pytest.approx(-6.0, abs=0.01)
+
+    def test_opencv_10ms_gives_correct_log2(self):
+        # 0.01 s → log2(0.01) ≈ -6.64
+        run_experiment.run_pipeline("2", "1", _default_params(exposure=0.01))
+        kwargs = self._cv_mod.frequency_sweep_inclusive.call_args[1]
+        assert kwargs["exposure"] == pytest.approx(math.log2(0.01), abs=1e-9)
+
+    def test_opencv_reference_mode_converts_correctly(self):
+        run_experiment.run_pipeline("2", "2", _default_params(exposure=0.015625))
+        kwargs = self._cv_mod.reference_frequency_sweep_inclusive.call_args[1]
+        assert kwargs["exposure"] == pytest.approx(-6.0, abs=0.01)
+
+    # --- Camera 3 (Allied Vision) ---
+
+    def test_allied_converts_seconds_to_microseconds(self):
+        run_experiment.run_pipeline("3", "1", _default_params(exposure=0.01))
+        kwargs = self._av_mod.frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["exposure_us"] == pytest.approx(10_000.0)
+
+    def test_allied_reference_mode_converts_correctly(self):
+        run_experiment.run_pipeline("3", "2", _default_params(exposure=0.02))
+        kwargs = self._av_mod.reference_frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["exposure_us"] == pytest.approx(20_000.0)
+
+    # --- Symmetry check: cameras 1 and 3 use the same formula ---
+
+    def test_basler_and_allied_produce_identical_exposure_us(self):
+        params = _default_params(exposure=0.03)
+        run_experiment.run_pipeline("1", "1", params)
+        run_experiment.run_pipeline("3", "1", params)
+        basler_us = self._basler_mod.frequency_sweep.call_args[1]["exposure_us"]
+        allied_us = self._av_mod.frequency_sweep_allied_vision.call_args[1]["exposure_us"]
+        assert basler_us == pytest.approx(allied_us)
+
+
+# ===========================================================================
+# run_pipeline() — ImportError handling
+# ===========================================================================
+
+class TestRunPipelineImportError:
+    """
+    Verify run_pipeline() returns None when a required pipeline module is
+    unavailable (e.g. pypylon or vmbpy not installed).
+
+    Setting sys.modules[name] = None makes Python raise ImportError on any
+    attempt to import that name, simulating a missing optional dependency.
+    """
+
+    @staticmethod
+    def _block_import(name):
+        """Return a context manager that blocks `name` from being imported."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def _cm():
+            prev = sys.modules.get(name, _SENTINEL)
+            sys.modules[name] = None
+            try:
+                yield
+            finally:
+                if prev is _SENTINEL:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = prev
+
+        return _cm()
+
+    def test_returns_none_when_basler_module_missing(self):
+        with self._block_import("complete_pipeline"):
+            result = run_experiment.run_pipeline("1", "1", _default_params())
+        assert result is None
+
+    def test_returns_none_when_cv_module_missing(self):
+        with self._block_import("complete_pipeline_inclusive"):
+            result = run_experiment.run_pipeline("2", "1", _default_params())
+        assert result is None
+
+    def test_returns_none_when_allied_module_missing(self):
+        with self._block_import("complete_pipeline_allied_vision"):
+            result = run_experiment.run_pipeline("3", "1", _default_params())
+        assert result is None
+
+
+# ===========================================================================
+# confirm_settings() — display smoke test
+# ===========================================================================
+
+class TestConfirmSettings:
+    def test_confirm_shows_exposure_in_seconds(self, capsys):
+        with patch("builtins.input", return_value="n"):
+            run_experiment.confirm_settings(
+                "2", "1",
+                _default_params(exposure=0.01),
+            )
+        output = capsys.readouterr().out
+        assert "0.01" in output
+        assert "s" in output
+
+    def test_confirm_shows_frequency_range_correctly(self, capsys):
+        with patch("builtins.input", return_value="n"):
+            run_experiment.confirm_settings(
+                "1", "1",
+                _default_params(start_freq=100, end_freq=100.3, step=0.25),
+            )
+        output = capsys.readouterr().out
+        assert "100.3" in output
+        assert "0.25" in output
+
+    def test_confirm_returns_false_on_n(self):
+        with patch("builtins.input", return_value="n"):
+            result = run_experiment.confirm_settings("2", "1", _default_params())
+        assert result is False
+
+    def test_confirm_returns_true_on_y(self):
+        with patch("builtins.input", return_value="y"):
+            result = run_experiment.confirm_settings("2", "1", _default_params())
+        assert result is True
+
+
+# ===========================================================================
+# _show_preview_feed() — live camera preview before sweep
+# ===========================================================================
+
+class TestShowPreviewFeed:
+
+    def test_warns_and_skips_when_library_not_importable(self, capsys):
+        with patch("importlib.import_module", side_effect=ImportError("no pypylon")):
+            run_experiment._show_preview_feed("1")
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+
+    def test_warns_and_skips_when_camera_is_none(self, capsys):
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = None
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("2")
+        mock_lib.show_live_feed_from_camera.assert_not_called()
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+
+    def test_calls_feed_and_disconnects_on_success(self):
+        mock_cam = MagicMock()
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = mock_cam
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("3")
+        mock_lib.show_live_feed_from_camera.assert_called_once_with(mock_cam)
+        mock_lib.disconnect_camera.assert_called_once_with(mock_cam)
+
+    def test_disconnect_called_even_when_feed_crashes(self):
+        mock_cam = MagicMock()
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.show_live_feed_from_camera.side_effect = RuntimeError("crash")
+        with patch("importlib.import_module", return_value=mock_lib):
+            with pytest.raises(RuntimeError):
+                run_experiment._show_preview_feed("2")
+        mock_lib.disconnect_camera.assert_called_once_with(mock_cam)
+
+
+# ===========================================================================
+# reconfigure_if_needed() — pre-sweep settings adjustment loop
+# ===========================================================================
+
+class TestReconfigureIfNeeded:
+
+    PARAMS = dict(
+        start_freq=100.0, end_freq=200.0, step=100.0, n_averages=5,
+        exposure=0.01, gain=0.0,
+    )
+
+    def test_returns_params_unchanged_when_no(self):
+        with patch("builtins.input", return_value="no"), \
+             patch.object(run_experiment, "_show_preview_feed"):
+            result = run_experiment.reconfigure_if_needed("2", dict(self.PARAMS))
+        assert result == self.PARAMS
+
+    def test_camera_choice_updates_exposure_and_gain(self):
+        with patch("builtins.input", side_effect=["camera", "0.02", "1.0", "n"]), \
+             patch.object(run_experiment, "_show_preview_feed"):
+            result = run_experiment.reconfigure_if_needed("2", dict(self.PARAMS))
+        assert result["exposure"] == pytest.approx(0.02)
+        assert result["gain"]     == pytest.approx(1.0)
+
+    def test_signal_choice_updates_frequency_params(self):
+        with patch("builtins.input",
+                   side_effect=["signal", "200.0", "400.0", "50.0", "3", "n"]), \
+             patch.object(run_experiment, "_show_preview_feed"):
+            result = run_experiment.reconfigure_if_needed("1", dict(self.PARAMS))
+        assert result["start_freq"] == pytest.approx(200.0)
+        assert result["end_freq"]   == pytest.approx(400.0)
+        assert result["step"]       == pytest.approx(50.0)
+        assert result["n_averages"] == 3
+
+    def test_preview_feed_shown_after_adjustment(self):
+        with patch("builtins.input", side_effect=["camera", "0.02", "1.0", "n"]), \
+             patch.object(run_experiment, "_show_preview_feed") as mock_feed:
+            run_experiment.reconfigure_if_needed("2", dict(self.PARAMS))
+        mock_feed.assert_called_once_with("2")
+
+    def test_preview_not_shown_when_no_changes(self):
+        with patch("builtins.input", return_value="no"), \
+             patch.object(run_experiment, "_show_preview_feed") as mock_feed:
+            run_experiment.reconfigure_if_needed("3", dict(self.PARAMS))
+        mock_feed.assert_not_called()
+
+    def test_loops_when_user_wants_more_changes(self):
+        with patch("builtins.input", side_effect=["camera", "0.05", "2.0", "y", "no"]), \
+             patch.object(run_experiment, "_show_preview_feed"):
+            result = run_experiment.reconfigure_if_needed("1", dict(self.PARAMS))
+        assert result["exposure"] == pytest.approx(0.05)
+        assert result["gain"]     == pytest.approx(2.0)
