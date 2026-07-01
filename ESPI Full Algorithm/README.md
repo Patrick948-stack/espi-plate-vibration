@@ -5,25 +5,223 @@ This is the folder where all the actual working code lives. Everything in here i
 If you want to run an experiment, there is only one file you need to know about: `run_experiment.py`.
 
 
-## Running an experiment
+## Getting started — Mac and Windows setup
 
-```bash
+Follow these stages in order. Each one has a quick check so you know it worked before moving to the next.
+
+
+### Stage 1 — Make sure Python is installed
+
+**Mac**
+
+Open Terminal and run:
+
+```
+python3 --version
+```
+
+You should see something like `Python 3.10.x` or newer. If you get "command not found," download Python from python.org.
+
+**Windows**
+
+Open Command Prompt (search for `cmd` in the Start menu) and run:
+
+```
+python --version
+```
+
+You should see `Python 3.10.x` or newer. If you get an error, download Python from python.org. During the install, check the box that says **"Add Python to PATH"** — if you miss that, nothing will work from the terminal.
+
+
+### Stage 2 — Get the code
+
+If you are cloning for the first time:
+
+```
+git clone https://github.com/Patrick948-stack/espi-plate-vibration.git
+```
+
+If you already cloned it before and want the latest changes:
+
+```
+git pull
+```
+
+Check: you should see the `ESPI Full Algorithm` folder on your computer.
+
+
+### Stage 3 — Open a terminal inside the right folder
+
+You need to be inside the `ESPI Full Algorithm` folder for all the commands below to work.
+
+**Mac**
+
+```
+cd "ESPI Full Algorithm"
+```
+
+**Windows — option A (from Command Prompt)**
+
+```
+cd "ESPI Full Algorithm"
+```
+
+**Windows — option B (faster)**
+
+In File Explorer, open the `ESPI Full Algorithm` folder. Click the address bar at the top, type `cmd`, and press Enter. A terminal opens already inside that folder.
+
+Check: run `ls` (Mac) or `dir` (Windows) and you should see files like `run_experiment.py` and `requirements.txt`.
+
+
+### Stage 4 — Create a virtual environment
+
+A virtual environment is a private Python space just for this project. It keeps the packages you install here separate from everything else on your computer.
+
+**Mac**
+
+```
+python3 -m venv venv_physics
+```
+
+**Windows**
+
+```
+python -m venv venv_physics
+```
+
+Check: a folder called `venv_physics` should now appear inside `ESPI Full Algorithm`.
+
+
+### Stage 5 — Activate the virtual environment
+
+This is the step where Mac and Windows look the most different.
+
+**Mac**
+
+```
+source venv_physics/bin/activate
+```
+
+**Windows**
+
+```
+venv_physics\Scripts\activate
+```
+
+Check: the beginning of your terminal line should now show `(venv_physics)`. If you don't see that, the environment is not active and the next steps will not work.
+
+You need to activate the environment every time you open a new terminal window.
+
+
+### Stage 6 — Install the Python packages
+
+With the environment active, run:
+
+```
+pip install -r requirements.txt
+```
+
+This reads the `requirements.txt` file and installs everything the project needs: numpy, opencv, pyvisa, matplotlib, and pytest.
+
+Check: run this to confirm all packages loaded correctly:
+
+```
+python -c "import numpy; import cv2; import pyvisa; import matplotlib; print('All packages installed correctly')"
+```
+
+If you see `All packages installed correctly`, you are good. If you see an error naming a specific package, that package did not install — re-run `pip install -r requirements.txt` and look for any error messages.
+
+
+### Stage 7 — Run the automated tests
+
+This is the most important check. There are 435 tests that verify every function in the project works correctly. They run without any hardware — no camera or signal generator needed.
+
+```
+python -m pytest tests/ -v
+```
+
+Check: the last line should say `435 passed`. If any tests fail, the error message will tell you exactly which function broke and why.
+
+If all 435 pass, the code is working correctly on your machine and you are ready to run real experiments.
+
+
+### Stage 8 — Camera-specific setup (only if you have one of these cameras)
+
+The USB webcam or ELP camera works immediately with no extra steps — it uses opencv which is already installed.
+
+**Basler camera**
+
+First, download and install the **Pylon Camera Software Suite** from the Basler website (basler.com). This gives your computer the drivers it needs to talk to the camera. Then, with `venv_physics` active, run:
+
+```
+pip install pypylon
+```
+
+Check:
+
+```
+python -c "from pypylon import pylon; print('Basler ready')"
+```
+
+If you see `Basler ready`, the Basler setup is complete.
+
+**Allied Vision camera**
+
+First, download and install **Vimba X** from the Allied Vision website. After installing, look inside the Vimba X installation folder for a file ending in `.whl` — that is the Python package. Then, with `venv_physics` active, run:
+
+**Mac**
+
+```
+pip install /path/to/vmbpy_file.whl
+```
+
+**Windows**
+
+```
+pip install C:\path\to\vmbpy_file.whl
+```
+
+Check:
+
+```
+python -c "import vmbpy; print('Allied Vision ready')"
+```
+
+If you see `Allied Vision ready`, the Allied Vision setup is complete.
+
+
+### Stage 9 — Run the experiment
+
+With `venv_physics` active and all checks passing:
+
+```
+python run_experiment.py
+```
+
+The program will ask you which camera, which mode, and what settings you want. It then opens a live feed so you can aim the camera, runs the sweep, and shows you the results one image at a time.
+
+
+## Running an experiment (quick reference for returning users)
+
+Once set up, the only commands you need each time are:
+
+**Mac**
+
+```
 source venv_physics/bin/activate
 python run_experiment.py
 ```
 
-The script walks you through four steps:
+**Windows**
 
-1. Pick your camera (Basler / USB webcam or ELP / Allied Vision)
-2. Pick a subtraction mode (pair or reference)
-3. Enter sweep parameters — start frequency, end frequency, step size, exposure, gain, output folder
-4. Confirm your settings
+```
+venv_physics\Scripts\activate
+python run_experiment.py
+```
 
-After you confirm, a live camera preview opens so you can point and focus the camera at the plate. Press **`e`** to close the preview.
+The program walks you through the rest.
 
-Then you get asked if you want to adjust any settings before the sweep starts. You can change the camera settings, the signal generator settings, or both. Each time you make a change, the live feed opens again so you can see the effect. You can adjust as many times as you need. When everything looks right, confirm and the sweep runs.
-
-After the sweep, a viewer opens that shows your results one image at a time. Use the left and right arrow keys to move between frequencies. Press Escape to close. A grid image containing all frequencies is saved to your output folder at the same time.
+After the sweep, a viewer opens showing your results one frequency at a time. Use the left and right arrow keys to move between images. Press Escape to close. A grid image with all frequencies is saved to your output folder automatically.
 
 **Exposure is always entered in seconds.** For example, `0.01` means 10 milliseconds. The program converts to the right internal unit per camera automatically.
 
@@ -33,6 +231,7 @@ After the sweep, a viewer opens that shows your results one image at a time. Use
 | File | What it is | What it does |
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
+| `requirements.txt` | Package list | Install everything with `pip install -r requirements.txt` |
 | `complete_pipeline.py` | Script or importable | Full frequency sweep — Basler camera |
 | `complete_pipeline_inclusive.py` | Script or importable | Full frequency sweep — any USB/webcam camera |
 | `complete_pipeline_allied_vision.py` | Script or importable | Full frequency sweep — Allied Vision camera |
@@ -157,50 +356,6 @@ If you ask for a frequency outside the instrument's allowed range for a given wa
 
 Full documentation for the camera libraries is in [README_camera_control.md](README_camera_control.md).
 
-**Short version — Basler**
-
-```python
-from camera_control import *
-
-camera = connect_camera()
-show_live_feed_from_camera(camera)    # aim, then press 'e'
-set_exposure_manual(camera, 10000)    # 10 ms in microseconds
-set_gain_manual(camera, 0.0)
-frames = grab_n_frames(camera, 2)
-diff   = substract_frames(frames[0], frames[1])
-save_image(diff, output_dir="output", frequency_hz=440.0, exposure_us=10000, step="espi_raw")
-disconnect_camera(camera)
-```
-
-**Short version — USB camera**
-
-```python
-from camera_control_inclusive import *
-
-camera = connect_camera(camera_index=0)
-show_live_feed_from_camera(camera)    # aim, then press 'e'
-discard_warmup_frames(camera, n=10)
-set_exposure_manual(camera, -6)       # -6 ≈ 15 ms in OpenCV log₂ scale
-set_gain_manual(camera, 0.0)
-frames = grab_n_frames(camera, 2, max_retries=3)
-diff   = substract_frames(frames[0], frames[1])
-disconnect_camera(camera)
-```
-
-**Short version — Allied Vision**
-
-```python
-from camera_control_allied_vision import *
-
-camera = connect_camera()
-show_live_feed_from_camera(camera)    # aim, then press 'e'
-set_exposure_manual(camera, 10000)    # 10 ms in microseconds
-set_gain_manual(camera, 0.0)
-frames = grab_n_frames(camera, 2)
-diff   = substract_frames(frames[0], frames[1])
-disconnect_camera(camera)
-```
-
 **Exposure unit quick reminder:**
 * Basler and Allied Vision use **microseconds** (`10000` = 10 ms)
 * USB/OpenCV cameras use **log₂ scale** (`-6` ≈ 15 ms)
@@ -225,8 +380,17 @@ Filenames use exactly as many decimal places as the frequency needs, and are zer
 
 There are 435 tests covering every function in every file. They all run without a real camera or signal generator — the hardware is replaced with fake objects during testing.
 
-```bash
+**Mac**
+
+```
 source venv_physics/bin/activate
+python -m pytest tests/ -v
+```
+
+**Windows**
+
+```
+venv_physics\Scripts\activate
 python -m pytest tests/ -v
 ```
 
@@ -241,20 +405,6 @@ python -m pytest tests/ -v
 | `test_complete_pipeline_allied_vision.py` | Allied Vision sweep logic |
 | `test_run_experiment.py` | Interactive entry point, exposure conversion, preview feed, settings loop |
 | `test_signal_generator_control.py` | Signal generator functions |
-
-
-## Dependencies
-
-```
-numpy            pip install numpy
-opencv-python    pip install opencv-python
-pyvisa           pip install pyvisa
-pyvisa-py        pip install pyvisa-py
-
-pypylon          pip install pypylon           (Basler cameras only)
-vmbpy            install from wheel            (Allied Vision cameras only)
-                 https://github.com/alliedvision/VmbPy
-```
 
 
 Patrick Mulikuza

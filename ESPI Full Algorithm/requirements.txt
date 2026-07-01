@@ -3,6 +3,7 @@ opencv-python
 pyvisa
 pyvisa-py
 matplotlib
+pytest
 
 # Basler cameras only — uncomment if you have a Basler camera:
 # pypylon

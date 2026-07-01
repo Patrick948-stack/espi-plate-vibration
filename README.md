@@ -71,24 +71,51 @@ You only need one camera. The program detects which one you chose and handles ev
 
 ## Running the experiment
 
-**Step 1 — set up the environment**
+The full setup guide with Mac and Windows instructions and step-by-step verification is in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md). The short version is below.
 
-```bash
+**Step 1 — go into the code folder**
+
+```
 cd "ESPI Full Algorithm"
-python3 -m venv venv_physics
-source venv_physics/bin/activate
-pip install numpy opencv-python pyvisa pyvisa-py
 ```
 
-If you have a Basler camera: `pip install pypylon`
+**Step 2 — create and activate a virtual environment**
 
-**Step 2 — run it**
+Mac:
+```
+python3 -m venv venv_physics
+source venv_physics/bin/activate
+```
 
-```bash
-python3 run_experiment.py
+Windows:
+```
+python -m venv venv_physics
+venv_physics\Scripts\activate
+```
+
+**Step 3 — install all packages**
+
+```
+pip install -r requirements.txt
+```
+
+**Step 4 — run the tests to confirm everything works**
+
+```
+python -m pytest tests/ -v
+```
+
+All 435 tests should pass. No hardware needed for this step.
+
+**Step 5 — run the experiment**
+
+```
+python run_experiment.py
 ```
 
 That's the only file you ever need to run. It will guide you through the rest.
+
+If you have a Basler or Allied Vision camera, you also need to install their SDKs before running. See the full guide in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md).
 
 
 ## What is inside the project folder
