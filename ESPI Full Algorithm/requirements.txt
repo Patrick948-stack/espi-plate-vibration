@@ -1,0 +1,12 @@
+numpy
+opencv-python
+pyvisa
+pyvisa-py
+matplotlib
+
+# Basler cameras only — uncomment if you have a Basler camera:
+# pypylon
+
+# Allied Vision cameras only — install from wheel instead of pip:
+# Download from https://github.com/alliedvision/VmbPy
+# pip install <downloaded_wheel>.whl
