@@ -190,6 +190,38 @@ python -c "import vmbpy; print('Allied Vision ready')"
 If you see `Allied Vision ready`, the Allied Vision setup is complete.
 
 
+### Stage 8.5 — Signal generator setup (Windows only)
+
+Mac and Linux can skip this stage — the signal generator works immediately once `pyvisa` and `pyvisa-py` are installed.
+
+Windows needs one extra one-time step. This project talks to the signal generator through `pyvisa-py`, a lightweight backend that needs direct access to the USB device. Windows blocks that kind of direct access by default until a compatible driver is bound to the instrument — Mac and Linux allow it out of the box, which is why this step is Windows-only.
+
+Pick one of the two options below.
+
+**Option A — Zadig (recommended: free, ~5 MB, no reboot)**
+
+1. Download Zadig from [zadig.akeo.ie](https://zadig.akeo.ie) — a single small executable, no installer needed.
+2. Plug in the signal generator and power it on.
+3. Open Zadig, click **Options > List All Devices**.
+4. In the dropdown, find the signal generator. It may show up under its model name, as **USB Test and Measurement Device**, or as **Unknown Device**.
+5. Make sure **WinUSB** is selected as the target driver, then click **Replace Driver** (it may say **Install Driver**).
+6. Wait for it to finish, then close Zadig. No reboot needed.
+
+Check: with `venv_physics` active, run
+
+```
+python -c "import pyvisa; rm = pyvisa.ResourceManager('@py'); print(rm.list_resources())"
+```
+
+The signal generator's address (something like `USB0::...::INSTR`) should appear in the printed list.
+
+**Option B — NI-VISA (heavier, official vendor runtime)**
+
+Download and install the free **NI-VISA** runtime from National Instruments (ni.com). It installs its own driver and its own VISA backend. Once installed, `pyvisa.ResourceManager()` detects and uses it automatically instead of `pyvisa-py` — no code changes needed.
+
+Zadig is the better default for this project: it's a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux. NI-VISA is a much larger install and is only worth it if it's already needed for other instruments.
+
+
 ### Stage 9 — Run the experiment
 
 With `venv_physics` active and all checks passing:

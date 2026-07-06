@@ -2,6 +2,7 @@ numpy
 opencv-python
 pyvisa
 pyvisa-py
+pyusb
 matplotlib
 pytest
 
