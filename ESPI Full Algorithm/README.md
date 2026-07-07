@@ -200,20 +200,32 @@ Pick one of the two options below.
 
 **Option A — Zadig (recommended: free, ~5 MB, no reboot)**
 
-1. Download Zadig from [zadig.akeo.ie](https://zadig.akeo.ie) — a single small executable, no installer needed.
-2. Plug in the signal generator and power it on.
-3. Open Zadig, click **Options > List All Devices**.
-4. In the dropdown, find the signal generator. It may show up under its model name, as **USB Test and Measurement Device**, or as **Unknown Device**.
-5. Make sure **WinUSB** is selected as the target driver, then click **Replace Driver** (it may say **Install Driver**).
-6. Wait for it to finish, then close Zadig. No reboot needed.
+1. With `venv_physics` active, install the native USB library `pyusb` needs — this does not come with `pip install pyusb` on Windows, and without it `pyvisa-py` will silently see zero instruments even after the driver step below:
+   ```
+   pip install libusb-package
+   ```
+2. Download Zadig from [zadig.akeo.ie](https://zadig.akeo.ie) — a single small executable, no installer needed.
+3. Plug in the signal generator and power it on.
+4. Open Zadig, click **Options > List All Devices**.
+5. In the dropdown, find the signal generator. It may show up under its model name, as **USB Test and Measurement Device**, or as **Unknown Device**. Some instruments list more than one entry (e.g. a separate control interface) — if the first one doesn't work, repeat this step for the others.
+6. Make sure **WinUSB** is selected as the target driver, then click **Replace Driver** (it may say **Install Driver**).
+7. Wait for it to finish, then close Zadig. No reboot needed.
 
-Check: with `venv_physics` active, run
+Check, one layer at a time — with `venv_physics` active:
+
+```
+python -c "import usb.core; print(list(usb.core.find(find_all=True)))"
+```
+
+This talks to the USB driver layer directly, without `pyvisa` in the way. An empty list `[]` or a `NoBackendError` here means `libusb-package` (step 1) or the Zadig driver step (steps 2-7) still needs fixing — go back and recheck those before moving on.
+
+Once that prints the device, confirm `pyvisa` sees it too:
 
 ```
 python -c "import pyvisa; rm = pyvisa.ResourceManager('@py'); print(rm.list_resources())"
 ```
 
-The signal generator's address (something like `USB0::...::INSTR`) should appear in the printed list.
+The signal generator's address (something like `USB0::...::INSTR`) should appear in the printed list. You can also run `python test_signal_generator_only.py` for a full step-by-step connection test with clearer diagnostics at each stage.
 
 **Option B — NI-VISA (heavier, official vendor runtime)**
 
@@ -258,11 +270,37 @@ After the sweep, a viewer opens showing your results one frequency at a time. Us
 **Exposure is always entered in seconds.** For example, `0.01` means 10 milliseconds. The program converts to the right internal unit per camera automatically.
 
 
+## Monitoring a camera before an experiment
+
+If you just want to check focus, alignment, or brightness without running a full frequency sweep, use `monitor.py` instead of `run_experiment.py`:
+
+```
+python monitor.py
+```
+
+It asks which camera you want to monitor (Basler, USB/webcam, or Allied Vision), the camera index if that camera type supports more than one device, the exposure time in seconds, the gain in dB, and a `gain_factor`. `gain_factor` only brightens what you see in the "Frame Subtraction" window on screen, it does not change the raw camera data or the exposure/gain hardware settings.
+
+Once you confirm, it opens the matching `capture_and_display*.py` script with two windows:
+
+- **Live Feed** — the raw frame straight from the camera
+- **Frame Subtraction** — the absolute difference between each pair of consecutive frames, amplified by `gain_factor`
+
+Press `q` inside either window to close the monitor and return to the terminal. Basler only ever connects to the first camera pypylon finds (`camera_control.py` has no index parameter), so `monitor.py` skips the camera index question for that choice.
+
+You can also call each `capture_and_display*.py` script's `main()` directly from your own code instead of going through `monitor.py`:
+
+```python
+import capture_and_display as cad
+cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20)
+```
+
+
 ## What is in this folder
 
 | File | What it is | What it does |
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
+| `monitor.py` | Script you run | Interactive live preview — pick a camera, set exposure/gain/gain_factor, watch Live Feed + Frame Subtraction |
 | `requirements.txt` | Package list | Install everything with `pip install -r requirements.txt` |
 | `complete_pipeline.py` | Script or importable | Full frequency sweep — Basler camera |
 | `complete_pipeline_inclusive.py` | Script or importable | Full frequency sweep — any USB/webcam camera |
@@ -271,9 +309,9 @@ After the sweep, a viewer opens showing your results one frequency at a time. Us
 | `camera_control_inclusive.py` | Library | Low-level camera functions — USB/webcam |
 | `camera_control_allied_vision.py` | Library | Low-level camera functions — Allied Vision |
 | `signal_generator_control.py` | Library | Signal generator functions — Siglent SDG |
-| `capture_and_display.py` | Script | Quick live preview only — Basler |
-| `capture_and_display_cv2.py` | Script | Quick live preview only — any camera |
-| `capture_and_display_allied.py` | Script | Quick live preview only — Allied Vision |
+| `capture_and_display.py` | Script or importable | Live preview only — Basler. `main(exposure_us, gain_db, gain_factor)` |
+| `capture_and_display_cv2.py` | Script or importable | Live preview only — any camera. `main(camera_index, exposure, gain, gain_factor)` |
+| `capture_and_display_allied.py` | Script or importable | Live preview only — Allied Vision. `main(camera_index, exposure_us, gain, gain_factor, list_cameras)` |
 
 
 ## The three pipelines compared
@@ -410,7 +448,7 @@ Filenames use exactly as many decimal places as the frequency needs, and are zer
 
 ## Running the automated tests
 
-There are 435 tests covering every function in every file. They all run without a real camera or signal generator — the hardware is replaced with fake objects during testing.
+There are 562 tests covering every function in every file. They all run without a real camera or signal generator — the hardware is replaced with fake objects during testing.
 
 **Mac**
 
@@ -436,6 +474,10 @@ python -m pytest tests/ -v
 | `test_complete_pipeline_inclusive.py` | USB sweep logic |
 | `test_complete_pipeline_allied_vision.py` | Allied Vision sweep logic |
 | `test_run_experiment.py` | Interactive entry point, exposure conversion, preview feed, settings loop |
+| `test_monitor.py` | monitor.py entry point — camera choice, settings prompts, exposure conversion, error messages |
+| `test_capture_and_display.py` | Basler live preview script |
+| `test_capture_and_display_cv2.py` | USB/OpenCV live preview script |
+| `test_capture_and_display_allied.py` | Allied Vision live preview script |
 | `test_signal_generator_control.py` | Signal generator functions |
 
 

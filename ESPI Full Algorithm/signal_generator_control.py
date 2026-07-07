@@ -62,8 +62,123 @@ DEPENDENCIES (install with pip if missing):
     pip install pyvisa pyvisa-py
 """
 
+import os
 import pyvisa
 import time
+
+
+# ==============================================================================
+# SECTION 0 — ERROR DIAGNOSTICS
+# ==============================================================================
+# Two kinds of mistake account for almost every crash reported from this file:
+#
+#   1. A VISA-level communication error — cable unplugged, instrument busy,
+#      driver not installed correctly. pyvisa's own e.description is accurate
+#      but generic ("Timeout expired before operation completed."). It does
+#      not tell you what to actually go check. _describe_visa_error() below
+#      translates the handful of error codes this lab's hardware actually
+#      produces into a specific, actionable sentence.
+#
+#   2. Passing None as `instr` — almost always because open_connection()
+#      returned None (no instrument found) and the result was used anyway
+#      without being checked first. Without a guard this turns into
+#      "AttributeError: 'NoneType' object has no attribute 'query'", which
+#      does not explain what actually went wrong. _require_instrument()
+#      catches this before it reaches pyvisa at all.
+#
+# Windows needs one extra one-time driver step (Zadig) that Mac and Linux
+# don't — see README.md "Signal generator setup (Windows only)". Messages
+# below only mention that step when actually running on Windows, so Mac and
+# Linux users are not shown irrelevant instructions.
+# ==============================================================================
+
+_ON_WINDOWS = os.name == "nt"
+
+# Maps pyvisa's error abbreviation (e.VisaIOError.abbreviation) to a sentence
+# that says both what happened AND what to do about it. Any error code not
+# listed here falls back to pyvisa's own e.description in _describe_visa_error().
+_VISA_ERROR_HELP = {
+    "VI_ERROR_TMO": (
+        "The signal generator did not respond in time. It may be busy, "
+        "mid-command from another program, or the USB connection is "
+        "unstable. Wait a moment and try again; if it keeps happening, "
+        "unplug and replug the USB cable."
+    ),
+    "VI_ERROR_RSRC_NFOUND": (
+        "The signal generator is no longer reachable at its last known "
+        "address. It was likely unplugged, powered off, or moved to a "
+        "different USB port. Check the cable and power, then call "
+        "open_connection() again."
+    ),
+    "VI_ERROR_CONN_LOST": (
+        "The connection to the signal generator was lost mid-command. "
+        "Check that the USB cable is still firmly connected, then call "
+        "open_connection() again."
+    ),
+    "VI_ERROR_RSRC_BUSY": (
+        "The signal generator is already in use by another program or "
+        "another running copy of this script. Close NI-MAX, any other "
+        "Python session talking to it, or a duplicate run of this script, "
+        "then try again."
+    ),
+    "VI_ERROR_RSRC_LOCKED": (
+        "The signal generator's connection is locked by another session. "
+        "Close any other program talking to it (NI-MAX, another Python "
+        "session), then try again."
+    ),
+    "VI_ERROR_INV_RSRC_NAME": (
+        "The instrument address is no longer valid — the list of connected "
+        "devices likely changed between finding it and using it. Call "
+        "open_connection() again to get a fresh address."
+    ),
+}
+
+
+def _describe_visa_error(e):
+    """
+    Turn a pyvisa.VisaIOError into a specific, actionable sentence.
+
+    Looks up the error's abbreviation (e.g. "VI_ERROR_TMO") in
+    _VISA_ERROR_HELP. Falls back to pyvisa's own e.description for any
+    error code this lab's hardware hasn't been seen to raise, so nothing
+    is ever hidden — worst case you just get pyvisa's original message.
+
+    Example:
+        except pyvisa.VisaIOError as e:
+            print(f"[ERROR] Could not set frequency: {_describe_visa_error(e)}")
+    """
+    return _VISA_ERROR_HELP.get(e.abbreviation, e.description)
+
+
+def _require_instrument(instr, action):
+    """
+    Return True if instr looks like an open connection, False otherwise.
+
+    Prints a specific message when instr is None instead of letting the
+    caller's next line crash with a confusing
+    "AttributeError: 'NoneType' object has no attribute ...".
+
+    Args:
+        instr  : the value the caller passed in as the instrument handle
+        action : short present-tense description of what the caller is
+                 trying to do, used in the printed message
+                 (e.g. "set the frequency")
+
+    Example:
+        def get_identity(instr):
+            if not _require_instrument(instr, "read the instrument identity"):
+                return None
+            ...
+    """
+    if instr is None:
+        print(f"[ERROR] Cannot {action} — no instrument is connected.")
+        print("  This usually means open_connection() returned None earlier "
+              "(no instrument was found) and that result was used without "
+              "being checked first.")
+        print("  Call open_connection() again and confirm it does not "
+              "return None before sending any commands.")
+        return False
+    return True
 
 
 # ==============================================================================
@@ -261,10 +376,45 @@ def find_instruments(rm):
         if addrs is None:
             print("No instruments found.")
     """
-    instrs = rm.list_resources()
+    try:
+        instrs = rm.list_resources()
+    except Exception as e:
+        # This means the VISA backend itself failed to start — a broken
+        # pyvisa/pyvisa-py install, not "no instrument is plugged in".
+        print(f"[ERROR] Could not scan for instruments: {e}")
+        if _ON_WINDOWS:
+            print("  Reinstall the backend: pip install pyvisa pyvisa-py libusb-package")
+            print("  Or install NI-VISA instead (see README.md 'Signal generator setup').")
+        else:
+            print("  Try reinstalling the backend: pip install pyvisa pyvisa-py")
+        return None
 
     if len(instrs) == 0:
-        print("[ERROR] No instruments found. Check USB connection and driver.")
+        steps = ["Is the signal generator powered on and the USB cable connected?"]
+        if _ON_WINDOWS:
+            steps.append(
+                "(Windows) Has Zadig been used to bind a WinUSB driver to it? "
+                "Download: https://zadig.akeo.ie"
+            )
+            steps.append(
+                "(Windows) Is 'libusb-package' installed? "
+                "pip install libusb-package"
+            )
+        else:
+            steps.append("Unplug and replug the USB cable, then try again.")
+        steps.append(
+            'Run: python -c "import usb.core; '
+            'print(list(usb.core.find(find_all=True)))" '
+            "— an empty list or a 'NoBackendError' confirms the problem is "
+            "at the USB driver level, not in this script (see README.md "
+            "'Signal generator setup')."
+        )
+
+        print("[ERROR] No VISA instruments found.")
+        print("  This does not necessarily mean Python or pyvisa are broken "
+              "— check, in order:")
+        for i, step in enumerate(steps, start=1):
+            print(f"    {i}. {step}")
         return None
 
     print(f"Found {len(instrs)} instrument(s):")
@@ -290,13 +440,36 @@ def connect_instrument(rm, instrs, index=0):
 
     Returns:
         instr : An open PyVISA resource object ready to accept commands.
+        None  : If index is out of range, or the instrument could not be
+                opened (e.g. it was unplugged between find_instruments()
+                finding it and this call trying to open it).
 
     Example:
         rm    = pyvisa.ResourceManager()
         addrs = find_instruments(rm)
         instr = connect_instrument(rm, addrs, index=0)
+        if instr is None:
+            print("Could not connect.")
     """
-    instr = rm.open_resource(instrs[index])
+    if not instrs:
+        print("[ERROR] Cannot connect — no instrument addresses were given.")
+        print("  Call find_instruments() first and check it did not return None.")
+        return None
+
+    if index < 0 or index >= len(instrs):
+        print(f"[ERROR] index={index} is out of range — only {len(instrs)} "
+              f"instrument(s) were found (valid indices: 0 to {len(instrs) - 1}).")
+        return None
+
+    try:
+        instr = rm.open_resource(instrs[index])
+    except pyvisa.VisaIOError as e:
+        print(f"[ERROR] Could not open a connection to {instrs[index]}: "
+              f"{_describe_visa_error(e)}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Unexpected error opening {instrs[index]}: {e}")
+        return None
 
     # How many milliseconds to wait for a reply before giving up and raising
     # a timeout error.  10 seconds is generous — most commands reply in < 1 s.
@@ -335,11 +508,21 @@ def open_connection(index=0):
         if instr is None:
             print("Could not connect.")
     """
-    rm = pyvisa.ResourceManager()
+    try:
+        rm = pyvisa.ResourceManager()
+    except Exception as e:
+        print(f"[ERROR] Could not start a VISA resource manager: {e}")
+        print("  Make sure both packages are installed: pip install pyvisa pyvisa-py")
+        if _ON_WINDOWS:
+            print("  On Windows, also make sure the Zadig driver step has been "
+                  "done (see README.md 'Signal generator setup (Windows only)'), "
+                  "or install NI-VISA instead: https://www.ni.com")
+        return None
+
     instrs = find_instruments(rm)
 
     if instrs is None:
-        return None  # No instrument connected — caller should handle this
+        return None  # find_instruments() already printed a specific reason
 
     return connect_instrument(rm, instrs, index=index)
 
@@ -358,8 +541,16 @@ def close_connection(instr):
     Example:
         close_connection(instr)
     """
-    instr.close()
-    print("Connection closed.")
+    if not _require_instrument(instr, "close the connection"):
+        return
+
+    try:
+        instr.close()
+        print("Connection closed.")
+    except pyvisa.VisaIOError as e:
+        # Usually harmless — the instrument was likely already disconnected
+        # or powered off, so there is nothing left to close cleanly.
+        print(f"[WARNING] Instrument did not close cleanly: {_describe_visa_error(e)}")
 
 
 # ==============================================================================
@@ -399,7 +590,15 @@ def get_identity(instr):
         identity = get_identity(instr)
         # Prints and returns: "SDG,SDG1015,SDG10GAC3R0028,1.01.01.39R5"
     """
-    identity = instr.query('*IDN?')
+    if not _require_instrument(instr, "read the instrument identity"):
+        return None
+
+    try:
+        identity = instr.query('*IDN?')
+    except pyvisa.VisaIOError as e:
+        print(f"[ERROR] Could not read instrument identity: {_describe_visa_error(e)}")
+        return None
+
     print(f"Instrument identity: {identity.strip()}")
     return identity.strip()
 
@@ -424,7 +623,16 @@ def get_output_status(instr, channel=1):
         if "ON" in status:
             print("Output is active.")
     """
-    status = instr.query(f'C{channel}:OUTP?')
+    if not _require_instrument(instr, f"read the output status for channel {channel}"):
+        return None
+
+    try:
+        status = instr.query(f'C{channel}:OUTP?')
+    except pyvisa.VisaIOError as e:
+        print(f"[ERROR] Could not read channel {channel} output status: "
+              f"{_describe_visa_error(e)}")
+        return None
+
     print(f"Channel {channel} output status: {status.strip()}")
     return status.strip()
 
@@ -452,7 +660,16 @@ def get_wave_status(instr, channel=1):
         # Prints something like:
         # C1:BSWV WVTP,SINE,FRQ,1000HZ,PERI,0.001S,AMP,1V,OFST,0V,...
     """
-    wave_status = instr.query(f'C{channel}:BSWV?')
+    if not _require_instrument(instr, f"read the waveform status for channel {channel}"):
+        return None
+
+    try:
+        wave_status = instr.query(f'C{channel}:BSWV?')
+    except pyvisa.VisaIOError as e:
+        print(f"[ERROR] Could not read channel {channel} waveform status: "
+              f"{_describe_visa_error(e)}")
+        return None
+
     print(f"\n--- Channel {channel} waveform status ---")
     print(wave_status.strip())
     return wave_status.strip()
@@ -498,6 +715,9 @@ def turn_on_output(instr, channel=1):
     Example:
         turn_on_output(instr, channel=1)
     """
+    if not _require_instrument(instr, f"turn on channel {channel}"):
+        return None
+
     try:
         instr.write(f'C{channel}:OUTP ON')
         time.sleep(0.5)  # Wait for the output relay to close before querying state
@@ -505,7 +725,7 @@ def turn_on_output(instr, channel=1):
         print(f"Channel {channel} output is now: {status.strip()}")
         return channel
     except pyvisa.VisaIOError as e:
-        print(f"[ERROR] Could not turn on channel {channel}: {e.description}")
+        print(f"[ERROR] Could not turn on channel {channel}: {_describe_visa_error(e)}")
         return None
 
 
@@ -528,6 +748,9 @@ def turn_off_output(instr, channel=1):
     Example:
         turn_off_output(instr, channel=1)
     """
+    if not _require_instrument(instr, f"turn off channel {channel}"):
+        return None
+
     try:
         instr.write(f'C{channel}:OUTP OFF')
         time.sleep(0.5)  # Wait for the output relay to open before querying state
@@ -535,7 +758,7 @@ def turn_off_output(instr, channel=1):
         print(f"Channel {channel} output is now: {status.strip()}")
         return channel
     except pyvisa.VisaIOError as e:
-        print(f"[ERROR] Could not turn off channel {channel}: {e.description}")
+        print(f"[ERROR] Could not turn off channel {channel}: {_describe_visa_error(e)}")
         return None
 
 
@@ -595,6 +818,9 @@ def set_waveform(instr, waveform, channel=1):
     Example:
         set_waveform(instr, "square", channel=1)
     """
+    if not _require_instrument(instr, f"set the waveform on channel {channel}"):
+        return None
+
     # Map friendly names to the SCPI tokens the instrument understands.
     # The instrument only accepts the uppercase versions on the right.
     waveform_map = {
@@ -630,7 +856,8 @@ def set_waveform(instr, waveform, channel=1):
         return key
 
     except pyvisa.VisaIOError as e:
-        print(f"[ERROR] Could not set waveform: {e.description}")
+        print(f"[ERROR] Could not set waveform on channel {channel}: "
+              f"{_describe_visa_error(e)}")
         return None
 
 
@@ -661,6 +888,9 @@ def set_frequency(instr, frequency, channel=1, waveform="sine"):
     Example:
         set_frequency(instr, 5000, channel=1, waveform="sine")   # 5 kHz sine
     """
+    if not _require_instrument(instr, f"set the frequency on channel {channel}"):
+        return None
+
     frequency = clamp_frequency(frequency, waveform)
 
     try:
@@ -671,7 +901,8 @@ def set_frequency(instr, frequency, channel=1, waveform="sine"):
         print(f"  New settings: {new_status.strip()}")
         return frequency
     except pyvisa.VisaIOError as e:
-        print(f"[ERROR] Could not set frequency: {e.description}")
+        print(f"[ERROR] Could not set frequency on channel {channel}: "
+              f"{_describe_visa_error(e)}")
         return None
 
 
@@ -696,6 +927,9 @@ def set_amplitude(instr, amplitude, channel=1):
     Example:
         set_amplitude(instr, 3.0, channel=1)   # 3 Vpp output
     """
+    if not _require_instrument(instr, f"set the amplitude on channel {channel}"):
+        return None
+
     amplitude = clamp_amplitude(amplitude)
 
     try:
@@ -706,7 +940,8 @@ def set_amplitude(instr, amplitude, channel=1):
         print(f"  New settings: {new_status.strip()}")
         return amplitude
     except pyvisa.VisaIOError as e:
-        print(f"[ERROR] Could not set amplitude: {e.description}")
+        print(f"[ERROR] Could not set amplitude on channel {channel}: "
+              f"{_describe_visa_error(e)}")
         return None
 
 
@@ -739,6 +974,9 @@ def set_offset(instr, offset, amplitude=0.0, channel=1):
         set_offset(instr, 1.0, amplitude=2.0, channel=1)
         # Wave now swings between 0 V and 2 V
     """
+    if not _require_instrument(instr, f"set the offset on channel {channel}"):
+        return None
+
     offset = clamp_offset(offset, amplitude)
 
     try:
@@ -749,7 +987,8 @@ def set_offset(instr, offset, amplitude=0.0, channel=1):
         print(f"  New settings: {new_status.strip()}")
         return offset
     except pyvisa.VisaIOError as e:
-        print(f"[ERROR] Could not set offset: {e.description}")
+        print(f"[ERROR] Could not set offset on channel {channel}: "
+              f"{_describe_visa_error(e)}")
         return None
 
 
@@ -818,6 +1057,15 @@ def configure_channel(instr, waveform="sine", frequency=1000.0,
         turn_on_output(instr, channel=1)
         close_connection(instr)
     """
+    if not _require_instrument(instr, f"configure channel {channel}"):
+        return {
+            "waveform": None,
+            "frequency": None,
+            "amplitude": None,
+            "offset": None,
+            "channel output": None,
+        }
+
     applied_waveform  = set_waveform(instr, waveform, channel=channel)
 
     # Pass the waveform that was actually applied (not the original request)

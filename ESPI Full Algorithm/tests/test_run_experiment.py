@@ -24,6 +24,7 @@ import math
 import sys
 import os
 import types
+import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -293,10 +294,25 @@ class TestConfirmSettings:
 class TestShowPreviewFeed:
 
     def test_warns_and_skips_when_library_not_importable(self, capsys):
+        # A missing SDK now prints a specific, actionable [ERROR] message
+        # (via _missing_sdk_message) instead of a generic [WARNING], and
+        # names exactly which package to install.
         with patch("importlib.import_module", side_effect=ImportError("no pypylon")):
             run_experiment._show_preview_feed("1")
         out = capsys.readouterr().out
+        assert "ERROR" in out
+        assert "pip install pypylon" in out
+
+    def test_missing_function_on_loaded_library_warns_with_specifics(self, capsys):
+        # Distinct from "SDK not installed": the module imported fine but is
+        # missing a function it should have (e.g. an incomplete or outdated
+        # copy of the file) — a different problem, a different message.
+        mock_lib = MagicMock(spec=[])  # spec=[] means every attribute access raises AttributeError
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("2")
+        out = capsys.readouterr().out
         assert "WARNING" in out
+        assert "missing a" in out
 
     def test_warns_and_skips_when_camera_is_none(self, capsys):
         mock_lib = MagicMock()
@@ -316,15 +332,21 @@ class TestShowPreviewFeed:
         mock_lib.show_live_feed_from_camera.assert_called_once_with(mock_cam)
         mock_lib.disconnect_camera.assert_called_once_with(mock_cam)
 
-    def test_disconnect_called_even_when_feed_crashes(self):
+    def test_feed_crash_is_caught_and_disconnect_still_runs(self, capsys):
+        # The preview is a convenience, not a requirement — a crash here
+        # (e.g. a cable came loose while aiming) must not take down the
+        # rest of the program. This is a deliberate behavior change: this
+        # used to re-raise and crash run_experiment.py entirely.
         mock_cam = MagicMock()
         mock_lib = MagicMock()
         mock_lib.connect_camera.return_value = mock_cam
         mock_lib.show_live_feed_from_camera.side_effect = RuntimeError("crash")
         with patch("importlib.import_module", return_value=mock_lib):
-            with pytest.raises(RuntimeError):
-                run_experiment._show_preview_feed("2")
+            run_experiment._show_preview_feed("2")  # must not raise
         mock_lib.disconnect_camera.assert_called_once_with(mock_cam)
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+        assert "crash" in out
 
 
 # ===========================================================================
@@ -379,3 +401,202 @@ class TestReconfigureIfNeeded:
             result = run_experiment.reconfigure_if_needed("1", dict(self.PARAMS))
         assert result["exposure"] == pytest.approx(0.05)
         assert result["gain"]     == pytest.approx(2.0)
+
+
+# ===========================================================================
+# ask_positive_float() — shared by choose_sweep_params(), reconfigure_if_needed(),
+# and monitor.py (which imports this exact function instead of keeping its
+# own copy)
+# ===========================================================================
+
+class TestAskPositiveFloat:
+    def test_returns_default_on_empty_input(self):
+        with patch("builtins.input", return_value=""):
+            result = run_experiment.ask_positive_float("Exposure (s)", default=0.01)
+        assert result == pytest.approx(0.01)
+
+    def test_rejects_zero_then_accepts_positive(self):
+        with patch("builtins.input", side_effect=["0", "0.02"]):
+            result = run_experiment.ask_positive_float("Exposure (s)", default=0.01)
+        assert result == pytest.approx(0.02)
+
+    def test_rejects_negative_then_accepts_positive(self):
+        with patch("builtins.input", side_effect=["-5", "1"]):
+            result = run_experiment.ask_positive_float("Exposure (s)", default=0.01)
+        assert result == pytest.approx(1)
+
+    def test_prints_explanation_when_rejecting(self, capsys):
+        with patch("builtins.input", side_effect=["-1", "1"]):
+            run_experiment.ask_positive_float("Exposure (s)", default=0.01)
+        out = capsys.readouterr().out
+        assert "must be greater than 0" in out
+
+    def test_choose_sweep_params_rejects_zero_exposure(self):
+        # End-to-end: the exposure question inside choose_sweep_params()
+        # must actually be routed through ask_positive_float(), not a plain
+        # ask() that would silently accept 0.
+        answers = ["100", "1000", "100", "5",   # freq/step/averages
+                   "0", "0.02",                  # exposure: rejected, retried
+                   "0.0", "out"]                 # gain, output_dir
+        with patch("builtins.input", side_effect=answers):
+            params = run_experiment.choose_sweep_params()
+        assert params["exposure"] == pytest.approx(0.02)
+
+
+# ===========================================================================
+# _missing_sdk_message() — shared install instructions for a missing camera
+# SDK, used by both run_pipeline() and _show_preview_feed()
+# ===========================================================================
+
+class TestMissingSdkMessage:
+    def test_basler_message(self, capsys):
+        run_experiment._missing_sdk_message("1", "complete_pipeline", ImportError("no pypylon"))
+        out = capsys.readouterr().out
+        assert "pip install pypylon" in out
+        assert "Pylon Camera Software Suite" in out
+
+    def test_opencv_message(self, capsys):
+        run_experiment._missing_sdk_message("2", "complete_pipeline_inclusive", ImportError("no cv2"))
+        out = capsys.readouterr().out
+        assert "pip install opencv-python" in out
+
+    def test_allied_message_on_windows_uses_backslash_path(self, capsys):
+        with patch.object(run_experiment, "_ON_WINDOWS", True):
+            run_experiment._missing_sdk_message("3", "complete_pipeline_allied_vision", ImportError("no vmbpy"))
+        out = capsys.readouterr().out
+        assert "C:\\path\\to\\vmbpy_file.whl" in out
+
+    def test_allied_message_on_mac_linux_uses_forward_slash_path(self, capsys):
+        with patch.object(run_experiment, "_ON_WINDOWS", False):
+            run_experiment._missing_sdk_message("3", "complete_pipeline_allied_vision", ImportError("no vmbpy"))
+        out = capsys.readouterr().out
+        assert "/path/to/vmbpy_file.whl" in out
+        assert "C:\\" not in out
+
+    def test_error_detail_included(self, capsys):
+        run_experiment._missing_sdk_message("2", "complete_pipeline_inclusive",
+                                             ImportError("libGL.so.1: cannot open shared object file"))
+        out = capsys.readouterr().out
+        assert "libGL.so.1" in out
+
+
+# ===========================================================================
+# run_pipeline() — crash recovery: invalid exposure, mid-sweep exceptions,
+# and an unrecognised camera_choice
+# ===========================================================================
+
+class TestRunPipelineErrorRecovery:
+    def setup_method(self):
+        self._basler_mod = _mock_pipeline_module("complete_pipeline")
+        self._cv_mod     = _mock_pipeline_module("complete_pipeline_inclusive")
+        self._av_mod     = _mock_pipeline_module("complete_pipeline_allied_vision")
+
+    def teardown_method(self):
+        for name in ("complete_pipeline",
+                     "complete_pipeline_inclusive",
+                     "complete_pipeline_allied_vision"):
+            sys.modules.pop(name, None)
+
+    def test_zero_exposure_on_opencv_path_is_caught(self, capsys):
+        # math.log2(0) raises ValueError — must be caught with a specific
+        # message, not let a raw "math domain error" traceback through.
+        result = run_experiment.run_pipeline("2", "1", _default_params(exposure=0.0))
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Invalid exposure" in out
+        self._cv_mod.frequency_sweep_inclusive.assert_not_called()
+
+    def test_negative_exposure_on_opencv_path_is_caught(self, capsys):
+        result = run_experiment.run_pipeline("2", "1", _default_params(exposure=-0.01))
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Invalid exposure" in out
+
+    def test_sweep_crash_on_basler_path_is_caught(self, capsys):
+        self._basler_mod.frequency_sweep.side_effect = RuntimeError("signal generator disconnected")
+        result = run_experiment.run_pipeline("1", "1", _default_params())
+        assert result is None
+        out = capsys.readouterr().out
+        assert "stopped unexpectedly" in out
+        assert "signal generator disconnected" in out
+
+    def test_sweep_crash_on_reference_mode_is_caught(self, capsys):
+        self._av_mod.reference_frequency_sweep_allied_vision.side_effect = RuntimeError("camera unplugged")
+        result = run_experiment.run_pipeline("3", "2", _default_params())
+        assert result is None
+        out = capsys.readouterr().out
+        assert "stopped unexpectedly" in out
+
+    def test_successful_sweep_still_returns_results(self):
+        # Confirms the try/except added around the sweep call does not
+        # swallow a normal, successful result.
+        result = run_experiment.run_pipeline("1", "1", _default_params())
+        assert result == {100.0: None}
+
+    def test_unknown_camera_choice_returns_none(self, capsys):
+        result = run_experiment.run_pipeline("9", "1", _default_params())
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Unknown camera choice" in out
+
+
+# ===========================================================================
+# main() — Ctrl+C during any question should exit quietly, not crash
+# ===========================================================================
+
+class TestMainKeyboardInterrupt:
+    def test_keyboard_interrupt_exits_cleanly(self, capsys):
+        with patch.object(run_experiment, "_run", side_effect=KeyboardInterrupt):
+            with pytest.raises(SystemExit) as exc_info:
+                run_experiment.main()
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "Cancelled" in out
+
+    def test_normal_run_does_not_trigger_cancel_message(self, capsys):
+        with patch.object(run_experiment, "_run"):
+            run_experiment.main()
+        out = capsys.readouterr().out
+        assert "Cancelled" not in out
+
+
+# ===========================================================================
+# show_results() — matplotlib display fallback
+# ===========================================================================
+
+def _tiny_image():
+    return np.zeros((10, 10), dtype=np.uint8)
+
+
+class TestShowResults:
+    def test_no_results_prints_message_and_returns(self, capsys):
+        run_experiment.show_results({}, "unused_dir")
+        out = capsys.readouterr().out
+        assert "No results to display" in out
+
+    def test_matplotlib_not_installed_falls_back(self, capsys, tmp_path):
+        with patch.dict(sys.modules, {"matplotlib.pyplot": None}):
+            run_experiment.show_results({100.0: _tiny_image()}, str(tmp_path))
+        out = capsys.readouterr().out
+        assert "matplotlib not installed" in out
+        assert str(tmp_path) in out
+
+    def test_saves_grid_image_and_opens_viewer_on_success(self, tmp_path, capsys):
+        results = {100.0: _tiny_image(), 200.0: _tiny_image()}
+        with patch("matplotlib.pyplot.show"):
+            run_experiment.show_results(results, str(tmp_path))
+        out = capsys.readouterr().out
+        assert "Results grid saved to" in out
+        assert "Viewer open" in out
+        assert list(tmp_path.glob("sweep_results_*.png"))
+
+    def test_viewer_crash_is_caught_and_grid_is_still_reported(self, tmp_path, capsys):
+        results = {100.0: _tiny_image()}
+        with patch("matplotlib.pyplot.show", side_effect=RuntimeError("no display found")):
+            run_experiment.show_results(results, str(tmp_path))
+        out = capsys.readouterr().out
+        assert "Could not open the interactive viewer" in out
+        assert "no display found" in out
+        assert "Your results are safe" in out
+        # The grid PNG must have been saved before the viewer was attempted.
+        assert list(tmp_path.glob("sweep_results_*.png"))

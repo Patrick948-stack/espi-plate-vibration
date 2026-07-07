@@ -12,3 +12,7 @@ pytest
 # Allied Vision cameras only — install from wheel instead of pip:
 # Download from https://github.com/alliedvision/VmbPy
 # pip install <downloaded_wheel>.whl
+
+# Windows only — pyusb needs this to find the native libusb library.
+# Also requires a one-time Zadig driver step; see README.md Stage 8.5.
+# libusb-package

@@ -35,6 +35,16 @@ function ask(prompt, default, cast, valid):
             explain the valid choices and ask again
         return the accepted value
 
+function ask_positive_float(prompt, default):
+    loop:
+        value = ask(prompt, default, cast to float)
+        if value > 0: return value
+        explain "<prompt> must be greater than 0" and ask again
+    # used for exposure — a zero or negative exposure would otherwise
+    # reach math.log2() deep inside run_pipeline() and crash with "math
+    # domain error" instead of being caught here, the moment it was typed.
+    # monitor.py imports this exact function instead of keeping its own copy.
+
 function section(title):
     print a small titled divider in the terminal
 ```
@@ -42,6 +52,28 @@ function section(title):
 `ask()` is the building block every question in this file is built from — it
 guarantees the rest of the script never receives text where a number was
 expected, or an answer outside the allowed choices.
+
+## Error diagnostics
+
+```
+_ON_WINDOWS = True only when running on Windows
+
+function _missing_sdk_message(camera_choice, module_name, error):
+    print "[ERROR] Could not load {module_name}: {error}"
+    if camera_choice is "1" (Basler):
+        print "pip install pypylon", plus a note that the Pylon Camera
+            Software Suite must also be installed separately (basler.com)
+    if camera_choice is "2" (USB/webcam):
+        print "pip install opencv-python"
+    if camera_choice is "3" (Allied Vision):
+        print how to install the Vimba X .whl file, using a Windows-style
+            "C:\path\to\..." example if _ON_WINDOWS, otherwise "/path/to/..."
+```
+
+Used by both `run_pipeline()` (running the actual sweep) and
+`_show_preview_feed()` (showing the live preview before it), so a missing
+camera SDK always produces the exact same, specific message no matter which
+of those two code paths hits it first.
 
 ## Step-by-step questions
 
@@ -101,13 +133,23 @@ function _show_preview_feed(camera_choice):
     dynamically import the matching camera library
         (done at call-time, not at the top of the file, so a machine
         missing e.g. pypylon does not crash just from opening this script)
-    if the import fails: warn and skip the preview
+    if the import fails (SDK not installed):
+        _missing_sdk_message(camera_choice, module_name, error)
+        skip the preview, but let the rest of the program continue
+    if the import succeeds but is missing an expected function:
+        warn that the file may be outdated or partially edited, skip preview
+        # a different problem from "not installed" — the module loaded fine
 
     connect to the camera
     if it fails: warn and skip the preview
 
-    show_live_feed_from_camera(camera)   # aim, press 'e'
-    disconnect the camera afterward, always (even on error)
+    try:
+        show_live_feed_from_camera(camera)   # aim, press 'e'
+    if that crashes (e.g. USB cable came loose while aiming):
+        warn and continue anyway — the preview is a convenience, not a
+        requirement, so it must not take down the whole program
+    finally:
+        disconnect the camera, always (even on error)
 
 function reconfigure_if_needed(camera_choice, params):
     loop:
@@ -134,35 +176,55 @@ function run_pipeline(camera_choice, mode_choice, params):
     if camera_choice is "1" (Basler):
         import frequency_sweep / reference_frequency_sweep
             from complete_pipeline
-        if the import fails (pypylon missing): print a clear error, stop
+        if the import fails: _missing_sdk_message(...), stop
         convert exposure from seconds to microseconds
-        call reference_frequency_sweep() if mode is "2", else frequency_sweep()
+        sweep_fn = reference_frequency_sweep if mode is "2" else frequency_sweep
 
-    if camera_choice is "2" (USB/webcam):
+    elif camera_choice is "2" (USB/webcam):
         import frequency_sweep_inclusive / reference_frequency_sweep_inclusive
             from complete_pipeline_inclusive
-        if the import fails (opencv missing): print a clear error, stop
-        convert exposure from seconds to OpenCV's log-2 scale
+        if the import fails: _missing_sdk_message(...), stop
+        try to convert exposure from seconds to OpenCV's log-2 scale
+        if exposure was 0 or negative (log2 has no answer for that):
+            print "[ERROR] Invalid exposure" with the value and a hint, stop
         always skip that pipeline's own live-feed step, because
             run_experiment.py already showed a preview itself
-        call the matching sweep function
+        sweep_fn = the matching reference/pair function
 
-    if camera_choice is "3" (Allied Vision):
+    elif camera_choice is "3" (Allied Vision):
         import frequency_sweep_allied_vision /
                reference_frequency_sweep_allied_vision
             from complete_pipeline_allied_vision
-        if the import fails (vmbpy missing): print a clear error, stop
+        if the import fails: _missing_sdk_message(...), stop
         convert exposure from seconds to microseconds
         skip that pipeline's own live-feed step, same reason as above
-        call the matching sweep function
+        sweep_fn = the matching reference/pair function
 
-    return whatever the chosen sweep function returned
+    else:
+        print "[ERROR] Unknown camera choice", stop
+        # defensive — choose_camera() only ever returns "1"/"2"/"3", this
+        # only fires if run_pipeline() is called directly with a bad value
+
+    try:
+        return sweep_fn(**p)
+    if that crashes (e.g. signal generator or camera disconnects mid-sweep):
+        print "[ERROR] The experiment stopped unexpectedly: {error}"
+        suggest checking that everything is still connected and powered on
+        return nothing instead of letting a raw traceback end the program
 ```
 
 ## Overall program flow
 
 ```
 function main():
+    try:
+        _run()   # everything below used to live directly in main()
+    if Ctrl+C was pressed anywhere inside _run():
+        print "Cancelled (Ctrl+C). No experiment was started." and exit quietly
+        # Ctrl+C is a normal, intentional way to back out — it is not a bug,
+        # so it must not show a raw traceback that looks like a crash
+
+function _run():
     clear the screen, print the header
 
     camera_choice = choose_camera()
@@ -187,6 +249,13 @@ function main():
     else:
         print that no results were collected and to check earlier error messages
 ```
+
+`show_results()` also wraps its interactive one-at-a-time viewer in its own
+try/except: by the time that viewer opens, the results grid image has
+already been saved to disk, so a display problem there (no X server on a
+headless machine, an SSH session without X forwarding) prints a warning and
+the saved file's location instead of making it look like the whole sweep
+failed.
 
 ## Why this file exists
 

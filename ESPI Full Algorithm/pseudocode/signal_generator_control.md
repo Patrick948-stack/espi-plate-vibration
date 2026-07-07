@@ -27,15 +27,56 @@ hand elsewhere in the project.
 
 ## Overall structure
 
-The file is organized into six sections, and every section builds on the one
-before it:
+The file is organized into seven sections, and every section builds on the
+one before it:
 
+0. Error diagnostics — turn a communication failure into a specific,
+   actionable sentence, shared by every other section
 1. Safety clamps — keep numbers inside hardware limits
 2. Connection — open and close the USB link
 3. Status queries — read settings without changing them
 4. Output control — turn the channel's signal on and off
 5. Waveform setters — change frequency, amplitude, offset, shape
 6. A convenience wrapper that does steps 2–5 in one call
+
+## Section 0 — Error diagnostics
+
+Almost every crash reported from this file traces back to one of two causes,
+so this section handles both once, in one place, instead of every function
+re-inventing its own error text.
+
+```
+_ON_WINDOWS = True only when running on Windows
+    # Windows needs an extra one-time driver step (Zadig) that Mac and
+    # Linux don't — see README.md "Signal generator setup (Windows only)".
+    # Messages below only mention that step when actually on Windows.
+
+_VISA_ERROR_HELP maps a pyvisa error abbreviation to a sentence that says
+    both what happened and what to do about it, e.g.:
+        "VI_ERROR_TMO"          -> "didn't respond in time... try again"
+        "VI_ERROR_RSRC_NFOUND"  -> "no longer reachable... check the cable"
+        "VI_ERROR_RSRC_BUSY"    -> "already in use by another program..."
+
+function _describe_visa_error(visa_error):
+    look up visa_error's abbreviation in _VISA_ERROR_HELP
+    if found: return that specific sentence
+    if not found: return pyvisa's own generic description
+        # nothing is ever hidden — worst case you just get pyvisa's
+        # original message for an error code this lab hasn't seen before
+
+function _require_instrument(instr, action):
+    if instr is nothing:
+        print "[ERROR] Cannot {action} — no instrument is connected."
+        print "  This usually means open_connection() returned None"
+        print "  earlier and that result was used without being checked."
+        return False
+    return True
+```
+
+Every function below that takes `instr` as its first argument calls
+`_require_instrument()` first, and every function that catches a
+`pyvisa.VisaIOError` prints `_describe_visa_error(e)` instead of the
+error's raw, generic description text.
 
 ## Section 1 — Safety clamps
 
@@ -72,61 +113,95 @@ every waveform setter below calls them first.
 
 ```
 function find_instruments(resource_manager):
-    ask the resource manager to list every connected VISA device
+    try to ask the resource manager to list every connected VISA device
+    if that itself raised an error:
+        print "[ERROR] Could not scan for instruments" plus a reinstall
+            hint (mentions Zadig/libusb-package only if _ON_WINDOWS)
+        return nothing
     if nothing found:
-        print an error and return nothing
+        print a NUMBERED checklist: is it powered on and plugged in?
+            (Windows only) has Zadig bound a WinUSB driver? is
+            libusb-package installed? then a usb.core command to test
+            the driver layer directly, pointing at README.md for detail
+        return nothing
     print each device's address
     return the list of addresses
 
 function connect_instrument(resource_manager, address_list, index):
-    open a session with the device at address_list[index]
+    if address_list is empty:
+        print an error and return nothing
+    if index is out of range for address_list:
+        print an error naming the bad index and how many were found
+        return nothing
+    try to open a session with the device at address_list[index]
+    if that raised a VISA error: print _describe_visa_error(e), return nothing
+    if that raised anything else: print "Unexpected error", return nothing
     set a 10 second timeout so a stuck command doesn't hang forever
     tell pyvisa what character marks the end of a message, in and out
     return the open session handle
 
 function open_connection(index):
     # one-call shortcut combining the two functions above
-    create a resource manager
+    try to create a resource manager
+    if that failed: print "pip install pyvisa pyvisa-py" (+ Zadig hint on
+        Windows), return nothing
     addresses = find_instruments(resource_manager)
-    if none found: return nothing
+    if none found: return nothing  # find_instruments() already explained why
     return connect_instrument(resource_manager, addresses, index)
 
 function close_connection(instrument):
-    close the session
-    print confirmation
+    if not _require_instrument(instrument, "close the connection"): return
+    try to close the session
+    if that raised a VISA error: print _describe_visa_error(e) as a
+        [WARNING] — this is usually harmless, the instrument was probably
+        already unplugged or powered off
+    else: print confirmation
 ```
 
 Every script in the project follows this pattern: call `open_connection()`,
 check whether it returned nothing, and if it returned something call
-`close_connection()` once the experiment is finished.
+`close_connection()` once the experiment is finished. `connect_instrument()`
+and `open_connection()` can now both return nothing on failure (not just
+"no instrument found") — always check the result before using it.
 
 ## Section 3 — Status queries (read-only)
 
 ```
 function get_identity(instrument):
-    send the standard "*IDN?" query
+    if not _require_instrument(instrument, "read the instrument identity"):
+        return nothing
+    try to send the standard "*IDN?" query
+    if that raised a VISA error: print _describe_visa_error(e), return nothing
     return the instrument's manufacturer, model, and serial number as text
 
 function get_output_status(instrument, channel):
-    ask "C{channel}:OUTP?"
+    if not _require_instrument(...): return nothing
+    try to ask "C{channel}:OUTP?"
+    if that raised a VISA error: print _describe_visa_error(e), return nothing
     return the raw ON/OFF status text
 
 function get_wave_status(instrument, channel):
-    ask "C{channel}:BSWV?"
+    if not _require_instrument(...): return nothing
+    try to ask "C{channel}:BSWV?"
+    if that raised a VISA error: print _describe_visa_error(e), return nothing
     return a text summary of waveform type, frequency, amplitude, offset, etc.
 ```
 
 None of these three change anything on the instrument — they only read
-current values back.
+current values back. All three now return nothing (instead of crashing) if
+`instrument` is nothing or the USB link drops mid-query.
 
 ## Section 4 — Output control
 
 ```
 function turn_on_output(instrument, channel):
+    if not _require_instrument(instrument, "turn on channel {channel}"):
+        return nothing
     send "C{channel}:OUTP ON"
     wait half a second for the physical relay to close
     query the new status to confirm it changed
-    return the channel number, or nothing if a communication error happened
+    return the channel number, or nothing if a VISA error happened
+        (message uses _describe_visa_error(e), not the raw description)
 
 function turn_off_output(instrument, channel):
     same as above, but sends "OUTP OFF"
@@ -143,6 +218,8 @@ briefly, then read the value back to confirm.
 
 ```
 function set_waveform(instrument, waveform_name, channel):
+    if not _require_instrument(instrument, "set the waveform on channel {channel}"):
+        return nothing
     look up the SCPI keyword for the requested waveform name
         (sine -> SINE, square -> SQUARE, ramp -> RAMP, etc.)
     if the name is not recognized:
@@ -153,32 +230,41 @@ function set_waveform(instrument, waveform_name, channel):
     return the waveform name that was applied
 
 function set_frequency(instrument, frequency, channel, waveform):
+    if not _require_instrument(...): return nothing
     frequency = clamp_frequency(frequency, waveform)
     send "C{channel}:BSWV FRQ,{frequency}"
     wait 200ms, then read back the settings
     return the frequency actually sent
 
 function set_amplitude(instrument, amplitude, channel):
+    if not _require_instrument(...): return nothing
     amplitude = clamp_amplitude(amplitude)
     send "C{channel}:BSWV AMP,{amplitude}"
     wait 200ms, then read back the settings
     return the amplitude actually sent
 
 function set_offset(instrument, offset, amplitude, channel):
+    if not _require_instrument(...): return nothing
     offset = clamp_offset(offset, amplitude)
     send "C{channel}:BSWV OFST,{offset}"
     wait 200ms, then read back the settings
     return the offset actually sent
 ```
 
-Every setter is wrapped in error handling: if the USB communication fails
-mid-command, an error message prints and the function returns nothing instead
-of crashing the whole experiment.
+Every setter checks `instrument` is not nothing before doing anything else,
+and is wrapped in error handling: if the USB communication fails
+mid-command, `_describe_visa_error(e)` prints a specific, actionable message
+and the function returns nothing instead of crashing the whole experiment.
 
 ## Section 6 — Convenience wrapper
 
 ```
 function configure_channel(instrument, waveform, frequency, amplitude, offset, channel):
+    if not _require_instrument(instrument, "configure channel {channel}"):
+        return a dictionary with all five values set to nothing
+        # checked once here so a missing instrument prints ONE clear
+        # message instead of five (one from each sub-call below)
+
     applied_waveform  = set_waveform(instrument, waveform, channel)
     applied_frequency = set_frequency(instrument, frequency, channel,
                                        waveform = applied_waveform or waveform)

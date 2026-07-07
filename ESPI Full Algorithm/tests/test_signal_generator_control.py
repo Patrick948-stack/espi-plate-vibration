@@ -534,3 +534,225 @@ class TestConfigureChannel:
         assert result["waveform"] is None
         # frequency, amplitude, offset should still be attempted
         assert result["frequency"] is not None
+
+
+# ===========================================================================
+# SECTION 7 — ERROR DIAGNOSTICS
+# ===========================================================================
+# Covers _describe_visa_error(), _require_instrument(), and every place that
+# now (a) rejects instr=None with a specific message instead of crashing
+# with AttributeError, and (b) translates a pyvisa.VisaIOError into an
+# actionable sentence instead of printing pyvisa's generic e.description.
+# ===========================================================================
+
+import pyvisa as _pyvisa  # local alias so "pyvisa" stays free for per-test imports above
+
+
+class TestDescribeVisaError:
+    def test_known_error_code_returns_specific_help(self):
+        e = _pyvisa.VisaIOError(-1073807339)  # VI_ERROR_TMO
+        message = sg._describe_visa_error(e)
+        assert "did not respond in time" in message
+
+    def test_resource_not_found_returns_specific_help(self):
+        from pyvisa import constants
+        e = _pyvisa.VisaIOError(constants.VI_ERROR_RSRC_NFOUND)
+        message = sg._describe_visa_error(e)
+        assert "no longer reachable" in message
+
+    def test_resource_busy_returns_specific_help(self):
+        from pyvisa import constants
+        e = _pyvisa.VisaIOError(constants.VI_ERROR_RSRC_BUSY)
+        message = sg._describe_visa_error(e)
+        assert "already in use" in message
+
+    def test_unrecognised_error_code_falls_back_to_pyvisa_description(self):
+        from pyvisa import constants
+        e = _pyvisa.VisaIOError(constants.VI_ERROR_NLISTENERS)  # not in our lookup table
+        message = sg._describe_visa_error(e)
+        assert message == e.description
+
+
+class TestRequireInstrument:
+    def test_none_returns_false_and_explains(self, capsys):
+        result = sg._require_instrument(None, "set the frequency")
+        assert result is False
+        out = capsys.readouterr().out
+        assert "set the frequency" in out
+        assert "open_connection()" in out
+
+    def test_real_instrument_returns_true_silently(self, capsys):
+        instr = make_mock_instrument()
+        result = sg._require_instrument(instr, "set the frequency")
+        assert result is True
+        assert capsys.readouterr().out == ""
+
+
+class TestFindInstrumentsErrorPaths:
+    def test_list_resources_raising_is_caught(self, capsys):
+        mock_rm = MagicMock()
+        mock_rm.list_resources.side_effect = RuntimeError("backend not started")
+        result = sg.find_instruments(mock_rm)
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Could not scan for instruments" in out
+
+    def test_no_instruments_lists_numbered_steps(self, capsys):
+        mock_rm = MagicMock()
+        mock_rm.list_resources.return_value = ()
+        sg.find_instruments(mock_rm)
+        out = capsys.readouterr().out
+        assert "1. Is the signal generator powered on" in out
+
+    def test_windows_steps_shown_only_on_windows(self, capsys):
+        mock_rm = MagicMock()
+        mock_rm.list_resources.return_value = ()
+        with patch.object(sg, "_ON_WINDOWS", True):
+            sg.find_instruments(mock_rm)
+        out = capsys.readouterr().out
+        assert "Zadig" in out
+        assert "libusb-package" in out
+
+    def test_non_windows_steps_hide_windows_instructions(self, capsys):
+        mock_rm = MagicMock()
+        mock_rm.list_resources.return_value = ()
+        with patch.object(sg, "_ON_WINDOWS", False):
+            sg.find_instruments(mock_rm)
+        out = capsys.readouterr().out
+        assert "Zadig" not in out
+        assert "Unplug and replug the USB cable" in out
+
+
+class TestConnectInstrumentErrorPaths:
+    def test_empty_instrs_returns_none(self, capsys):
+        mock_rm = MagicMock()
+        result = sg.connect_instrument(mock_rm, (), index=0)
+        assert result is None
+        out = capsys.readouterr().out
+        assert "no instrument addresses were given" in out
+
+    def test_index_out_of_range_returns_none(self, capsys):
+        mock_rm = MagicMock()
+        result = sg.connect_instrument(mock_rm, ("USB0::A",), index=5)
+        assert result is None
+        out = capsys.readouterr().out
+        assert "index=5 is out of range" in out
+        assert "only 1 instrument" in out
+        mock_rm.open_resource.assert_not_called()
+
+    def test_negative_index_returns_none(self, capsys):
+        mock_rm = MagicMock()
+        result = sg.connect_instrument(mock_rm, ("USB0::A",), index=-1)
+        assert result is None
+
+    def test_open_resource_visa_error_returns_none(self, capsys):
+        mock_rm = MagicMock()
+        mock_rm.open_resource.side_effect = _pyvisa.VisaIOError(-1073807339)
+        result = sg.connect_instrument(mock_rm, ("USB0::A",), index=0)
+        assert result is None
+        out = capsys.readouterr().out
+        assert "did not respond in time" in out
+
+    def test_open_resource_unexpected_error_returns_none(self, capsys):
+        mock_rm = MagicMock()
+        mock_rm.open_resource.side_effect = ValueError("bad address string")
+        result = sg.connect_instrument(mock_rm, ("USB0::A",), index=0)
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Unexpected error" in out
+        assert "bad address string" in out
+
+
+class TestOpenConnectionErrorPaths:
+    def test_resource_manager_creation_failure_returns_none(self, capsys):
+        with patch("signal_generator_control.pyvisa.ResourceManager",
+                   side_effect=OSError("no VISA library found")):
+            result = sg.open_connection()
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Could not start a VISA resource manager" in out
+        assert "pip install pyvisa pyvisa-py" in out
+
+    def test_windows_mentions_zadig_on_resource_manager_failure(self, capsys):
+        with patch("signal_generator_control.pyvisa.ResourceManager",
+                   side_effect=OSError("no VISA library found")), \
+             patch.object(sg, "_ON_WINDOWS", True):
+            sg.open_connection()
+        out = capsys.readouterr().out
+        assert "Zadig" in out
+
+
+class TestCloseConnectionErrorPaths:
+    def test_none_instrument_does_not_crash(self, capsys):
+        sg.close_connection(None)  # must not raise
+        out = capsys.readouterr().out
+        assert "close the connection" in out
+
+    def test_visa_error_on_close_is_caught(self, capsys):
+        instr = make_mock_instrument()
+        instr.close.side_effect = _pyvisa.VisaIOError(-1073807339)
+        sg.close_connection(instr)  # must not raise
+        out = capsys.readouterr().out
+        assert "did not close cleanly" in out
+
+
+class TestNoneInstrumentGuards:
+    """
+    Every function that takes `instr` as its first argument must reject
+    None with a specific message and return None, instead of crashing with
+    AttributeError deep inside pyvisa. Parametrized over all of them so a
+    future function that forgets this guard shows up as a clear failure.
+    """
+
+    @pytest.mark.parametrize("call", [
+        lambda: sg.get_identity(None),
+        lambda: sg.get_output_status(None),
+        lambda: sg.get_wave_status(None),
+        lambda: sg.turn_on_output(None),
+        lambda: sg.turn_off_output(None),
+        lambda: sg.set_waveform(None, "sine"),
+        lambda: sg.set_frequency(None, 1000.0),
+        lambda: sg.set_amplitude(None, 1.0),
+        lambda: sg.set_offset(None, 0.0),
+    ])
+    def test_returns_none_instead_of_crashing(self, call, capsys):
+        result = call()
+        assert result is None
+        out = capsys.readouterr().out
+        assert "[ERROR] Cannot" in out
+        assert "no instrument is connected" in out
+
+    def test_configure_channel_returns_all_none_dict(self, capsys):
+        result = sg.configure_channel(None, "sine", 1000.0, 1.0, 0.0, channel=1)
+        assert result == {
+            "waveform": None,
+            "frequency": None,
+            "amplitude": None,
+            "offset": None,
+            "channel output": None,
+        }
+        out = capsys.readouterr().out
+        # Exactly one guard message, not five (one per sub-call it never made).
+        assert out.count("[ERROR] Cannot") == 1
+
+
+class TestQueryFunctionsVisaErrors:
+    def test_get_identity_visa_error_returns_none(self, capsys):
+        instr = make_mock_instrument()
+        instr.query.side_effect = _pyvisa.VisaIOError(-1073807339)
+        result = sg.get_identity(instr)
+        assert result is None
+        out = capsys.readouterr().out
+        assert "Could not read instrument identity" in out
+
+    def test_get_output_status_visa_error_returns_none(self, capsys):
+        instr = make_mock_instrument()
+        instr.query.side_effect = _pyvisa.VisaIOError(-1073807339)
+        result = sg.get_output_status(instr, channel=1)
+        assert result is None
+
+    def test_get_wave_status_visa_error_returns_none(self, capsys):
+        instr = make_mock_instrument()
+        instr.query.side_effect = _pyvisa.VisaIOError(-1073807339)
+        result = sg.get_wave_status(instr, channel=1)
+        assert result is None
