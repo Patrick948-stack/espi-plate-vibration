@@ -798,6 +798,33 @@ def build_filename(frequency_hz: float, exposure_us: float,
             f"{exposure_us:06.0f}us.{extension}")
 
 
+def _resolve_output_dir(output_dir: str | None) -> str | None:
+    """Return a safe output directory for image saves."""
+    if output_dir is None:
+        return os.path.join(os.path.expanduser("~"), "Desktop")
+
+    expanded = os.path.expanduser(output_dir)
+    if not os.path.isabs(expanded):
+        return os.path.abspath(expanded)
+
+    abs_dir = os.path.abspath(expanded)
+    home_dir = os.path.abspath(os.path.expanduser("~"))
+    cwd_dir = os.path.abspath(os.getcwd())
+
+    try:
+        under_home = os.path.commonpath([home_dir, abs_dir]) == home_dir
+        under_cwd = os.path.commonpath([cwd_dir, abs_dir]) == cwd_dir
+    except ValueError:
+        print(f"[save_image] Refusing to use output directory on a different drive: {abs_dir}")
+        return None
+
+    if not under_home and not under_cwd:
+        print(f"[save_image] Refusing to create output directory outside home/current working directory: {abs_dir}")
+        return None
+
+    return abs_dir
+
+
 def save_image(image: np.ndarray, output_dir: str = None,
                frequency_hz: float = 0.0, exposure_us: float = 0.0,
                step: str = "frame", bit_depth: str = "8bit") -> str | None:
@@ -819,8 +846,9 @@ def save_image(image: np.ndarray, output_dir: str = None,
         path = save_image(diff, "output/", 440.0, 10000, "espi_raw")
     """
     try:
+        output_dir = _resolve_output_dir(output_dir)
         if output_dir is None:
-            output_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+            return None
 
         extension = "tiff" if bit_depth == "16bit" else "png"
         filename  = build_filename(frequency_hz, exposure_us, step, extension)

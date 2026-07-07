@@ -840,6 +840,38 @@ def build_filename(frequency_hz: float, exposure_us: float, step: str,
     return f"{step}_{date_str}_{freq_str}Hz_{exposure_us:06.0f}us.{extension}"
 
 
+def _resolve_output_dir(output_dir: str | None) -> str | None:
+    """Return a safe output directory for image saves.
+
+    Relative paths are resolved against the current working directory.
+    Absolute paths are allowed when they are inside the user's home directory
+    or the current working directory, or when they already exist.
+    """
+    if output_dir is None:
+        return os.path.join(os.path.expanduser("~"), "Desktop")
+
+    expanded = os.path.expanduser(output_dir)
+    if not os.path.isabs(expanded):
+        return os.path.abspath(expanded)
+
+    abs_dir = os.path.abspath(expanded)
+    home_dir = os.path.abspath(os.path.expanduser("~"))
+    cwd_dir = os.path.abspath(os.getcwd())
+
+    try:
+        under_home = os.path.commonpath([home_dir, abs_dir]) == home_dir
+        under_cwd = os.path.commonpath([cwd_dir, abs_dir]) == cwd_dir
+    except ValueError:
+        print(f"[save_image] Refusing to use output directory on a different drive: {abs_dir}")
+        return None
+
+    if not under_home and not under_cwd:
+        print(f"[save_image] Refusing to create output directory outside home/current working directory: {abs_dir}")
+        return None
+
+    return abs_dir
+
+
 def save_image(image: np.ndarray, output_dir: str = None, frequency_hz: float = 0.0,
                exposure_us: float = 0.0, step: str = "frame", bit_depth: str = "8bit") -> str | None:
     """
@@ -864,12 +896,10 @@ def save_image(image: np.ndarray, output_dir: str = None, frequency_hz: float = 
         path = save_image(frame, "output/", 440.0, 10000, "bracing_added")
     """
     try:
-        # If the caller didn't supply a folder, fall back to the Desktop.
-        # os.path.expanduser("~") finds the current user's home folder
-        # (e.g. "C:\Users\Patrick" or "/Users/Patrick"), so this works on
-        # Windows, Mac, and Linux without hardcoding a username.
+        output_dir = _resolve_output_dir(output_dir)
         if output_dir is None:
-            output_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+            return None
+
         # Choose the extension to MATCH the bit depth, so the filename and
         # the actual file format can never contradict each other.
         extension = "tiff" if bit_depth == "16bit" else "png"
