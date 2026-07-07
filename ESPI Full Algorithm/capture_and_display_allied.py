@@ -18,13 +18,20 @@ HOW TO RUN
 
 HOW TO CHANGE SETTINGS
 -----------------------
-Edit the values under SETTINGS below.
+Edit the values under SETTINGS below, or call main() directly with your own
+values, exactly what monitor.py does:
+
+    import capture_and_display_allied as cad_av
+    cad_av.main(camera_index=0, exposure_us=10000, gain=0.0, gain_factor=20)
+
+Importing this file no longer opens a camera by itself, only main() does.
 
 CAMERA INDEX NOTE
 -----------------
-CAMERA_INDEX = 0 picks the first Allied Vision camera the SDK finds.
+camera_index = 0 picks the first Allied Vision camera the SDK finds.
 If you have multiple cameras connected, try 1, 2, etc.
-Set LIST_CAMERAS = True to print all detected cameras and their IDs, then exit.
+Pass list_cameras=True to main() to print all detected cameras and their
+IDs instead of opening a live feed.
 
 DEPENDENCIES
 ------------
@@ -38,7 +45,7 @@ import vmbpy
 
 
 # ==============================================================================
-# SETTINGS
+# SETTINGS — used only when this file is run directly, not through monitor.py
 # ==============================================================================
 
 CAMERA_INDEX  = 0           # index of the Allied Vision camera to use (0 = first found)
@@ -46,7 +53,11 @@ EXPOSURE_US   = 10000       # exposure time in microseconds (10000 µs = 10 ms)
                             #   1000   =  1 ms  → short / dark
                             #  10000   = 10 ms  → medium (good starting point)
                             # 100000   = 100 ms → long / bright
+GAIN          = None        # camera gain in dB, or None to leave it unchanged
 LIST_CAMERAS  = False       # set True to print all detected cameras and exit
+
+Gain_factor = 20 # Factor by which the difference will be multiplied
+
 
 
 # ==============================================================================
@@ -60,7 +71,7 @@ def get_camera(vmb, index):
         raise RuntimeError("No Allied Vision cameras detected. Check USB/GigE connection.")
     if index >= len(cams):
         raise RuntimeError(
-            f"CAMERA_INDEX={index} is out of range — only {len(cams)} camera(s) found."
+            f"camera_index={index} is out of range — only {len(cams)} camera(s) found."
         )
     return cams[index]
 
@@ -78,6 +89,21 @@ def set_exposure(cam, exposure_us):
         print(f"  [WARNING] Could not set exposure: {e}")
 
 
+def set_gain(cam, gain):
+    """Set manual gain in dB (disables auto-gain first). Skipped if gain is None."""
+    if gain is None:
+        return
+    try:
+        cam.GainAuto.set("Off")
+    except Exception:
+        pass
+    try:
+        cam.Gain.set(float(gain))
+        print(f"  Gain set to {gain} dB.")
+    except Exception as e:
+        print(f"  [WARNING] Could not set gain: {e}")
+
+
 def frame_to_gray(frame):
     """Convert a vmbpy Frame to an 8-bit greyscale numpy array."""
     cv_img = frame.as_opencv_image()
@@ -92,55 +118,85 @@ def frame_to_gray(frame):
 # MAIN
 # ==============================================================================
 
-with vmbpy.VmbSystem.get_instance() as vmb:
+def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
+         gain_factor=Gain_factor, list_cameras=LIST_CAMERAS):
+    """
+    Open an Allied Vision camera and show the live feed and frame
+    subtraction windows until 'q' is pressed.
 
-    if LIST_CAMERAS:
-        cams = vmb.get_all_cameras()
-        print(f"Found {len(cams)} Allied Vision camera(s):")
-        for i, c in enumerate(cams):
-            print(f"  [{i}]  ID={c.get_id()}  Name={c.get_name()}  Model={c.get_model()}")
-        raise SystemExit(0)
+    Args:
+        camera_index : index of the Allied Vision camera to use (0 = first found)
+        exposure_us  : exposure time in microseconds
+        gain         : camera gain in dB, or None to leave it unchanged
+        gain_factor  : multiplier applied to the subtraction image so faint
+                       fringes are easier to see on screen. Uses
+                       cv2.convertScaleAbs, which saturates at 255 instead
+                       of wrapping around the way plain multiplication of a
+                       uint8 array would.
+        list_cameras : if True, print all detected cameras and their IDs,
+                       then return without opening a live feed
+    """
+    with vmbpy.VmbSystem.get_instance() as vmb:
 
-    cam = get_camera(vmb, CAMERA_INDEX)
-    print(f"Using camera [{CAMERA_INDEX}]: {cam.get_name()}  (ID={cam.get_id()})")
-
-    print("Two windows open:")
-    print("  'Live Feed'         — raw frame from the camera")
-    print("  'Frame Subtraction' — absolute difference between consecutive frames")
-    print("Press 'q' to quit.")
-
-    with cam:
-        set_exposure(cam, EXPOSURE_US)
+        if list_cameras:
+            cams = vmb.get_all_cameras()
+            print(f"Found {len(cams)} Allied Vision camera(s):")
+            for i, c in enumerate(cams):
+                print(f"  [{i}]  ID={c.get_id()}  Name={c.get_name()}  Model={c.get_model()}")
+            return
 
         try:
-            cam.set_pixel_format(vmbpy.PixelFormat.Mono8)
-        except Exception:
-            pass
+            cam = get_camera(vmb, camera_index)
+        except RuntimeError as e:
+            print(f"[ERROR] {e}")
+            return
 
-        prev_gray = None
+        print(f"Using camera [{camera_index}]: {cam.get_name()}  (ID={cam.get_id()})")
 
-        while True:
+        print("Two windows open:")
+        print("  'Live Feed'         — raw frame from the camera")
+        print("  'Frame Subtraction' — absolute difference between consecutive frames")
+        print("Press 'q' to quit.")
+
+        with cam:
+            set_exposure(cam, exposure_us)
+            set_gain(cam, gain)
+
             try:
-                frame = cam.get_frame(timeout_ms=2000)
-            except vmbpy.VmbTimeout:
-                print("  [WARNING] Frame timeout — retrying...")
-                continue
-            except Exception as e:
-                print(f"  [ERROR] Frame grab failed: {e}")
-                print("  Stopping. If this repeats, unplug and replug the USB cable.")
-                break
+                cam.set_pixel_format(vmbpy.PixelFormat.Mono8)
+            except Exception:
+                pass
 
-            gray = frame_to_gray(frame)
+            prev_gray = None
 
-            cv2.imshow("Live Feed", gray)
+            try:
+                while True:
+                    try:
+                        frame = cam.get_frame(timeout_ms=2000)
+                    except vmbpy.VmbTimeout:
+                        print("  [WARNING] Frame timeout — retrying...")
+                        continue
+                    except Exception as e:
+                        print(f"  [ERROR] Frame grab failed: {e}")
+                        print("  Stopping. If this repeats, unplug and replug the USB cable.")
+                        break
 
-            if prev_gray is not None:
-                diff = cv2.absdiff(gray, prev_gray)
-                cv2.imshow("Frame Subtraction", diff)
+                    gray = frame_to_gray(frame)
 
-            prev_gray = gray
+                    cv2.imshow("Live Feed", gray)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+                    if prev_gray is not None:
+                        diff = cv2.absdiff(gray, prev_gray)
+                        amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
+                        cv2.imshow("Frame Subtraction", amplified)
 
-        cv2.destroyAllWindows()
+                    prev_gray = gray
+
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+            finally:
+                cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

@@ -5,7 +5,9 @@ Author: Patrick Mulikuza
 Connects to a Basler camera and opens two live windows simultaneously:
   - "Live Feed"         : raw frames straight from the camera
   - "Frame Subtraction" : absolute difference between each consecutive pair of
-                          frames — bright pixels show where the image changed
+                          frames, amplified by gain_factor so faint fringes
+                          are easier to see. Bright pixels show where the
+                          image changed
 
 Press 'q' to quit.
 
@@ -15,7 +17,11 @@ HOW TO RUN
 
 HOW TO CHANGE THE BRIGHTNESS
 -----------------------------
-Change EXPOSURE_US (shutter time in microseconds) and GAIN_DB below.
+Change EXPOSURE_US, GAIN_DB, and Gain_factor below, or call main() directly
+with your own values, exactly what monitor.py does:
+
+    import capture_and_display as cad
+    cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20)
 
 DEPENDENCIES
 ------------
@@ -34,25 +40,39 @@ import numpy as np
 
 
 # ==============================================================================
-# SETTINGS
+# SETTINGS — used only when this file is run directly, not through monitor.py
 # ==============================================================================
 
 EXPOSURE_US = 60000    # shutter time in microseconds (10 000 µs = 10 ms)
 GAIN_DB     = 1.0      # amplification in dB. 0 means no extra gain
+Gain_factor = 20        # multiplier applied to the subtraction display
 
 
 # ==============================================================================
 # MAIN
 # ==============================================================================
 
-def main():
+def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor):
+    """
+    Open the first Basler camera and show the live feed and frame
+    subtraction windows until 'q' is pressed.
+
+    Args:
+        exposure_us : shutter time in microseconds
+        gain_db     : camera gain in dB
+        gain_factor : multiplier applied to the subtraction image so faint
+                      fringes are easier to see on screen. Uses
+                      cv2.convertScaleAbs, which saturates at 255 instead of
+                      wrapping around the way plain multiplication of a
+                      uint8 array would.
+    """
     camera = connect_camera()
     if camera is None:
         print("No camera found. Check that it is plugged in and try again.")
         return
 
-    set_exposure_manual(camera, EXPOSURE_US)
-    set_gain_manual(camera, GAIN_DB)
+    set_exposure_manual(camera, exposure_us)
+    set_gain_manual(camera, gain_db)
 
     print("Two windows open:")
     print("  'Live Feed'         — raw frame from the camera")
@@ -74,8 +94,9 @@ def main():
                 cv2.imshow("Live Feed", frame)
 
                 if prev_frame is not None:
-                    diff = 20 * cv2.absdiff(frame, prev_frame)
-                    cv2.imshow("Frame Subtraction", diff)
+                    diff = cv2.absdiff(frame, prev_frame)
+                    amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
+                    cv2.imshow("Frame Subtraction", amplified)
 
                 prev_frame = frame
             else:

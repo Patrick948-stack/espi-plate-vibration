@@ -3,11 +3,17 @@
 ## What this file is for
 
 This is the Allied Vision equivalent of `capture_and_display_cv2.py` — a
-quick standalone preview script using the `vmbpy` (Vimba X) SDK instead of
-generic OpenCV video capture. It opens the same two windows: a live raw feed
-and a live frame-to-frame difference view. Unlike the other two files in
-this group, this script is not wrapped in a `main()` function — its logic
-runs directly from top to bottom as soon as the file is executed.
+quick preview script using the `vmbpy` (Vimba X) SDK instead of generic
+OpenCV video capture. It opens the same two windows: a live raw feed and a
+live frame-to-frame difference view.
+
+This used to be the odd one out in the group: its logic ran directly from
+top to bottom the moment the file was imported, not just when run directly.
+That meant simply writing `import capture_and_display_allied` anywhere would
+immediately try to open a physical camera. It is now wrapped in a `main()`
+function, exactly like the other two scripts, so it can be imported safely.
+`monitor.py` relies on this: it imports this file and calls `main()` only
+after the user has confirmed their settings.
 
 ## How to run it
 
@@ -17,12 +23,14 @@ python3 capture_and_display_allied.py
 
 Press `q` to quit.
 
-## Settings at the top of the file
+## Settings at the top of the file (used only when run directly)
 
 ```
 CAMERA_INDEX  = 0       # which Allied Vision camera to use (0 = first found)
 EXPOSURE_US   = 10000   # exposure time in microseconds (10 ms)
+GAIN          = None    # camera gain in dB, or None to leave it unchanged
 LIST_CAMERAS  = False   # set True to print all detected cameras and exit
+Gain_factor   = 20      # multiplier applied to the subtraction display only
 ```
 
 ## Helper functions
@@ -39,6 +47,12 @@ function set_exposure(cam, exposure_us):
     write the exposure value in microseconds
     print a warning if it could not be applied
 
+function set_gain(cam, gain):
+    if gain is nothing: do nothing and return (caller wants gain untouched)
+    turn off auto-gain (ignore if unsupported on this model)
+    write the gain value in dB
+    print a warning if it could not be applied
+
 function frame_to_gray(frame):
     convert an SDK frame object into an OpenCV-style image
     if it has 3 dimensions:
@@ -47,45 +61,55 @@ function frame_to_gray(frame):
     return the plain 2D greyscale array
 ```
 
-## Step-by-step pseudocode of the main script body
+## Step-by-step pseudocode
 
 ```
-start the Vimba SDK
+function main(camera_index = CAMERA_INDEX, exposure_us = EXPOSURE_US,
+              gain = GAIN, gain_factor = Gain_factor,
+              list_cameras = LIST_CAMERAS):
+    start the Vimba SDK
 
-if LIST_CAMERAS is True:
-    print every detected camera's ID, name, and model
-    stop the program here
+    if list_cameras is True:
+        print every detected camera's ID, name, and model
+        return (no live feed opened)
 
-camera = get_camera(vmb, CAMERA_INDEX)
-print which camera is being used
+    try to get_camera(vmb, camera_index)
+    if that raised an error (no cameras / bad index):
+        print the error message and return, instead of crashing
 
-open the camera:
-    set_exposure(camera, EXPOSURE_US)
-    try to set pixel format to Mono8 (ignore if it fails)
+    print which camera is being used
 
-    previous_gray_frame = nothing
+    open the camera:
+        set_exposure(camera, exposure_us)
+        set_gain(camera, gain)
+        try to set pixel format to Mono8 (ignore if it fails)
 
-    loop forever:
-        try to grab one frame, waiting up to 2 seconds
-        if it timed out: print a warning and try again
-        if it failed for another reason: print an error and stop
+        previous_gray_frame = nothing
 
-        convert the frame to greyscale using frame_to_gray()
-        show it in the "Live Feed" window
+        loop forever:
+            try to grab one frame, waiting up to 2 seconds
+            if it timed out: print a warning and try again
+            if it failed for another reason: print an error and stop
 
-        if there was a previous greyscale frame:
-            difference = absolute difference between this frame and the
-                          previous one
-            show it in the "Frame Subtraction" window
+            convert the frame to greyscale using frame_to_gray()
+            show it in the "Live Feed" window
 
-        remember this frame as "previous_gray_frame"
+            if there was a previous greyscale frame:
+                difference = absolute difference between this frame and
+                              the previous one
+                amplified  = difference scaled by gain_factor, CLIPPED at
+                             255 instead of wrapping around (same fix as
+                             the other two preview scripts)
+                show "amplified" in the "Frame Subtraction" window
 
-        if the 'q' key was pressed: stop looping
+            remember this frame as "previous_gray_frame"
 
-    close all windows
+            if the 'q' key was pressed: stop looping
 
-# closing the "with cam" and "with vmb" blocks automatically releases the
-# camera and shuts down the SDK cleanly, even if an error occurred above
+        close all windows
+
+    # closing the "with cam" and "with vmb" blocks automatically releases
+    # the camera and shuts down the SDK cleanly, even if an error occurred
 ```
 
 ## Why this script exists
@@ -94,4 +118,6 @@ Same purpose as the other two preview scripts, but for Allied Vision
 hardware — a fast way to confirm the camera connects, check that exposure in
 microseconds looks reasonable, and see roughly how much frame-to-frame
 difference the camera picks up, before committing to a full sweep with
-`complete_pipeline_allied_vision.py` or `run_experiment.py`.
+`complete_pipeline_allied_vision.py` or `run_experiment.py`. `monitor.py` is
+the recommended way to run this check now, since it asks for the settings
+interactively and never touches the camera just from being imported.
