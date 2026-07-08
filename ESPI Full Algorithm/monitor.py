@@ -11,8 +11,13 @@ matching capture and display script with two live windows:
                           frames, useful for checking focus and alignment
                           before starting a real sweep
 
-Press 'q' inside either window to close the monitor and return to the
-terminal.
+You can also turn on a third, optional window that graphs the pixel
+intensity of the raw live feed frame, either as a histogram (updates every
+frame) or a 3D surface (updates a few times per second — see live_graphs.py
+for why a full 3D redraw cannot keep up with a full camera frame rate).
+
+Press 'q' inside any of the camera windows to close the monitor and return
+to the terminal.
 
 HOW TO RUN
 ----------
@@ -125,6 +130,7 @@ def choose_camera_settings():
               - 'exposure_s' (float)
               - 'gain_db' (float)
               - 'gain_factor' (float)
+              - 'graph_type' (str or None)
     """
     section("Step 2 of 3 — Camera settings")
     print()
@@ -140,7 +146,20 @@ def choose_camera_settings():
     print("    screen, not the raw camera data.")
     gain_factor = ask_positive_float("gain_factor", default=20)
 
-    return dict(exposure_s=exposure_s, gain_db=gain_db, gain_factor=gain_factor)
+    print()
+    print("    Optional: show a live graph of each raw frame's pixel")
+    print("    intensity, in a third window alongside the camera preview.")
+    print("      none      — no extra window (fastest, default)")
+    print("      histogram — bar chart of intensity counts, updates every frame")
+    print("      3d        — 3D surface plot, updates a few times per second")
+    print("                  (matplotlib's 3D renderer is too slow to match")
+    print("                  full camera frame rate, even downsampled)")
+    graph_choice = ask("Graph type", default="none", cast=str,
+                        valid=["none", "histogram", "3d"])
+    graph_type = None if graph_choice == "none" else graph_choice
+
+    return dict(exposure_s=exposure_s, gain_db=gain_db, gain_factor=gain_factor,
+                graph_type=graph_type)
 
 
 def confirm_settings(camera_choice, camera_index, settings):
@@ -167,6 +186,7 @@ def confirm_settings(camera_choice, camera_index, settings):
     print(f"    Exposure      :  {settings['exposure_s']} s")
     print(f"    Gain          :  {settings['gain_db']} dB")
     print(f"    gain_factor   :  {settings['gain_factor']}")
+    print(f"    Graph         :  {settings.get('graph_type') or 'none'}")
     print()
 
     go = ask(
@@ -221,12 +241,15 @@ def launch_monitor(camera_choice, camera_index, settings):
 
     exposure_us = settings["exposure_s"] * 1_000_000
 
+    graph_type = settings.get("graph_type")
+
     try:
         if camera_choice == "1":
             module.main(
                 exposure_us=exposure_us,
                 gain_db=settings["gain_db"],
                 gain_factor=settings["gain_factor"],
+                graph_type=graph_type,
             )
         elif camera_choice == "2":
             module.main(
@@ -234,6 +257,7 @@ def launch_monitor(camera_choice, camera_index, settings):
                 exposure=math.log2(settings["exposure_s"]),
                 gain=settings["gain_db"],
                 gain_factor=settings["gain_factor"],
+                graph_type=graph_type,
             )
         else:
             module.main(
@@ -241,6 +265,7 @@ def launch_monitor(camera_choice, camera_index, settings):
                 exposure_us=exposure_us,
                 gain=settings["gain_db"],
                 gain_factor=settings["gain_factor"],
+                graph_type=graph_type,
             )
     except ValueError as e:
         # math.log2() raises this for exposure_s <= 0. choose_camera_settings()

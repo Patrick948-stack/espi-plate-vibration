@@ -147,7 +147,7 @@ If all 435 pass, the code is working correctly on your machine and you are ready
 
 ### Stage 8 — Camera-specific setup (only if you have one of these cameras)
 
-The USB webcam or ELP camera works immediately with no extra steps — it uses opencv which is already installed.
+The USB webcam or ELP camera works immediately with no extra steps — it uses opencv which is already installed. `capture_and_display_cv2.py` automatically picks the right OpenCV camera backend for your OS (DirectShow on Windows, AVFoundation on Mac) so this works the same way on either — an earlier version of this file hardcoded the Mac-only backend, which would have made this camera fail to open on Windows.
 
 **Basler camera**
 
@@ -196,20 +196,16 @@ Mac and Linux can skip this stage — the signal generator works immediately onc
 
 Windows needs one extra one-time step. This project talks to the signal generator through `pyvisa-py`, a lightweight backend that needs direct access to the USB device. Windows blocks that kind of direct access by default until a compatible driver is bound to the instrument — Mac and Linux allow it out of the box, which is why this step is Windows-only.
 
-Pick one of the two options below.
+`requirements.txt` already installs the native USB library `pyusb` needs (`libusb-package`) automatically on Windows only — Stage 6's `pip install -r requirements.txt` handles it, nothing extra to run. The one step that genuinely cannot be done through pip is binding a working driver to the instrument, since that's an operating-system-level USB permission, not a Python package. Pick one of the two options below for that.
 
 **Option A — Zadig (recommended: free, ~5 MB, no reboot)**
 
-1. With `venv_physics` active, install the native USB library `pyusb` needs — this does not come with `pip install pyusb` on Windows, and without it `pyvisa-py` will silently see zero instruments even after the driver step below:
-   ```
-   pip install libusb-package
-   ```
-2. Download Zadig from [zadig.akeo.ie](https://zadig.akeo.ie) — a single small executable, no installer needed.
-3. Plug in the signal generator and power it on.
-4. Open Zadig, click **Options > List All Devices**.
-5. In the dropdown, find the signal generator. It may show up under its model name, as **USB Test and Measurement Device**, or as **Unknown Device**. Some instruments list more than one entry (e.g. a separate control interface) — if the first one doesn't work, repeat this step for the others.
-6. Make sure **WinUSB** is selected as the target driver, then click **Replace Driver** (it may say **Install Driver**).
-7. Wait for it to finish, then close Zadig. No reboot needed.
+1. Download Zadig from [zadig.akeo.ie](https://zadig.akeo.ie) — a single small executable, no installer needed.
+2. Plug in the signal generator and power it on.
+3. Open Zadig, click **Options > List All Devices**.
+4. In the dropdown, find the signal generator. It may show up under its model name, as **USB Test and Measurement Device**, or as **Unknown Device**. Some instruments list more than one entry (e.g. a separate control interface) — if the first one doesn't work, repeat this step for the others.
+5. Make sure **WinUSB** is selected as the target driver, then click **Replace Driver** (it may say **Install Driver**).
+6. Wait for it to finish, then close Zadig. No reboot needed.
 
 Check, one layer at a time — with `venv_physics` active:
 
@@ -217,7 +213,7 @@ Check, one layer at a time — with `venv_physics` active:
 python -c "import usb.core; print(list(usb.core.find(find_all=True)))"
 ```
 
-This talks to the USB driver layer directly, without `pyvisa` in the way. An empty list `[]` or a `NoBackendError` here means `libusb-package` (step 1) or the Zadig driver step (steps 2-7) still needs fixing — go back and recheck those before moving on.
+This talks to the USB driver layer directly, without `pyvisa` in the way. An empty list `[]` or a `NoBackendError` here means either `libusb-package` did not install (re-run `pip install -r requirements.txt` and check for errors) or the Zadig driver step above still needs fixing — go back and recheck those before moving on.
 
 Once that prints the device, confirm `pyvisa` sees it too:
 
@@ -278,21 +274,36 @@ If you just want to check focus, alignment, or brightness without running a full
 python monitor.py
 ```
 
-It asks which camera you want to monitor (Basler, USB/webcam, or Allied Vision), the camera index if that camera type supports more than one device, the exposure time in seconds, the gain in dB, and a `gain_factor`. `gain_factor` only brightens what you see in the "Frame Subtraction" window on screen, it does not change the raw camera data or the exposure/gain hardware settings.
+It asks which camera you want to monitor (Basler, USB/webcam, or Allied Vision), the camera index if that camera type supports more than one device, the exposure time in seconds, the gain in dB, a `gain_factor`, and an optional live graph. `gain_factor` only brightens what you see in the "Frame Subtraction" window on screen, it does not change the raw camera data or the exposure/gain hardware settings.
 
-Once you confirm, it opens the matching `capture_and_display*.py` script with two windows:
+Once you confirm, it opens the matching `capture_and_display*.py` script with two windows, plus a third if you asked for a graph:
 
 - **Live Feed** — the raw frame straight from the camera
 - **Frame Subtraction** — the absolute difference between each pair of consecutive frames, amplified by `gain_factor`
+- **histogram / 3d** (optional) — a live graph of the raw frame's pixel intensity, see [Live pixel intensity graph](#live-pixel-intensity-graph) below
 
-Press `q` inside either window to close the monitor and return to the terminal. Basler only ever connects to the first camera pypylon finds (`camera_control.py` has no index parameter), so `monitor.py` skips the camera index question for that choice.
+Press `q` inside any of the camera windows to close the monitor and return to the terminal. Basler only ever connects to the first camera pypylon finds (`camera_control.py` has no index parameter), so `monitor.py` skips the camera index question for that choice.
 
 You can also call each `capture_and_display*.py` script's `main()` directly from your own code instead of going through `monitor.py`:
 
 ```python
 import capture_and_display as cad
-cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20)
+cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20, graph_type="histogram")
 ```
+
+
+## Live pixel intensity graph
+
+`live_graphs.py` provides an optional third preview window: a live graph of the raw "Live Feed" frame's pixel intensity, either as a histogram or a 3D surface. It grew out of two exploratory scripts, `Learning/graph.py` (3D surface of one saved image) and `Learning/graph2.py` (histogram of one saved image) — this file rebuilds both as fast, in-place-updating versions that work on frames straight out of the camera instead of a file on disk.
+
+| Type | What it shows | Update rate |
+|---|---|---|
+| `histogram` | Bar chart: how many pixels have each intensity value (0-255) | Every frame — `numpy.bincount` counts all pixels in one vectorized call, and only the 256 bar heights change per frame, nothing is rebuilt |
+| `3d` | 3D surface: X = column, Y = row, Z = intensity | A few times per second (throttled), not every frame |
+
+The 3D option is intentionally throttled and heavily downsampled. matplotlib's 3D renderer (`mplot3d`) is a pure-Python, non-GPU-accelerated renderer that depth-sorts every quad in the surface on every redraw — there is no way to make a full 3D surface redraw at full camera frame rate (15-30+ fps) in matplotlib, downsampled or not. The histogram has no such ceiling since it only ever updates 256 numbers.
+
+Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`, or `3d`; `none` is the default, so nothing changes for anyone who doesn't ask for it), or pass `graph_type="histogram"` / `graph_type="3d"` directly to any `capture_and_display*.py` script's `main()`.
 
 
 ## What is in this folder
@@ -300,7 +311,8 @@ cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20)
 | File | What it is | What it does |
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
-| `monitor.py` | Script you run | Interactive live preview — pick a camera, set exposure/gain/gain_factor, watch Live Feed + Frame Subtraction |
+| `monitor.py` | Script you run | Interactive live preview — pick a camera, set exposure/gain/gain_factor/graph type, watch Live Feed + Frame Subtraction (+ optional graph) |
+| `live_graphs.py` | Library | Live histogram / 3D surface plot of pixel intensity, `create_live_graph(graph_type)` |
 | `requirements.txt` | Package list | Install everything with `pip install -r requirements.txt` |
 | `complete_pipeline.py` | Script or importable | Full frequency sweep — Basler camera |
 | `complete_pipeline_inclusive.py` | Script or importable | Full frequency sweep — any USB/webcam camera |
@@ -309,9 +321,9 @@ cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20)
 | `camera_control_inclusive.py` | Library | Low-level camera functions — USB/webcam |
 | `camera_control_allied_vision.py` | Library | Low-level camera functions — Allied Vision |
 | `signal_generator_control.py` | Library | Signal generator functions — Siglent SDG |
-| `capture_and_display.py` | Script or importable | Live preview only — Basler. `main(exposure_us, gain_db, gain_factor)` |
-| `capture_and_display_cv2.py` | Script or importable | Live preview only — any camera. `main(camera_index, exposure, gain, gain_factor)` |
-| `capture_and_display_allied.py` | Script or importable | Live preview only — Allied Vision. `main(camera_index, exposure_us, gain, gain_factor, list_cameras)` |
+| `capture_and_display.py` | Script or importable | Live preview only — Basler. `main(exposure_us, gain_db, gain_factor, graph_type)` |
+| `capture_and_display_cv2.py` | Script or importable | Live preview only — any camera. `main(camera_index, exposure, gain, gain_factor, graph_type)` |
+| `capture_and_display_allied.py` | Script or importable | Live preview only — Allied Vision. `main(camera_index, exposure_us, gain, gain_factor, list_cameras, graph_type)` |
 
 
 ## The three pipelines compared

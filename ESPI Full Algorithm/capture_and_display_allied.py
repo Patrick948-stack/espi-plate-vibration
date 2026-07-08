@@ -43,6 +43,8 @@ import cv2
 import numpy as np
 import vmbpy
 
+import live_graphs
+
 
 # ==============================================================================
 # SETTINGS — used only when this file is run directly, not through monitor.py
@@ -119,7 +121,7 @@ def frame_to_gray(frame):
 # ==============================================================================
 
 def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
-         gain_factor=Gain_factor, list_cameras=LIST_CAMERAS):
+         gain_factor=Gain_factor, list_cameras=LIST_CAMERAS, graph_type=None):
     """
     Open an Allied Vision camera and show the live feed and frame
     subtraction windows until 'q' is pressed.
@@ -135,6 +137,10 @@ def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
                        uint8 array would.
         list_cameras : if True, print all detected cameras and their IDs,
                        then return without opening a live feed
+        graph_type   : None (default, no extra window), "histogram", or
+                       "3d". Opens a third window that graphs the pixel
+                       intensity of the raw "Live Feed" frame, updated
+                       live. See live_graphs.py for details.
     """
     with vmbpy.VmbSystem.get_instance() as vmb:
 
@@ -153,9 +159,13 @@ def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
 
         print(f"Using camera [{camera_index}]: {cam.get_name()}  (ID={cam.get_id()})")
 
+        live_graph = live_graphs.create_live_graph(graph_type)
+
         print("Two windows open:")
         print("  'Live Feed'         — raw frame from the camera")
         print("  'Frame Subtraction' — absolute difference between consecutive frames")
+        if live_graph is not None:
+            print(f"  '{graph_type}' graph — live pixel intensity of the raw frame")
         print("Press 'q' to quit.")
 
         with cam:
@@ -185,6 +195,9 @@ def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
 
                     cv2.imshow("Live Feed", gray)
 
+                    if live_graph is not None:
+                        live_graph.update(gray)
+
                     if prev_gray is not None:
                         diff = cv2.absdiff(gray, prev_gray)
                         amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
@@ -196,6 +209,8 @@ def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
                         break
             finally:
                 cv2.destroyAllWindows()
+                if live_graph is not None:
+                    live_graph.close()
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from camera_control import (
     set_exposure_manual,
     set_gain_manual,
 )
+import live_graphs
 import cv2
 import numpy as np
 
@@ -52,7 +53,8 @@ Gain_factor = 20        # multiplier applied to the subtraction display
 # MAIN
 # ==============================================================================
 
-def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor):
+def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor,
+         graph_type=None):
     """
     Open the first Basler camera and show the live feed and frame
     subtraction windows until 'q' is pressed.
@@ -65,6 +67,11 @@ def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor):
                       cv2.convertScaleAbs, which saturates at 255 instead of
                       wrapping around the way plain multiplication of a
                       uint8 array would.
+        graph_type  : None (default, no extra window), "histogram", or "3d".
+                      Opens a third window that graphs the pixel intensity
+                      of the raw "Live Feed" frame, updated live. See
+                      live_graphs.py for how each type works and why the
+                      3d option updates slower than the camera frame rate.
     """
     camera = connect_camera()
     if camera is None:
@@ -74,9 +81,13 @@ def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor):
     set_exposure_manual(camera, exposure_us)
     set_gain_manual(camera, gain_db)
 
+    live_graph = live_graphs.create_live_graph(graph_type)
+
     print("Two windows open:")
     print("  'Live Feed'         — raw frame from the camera")
     print("  'Frame Subtraction' — absolute difference between consecutive frames")
+    if live_graph is not None:
+        print(f"  '{graph_type}' graph — live pixel intensity of the raw frame")
     print("Press 'q' to quit.")
 
     prev_frame = None
@@ -93,6 +104,9 @@ def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor):
 
                 cv2.imshow("Live Feed", frame)
 
+                if live_graph is not None:
+                    live_graph.update(frame)
+
                 if prev_frame is not None:
                     diff = cv2.absdiff(frame, prev_frame)
                     amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
@@ -108,6 +122,8 @@ def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor):
     finally:
         camera.StopGrabbing()
         cv2.destroyAllWindows()
+        if live_graph is not None:
+            live_graph.close()
         disconnect_camera(camera)
 
 

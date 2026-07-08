@@ -294,3 +294,81 @@ class TestGainFactorSaturation:
 
         assert np.all(captured["Frame Subtraction"] == 255)
         assert captured["Frame Subtraction"].dtype == np.uint8
+
+
+# ===========================================================================
+# main() — optional live graph (graph_type)
+# ===========================================================================
+
+class TestGraphType:
+    def _open_cam(self):
+        cam = _make_mock_camera()
+        cam.__enter__ = MagicMock(return_value=cam)
+        cam.__exit__ = MagicMock(return_value=False)
+        return cam
+
+    def test_default_graph_type_creates_no_graph(self):
+        cam = self._open_cam()
+        cam.get_frame.side_effect = [_av_frame(np.full((4, 4), 1, dtype=np.uint8))]
+
+        patcher, vmb = _patch_vmb_system([cam])
+        with patcher, \
+             patch.object(cad_av, "set_exposure"), \
+             patch.object(cad_av, "set_gain"), \
+             patch.object(cad_av, "live_graphs") as mock_live_graphs, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", return_value=ord("q")), \
+             patch("cv2.destroyAllWindows"):
+            cad_av.main()
+
+        mock_live_graphs.create_live_graph.assert_called_once_with(None)
+
+    def test_histogram_graph_type_forwarded_and_updated_per_frame(self):
+        cam = self._open_cam()
+        frame_a = _av_frame(np.full((4, 4), 1, dtype=np.uint8))
+        frame_b = _av_frame(np.full((4, 4), 2, dtype=np.uint8))
+        cam.get_frame.side_effect = [frame_a, frame_b]
+        mock_graph = MagicMock()
+
+        patcher, vmb = _patch_vmb_system([cam])
+        with patcher, \
+             patch.object(cad_av, "set_exposure"), \
+             patch.object(cad_av, "set_gain"), \
+             patch.object(cad_av, "live_graphs") as mock_live_graphs, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", side_effect=[-1, ord("q")]), \
+             patch("cv2.destroyAllWindows"):
+            mock_live_graphs.create_live_graph.return_value = mock_graph
+            cad_av.main(graph_type="histogram")
+
+        mock_live_graphs.create_live_graph.assert_called_once_with("histogram")
+        assert mock_graph.update.call_count == 2
+
+    def test_graph_closed_when_loop_ends_cleanly(self):
+        cam = self._open_cam()
+        cam.get_frame.side_effect = [_av_frame(np.full((4, 4), 1, dtype=np.uint8))]
+        mock_graph = MagicMock()
+
+        patcher, vmb = _patch_vmb_system([cam])
+        with patcher, \
+             patch.object(cad_av, "set_exposure"), \
+             patch.object(cad_av, "set_gain"), \
+             patch.object(cad_av, "live_graphs") as mock_live_graphs, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", return_value=ord("q")), \
+             patch("cv2.destroyAllWindows"):
+            mock_live_graphs.create_live_graph.return_value = mock_graph
+            cad_av.main(graph_type="3d")
+
+        mock_graph.close.assert_called_once()
+
+    def test_no_graph_created_when_no_cameras_detected(self):
+        # The graph must not be created before the camera lookup succeeds —
+        # otherwise a "no camera" error would leave a graph window open
+        # with nothing ever feeding it frames.
+        patcher, vmb = _patch_vmb_system([])
+        with patcher, \
+             patch.object(cad_av, "live_graphs") as mock_live_graphs:
+            cad_av.main(graph_type="histogram")
+
+        mock_live_graphs.create_live_graph.assert_not_called()

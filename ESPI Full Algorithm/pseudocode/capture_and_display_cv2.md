@@ -38,9 +38,17 @@ opens.
 ## Step-by-step pseudocode
 
 ```
+function _capture_backend():
+    # cv2.CAP_AVFOUNDATION only exists on macOS. This file used to
+    # hardcode it unconditionally, which meant the camera would fail to
+    # open (or silently fall back to something slower) on Windows.
+    if running on macOS:   return cv2.CAP_AVFOUNDATION
+    if running on Windows: return cv2.CAP_DSHOW
+    otherwise:              return cv2.CAP_ANY  # let OpenCV pick
+
 function main(camera_index = CAMERA_INDEX, exposure = EXPOSURE,
-              gain = GAIN, gain_factor = Gain_factor):
-    open camera_index using the AVFoundation backend (macOS)
+              gain = GAIN, gain_factor = Gain_factor, graph_type = nothing):
+    open camera_index using _capture_backend()
     if it failed to open:
         print troubleshooting tips (mention camera_index) and stop
 
@@ -49,7 +57,10 @@ function main(camera_index = CAMERA_INDEX, exposure = EXPOSURE,
         this is exactly what monitor.py does before calling main())
     set gain to "gain"
 
-    print instructions for the two windows and the quit key
+    live_graph = live_graphs.create_live_graph(graph_type)
+        # nothing unless graph_type is "histogram" or "3d"
+
+    print instructions for the two (or three) windows and the quit key
 
     previous_gray_frame = nothing
 
@@ -59,6 +70,9 @@ function main(camera_index = CAMERA_INDEX, exposure = EXPOSURE,
 
         convert the frame to greyscale
         show it in the "Live Feed" window
+
+        if live_graph is not nothing:
+            live_graph.update(gray_frame)   # the RAW frame, not the diff
 
         if there was a previous greyscale frame:
             difference = absolute difference between this frame and the
@@ -72,8 +86,8 @@ function main(camera_index = CAMERA_INDEX, exposure = EXPOSURE,
 
         if the 'q' key was pressed: stop looping
 
-    always release the camera and close all windows, even if the loop
-        above raised an unexpected error
+    always release the camera, close all windows, and close live_graph if
+        it exists — even if the loop above raised an unexpected error
 ```
 
 ## Why this script exists

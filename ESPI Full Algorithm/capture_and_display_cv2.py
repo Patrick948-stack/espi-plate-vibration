@@ -37,8 +37,12 @@ DEPENDENCIES
     pip install opencv-python numpy
 """
 
+import sys
+
 import cv2
 import numpy as np
+
+import live_graphs
 
 
 # ==============================================================================
@@ -57,13 +61,34 @@ GAIN         = 0.0  # camera gain, camera-dependent scale. Not all cameras
 Gain_factor  = 20   # multiplier applied to the subtraction display
 
 
+def _capture_backend():
+    """
+    Pick the OpenCV capture backend for the current operating system.
+
+    cv2.CAP_AVFOUNDATION only exists on macOS (it is Apple's AVFoundation
+    media framework). Using it on Windows either fails to open the camera
+    or silently falls back to a slower default, depending on the OpenCV
+    build — this file used to hardcode it unconditionally, which meant it
+    was never reliably tested on Windows even though nothing about the
+    surrounding code looks platform-specific.
+
+    cv2.CAP_DSHOW (DirectShow) is the reliable, fast-opening choice on
+    Windows. Linux and anything else fall back to cv2.CAP_ANY, which lets
+    OpenCV pick automatically.
+    """
+    if sys.platform == "darwin":
+        return cv2.CAP_AVFOUNDATION
+    if sys.platform == "win32":
+        return cv2.CAP_DSHOW
+    return cv2.CAP_ANY
+
 
 # ==============================================================================
 # MAIN
 # ==============================================================================
 
 def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
-         gain_factor=Gain_factor):
+         gain_factor=Gain_factor, graph_type=None):
     """
     Open camera_index and show the live feed and frame subtraction windows
     until 'q' is pressed.
@@ -81,8 +106,12 @@ def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
                        cv2.convertScaleAbs, which saturates at 255 instead
                        of wrapping around the way plain multiplication of a
                        uint8 array would.
+        graph_type   : None (default, no extra window), "histogram", or
+                       "3d". Opens a third window that graphs the pixel
+                       intensity of the raw "Live Feed" frame, updated
+                       live. See live_graphs.py for details.
     """
-    cap = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
+    cap = cv2.VideoCapture(camera_index, _capture_backend())
 
     if not cap.isOpened():
         print(f"Could not open camera at index {camera_index}.")
@@ -93,9 +122,13 @@ def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
     cap.set(cv2.CAP_PROP_GAIN, gain)
 
+    live_graph = live_graphs.create_live_graph(graph_type)
+
     print("Two windows open:")
     print("  'Live Feed'         — raw frame from the camera")
     print("  'Frame Subtraction' — absolute difference between consecutive frames")
+    if live_graph is not None:
+        print(f"  '{graph_type}' graph — live pixel intensity of the raw frame")
     print("Press 'q' to quit.")
 
     prev_gray = None
@@ -111,6 +144,9 @@ def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
 
             cv2.imshow("Live Feed", gray)
 
+            if live_graph is not None:
+                live_graph.update(gray)
+
             if prev_gray is not None:
                 diff = cv2.absdiff(gray, prev_gray)
                 amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
@@ -123,6 +159,8 @@ def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
     finally:
         cap.release()
         cv2.destroyAllWindows()
+        if live_graph is not None:
+            live_graph.close()
 
 
 if __name__ == "__main__":

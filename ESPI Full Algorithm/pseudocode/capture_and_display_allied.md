@@ -66,7 +66,7 @@ function frame_to_gray(frame):
 ```
 function main(camera_index = CAMERA_INDEX, exposure_us = EXPOSURE_US,
               gain = GAIN, gain_factor = Gain_factor,
-              list_cameras = LIST_CAMERAS):
+              list_cameras = LIST_CAMERAS, graph_type = nothing):
     start the Vimba SDK
 
     if list_cameras is True:
@@ -78,6 +78,9 @@ function main(camera_index = CAMERA_INDEX, exposure_us = EXPOSURE_US,
         print the error message and return, instead of crashing
 
     print which camera is being used
+
+    live_graph = live_graphs.create_live_graph(graph_type)
+        # nothing unless graph_type is "histogram" or "3d"
 
     open the camera:
         set_exposure(camera, exposure_us)
@@ -94,6 +97,9 @@ function main(camera_index = CAMERA_INDEX, exposure_us = EXPOSURE_US,
             convert the frame to greyscale using frame_to_gray()
             show it in the "Live Feed" window
 
+            if live_graph is not nothing:
+                live_graph.update(gray_frame)   # the RAW frame, not the diff
+
             if there was a previous greyscale frame:
                 difference = absolute difference between this frame and
                               the previous one
@@ -107,6 +113,7 @@ function main(camera_index = CAMERA_INDEX, exposure_us = EXPOSURE_US,
             if the 'q' key was pressed: stop looping
 
         close all windows
+        close live_graph if it exists
 
     # closing the "with cam" and "with vmb" blocks automatically releases
     # the camera and shuts down the SDK cleanly, even if an error occurred

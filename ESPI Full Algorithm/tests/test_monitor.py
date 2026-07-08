@@ -146,16 +146,18 @@ class TestChooseCameraSettings:
         assert result["exposure_s"] == pytest.approx(0.01)
         assert result["gain_db"] == pytest.approx(0.0)
         assert result["gain_factor"] == pytest.approx(20)
+        assert result["graph_type"] is None
 
     def test_typed_values(self):
-        with patch("builtins.input", side_effect=["0.05", "2.5", "10"]):
+        with patch("builtins.input", side_effect=["0.05", "2.5", "10", "histogram"]):
             result = monitor.choose_camera_settings()
         assert result["exposure_s"] == pytest.approx(0.05)
         assert result["gain_db"] == pytest.approx(2.5)
         assert result["gain_factor"] == pytest.approx(10)
+        assert result["graph_type"] == "histogram"
 
     def test_zero_exposure_is_rejected_then_retried(self):
-        with patch("builtins.input", side_effect=["0", "0.02", "0.0", "5"]):
+        with patch("builtins.input", side_effect=["0", "0.02", "0.0", "5", "none"]):
             result = monitor.choose_camera_settings()
         assert result["exposure_s"] == pytest.approx(0.02)
         assert result["gain_factor"] == pytest.approx(5)
@@ -164,9 +166,20 @@ class TestChooseCameraSettings:
         # Unlike exposure and gain_factor, gain in dB is a valid setting at
         # or below zero (0 dB = no amplification), so it must not be routed
         # through ask_positive_float.
-        with patch("builtins.input", side_effect=["0.01", "-3.0", "20"]):
+        with patch("builtins.input", side_effect=["0.01", "-3.0", "20", "none"]):
             result = monitor.choose_camera_settings()
         assert result["gain_db"] == pytest.approx(-3.0)
+
+    def test_3d_graph_choice(self):
+        with patch("builtins.input", side_effect=["0.01", "0.0", "20", "3d"]):
+            result = monitor.choose_camera_settings()
+        assert result["graph_type"] == "3d"
+
+    def test_invalid_graph_choice_is_rejected_then_retried(self):
+        with patch("builtins.input",
+                   side_effect=["0.01", "0.0", "20", "bar-chart", "histogram"]):
+            result = monitor.choose_camera_settings()
+        assert result["graph_type"] == "histogram"
 
 
 # ===========================================================================
@@ -252,6 +265,9 @@ class TestLaunchMonitorDispatch:
         assert kwargs["gain_db"] == pytest.approx(1.5)
         assert kwargs["gain_factor"] == pytest.approx(20)
         assert "camera_index" not in kwargs
+        # settings dict has no "graph_type" key here (older-style caller) —
+        # must default to None instead of raising KeyError.
+        assert kwargs["graph_type"] is None
 
     def test_webcam_converts_seconds_to_log2_scale(self):
         mock_module = MagicMock()
@@ -264,6 +280,7 @@ class TestLaunchMonitorDispatch:
         assert kwargs["camera_index"] == 1
         assert kwargs["gain"] == pytest.approx(0.0)
         assert kwargs["gain_factor"] == pytest.approx(20)
+        assert kwargs["graph_type"] is None
 
     def test_allied_converts_seconds_to_microseconds(self):
         mock_module = MagicMock()
@@ -276,12 +293,23 @@ class TestLaunchMonitorDispatch:
         assert kwargs["camera_index"] == 2
         assert kwargs["gain"] == pytest.approx(3.0)
         assert kwargs["gain_factor"] == pytest.approx(15)
+        assert kwargs["graph_type"] is None
 
     def test_returns_true_on_success(self):
         mock_module = MagicMock()
         with patch("importlib.import_module", return_value=mock_module):
             result = monitor.launch_monitor("2", 0, TestConfirmSettings.SETTINGS)
         assert result is True
+
+    @pytest.mark.parametrize("camera_choice,index", [("1", 0), ("2", 0), ("3", 0)])
+    def test_graph_type_forwarded_when_present(self, camera_choice, index):
+        mock_module = MagicMock()
+        settings = dict(exposure_s=0.01, gain_db=0.0, gain_factor=20,
+                        graph_type="histogram")
+        with patch("importlib.import_module", return_value=mock_module):
+            monitor.launch_monitor(camera_choice, index, settings)
+        kwargs = mock_module.main.call_args[1]
+        assert kwargs["graph_type"] == "histogram"
 
 
 class TestLaunchMonitorErrorHandling:
@@ -321,10 +349,10 @@ class TestLaunchMonitorErrorHandling:
 
 class TestMain:
     def test_cancelling_at_confirmation_exits_without_launching(self):
-        # camera=2 (default), index=default 0, exposure/gain/gain_factor
-        # defaults, then "n" at the confirmation prompt.
+        # camera=2 (default), index=default 0, exposure/gain/gain_factor/
+        # graph_type defaults, then "n" at the confirmation prompt.
         with patch("builtins.input",
-                   side_effect=["", "", "", "", "", "n"]), \
+                   side_effect=["", "", "", "", "", "", "n"]), \
              patch.object(monitor, "launch_monitor") as mock_launch, \
              patch.object(monitor, "clear"), \
              patch.object(monitor, "header"):
@@ -335,9 +363,9 @@ class TestMain:
 
     def test_confirming_calls_launch_monitor_with_chosen_settings(self):
         # camera "1" (Basler, no index prompt), exposure 0.02, gain 1.0,
-        # gain_factor 15, then "y" to confirm.
+        # gain_factor 15, graph_type "histogram", then "y" to confirm.
         with patch("builtins.input",
-                   side_effect=["1", "0.02", "1.0", "15", "y"]), \
+                   side_effect=["1", "0.02", "1.0", "15", "histogram", "y"]), \
              patch.object(monitor, "launch_monitor") as mock_launch, \
              patch.object(monitor, "clear"), \
              patch.object(monitor, "header"):
@@ -349,3 +377,4 @@ class TestMain:
         assert settings["exposure_s"] == pytest.approx(0.02)
         assert settings["gain_db"] == pytest.approx(1.0)
         assert settings["gain_factor"] == pytest.approx(15)
+        assert settings["graph_type"] == "histogram"

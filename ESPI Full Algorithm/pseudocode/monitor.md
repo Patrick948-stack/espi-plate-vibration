@@ -71,11 +71,16 @@ function choose_camera_settings():
     explain that gain_factor only brightens the on-screen display, not the
         raw camera data
     ask_positive_float for gain_factor
-    return all three as one dictionary
+    explain the two live graph options and that a 3D redraw is much slower
+        than a histogram redraw
+    ask for graph type: "none" (default), "histogram", or "3d"
+    graph_type = nothing if the answer was "none", otherwise the answer
+    return all four (exposure_s, gain_db, gain_factor, graph_type) as one
+        dictionary
 
 function confirm_settings(camera_choice, camera_index, settings):
     show "Step 3 of 3" — print a summary: camera name (+ index, unless
-        Basler), exposure, gain, gain_factor
+        Basler), exposure, gain, gain_factor, graph type ("none" if nothing)
     ask "Open the live monitor? (y/n)"
     return True if the answer was yes
 ```
@@ -94,19 +99,24 @@ function launch_monitor(camera_choice, camera_index, settings):
     convert exposure from seconds to microseconds (Basler and Allied need
         microseconds; this conversion just always happens up front)
 
+    graph_type = settings.get("graph_type")  # nothing if the key is absent,
+        so an older-style settings dict (built before this feature existed)
+        still works instead of raising a KeyError
+
     try:
         if camera_choice is "1" (Basler):
-            call module.main(exposure_us, gain_db, gain_factor)
+            call module.main(exposure_us, gain_db, gain_factor, graph_type)
             # no camera_index argument — Basler doesn't support one
 
         if camera_choice is "2" (USB/webcam):
             call module.main(camera_index,
                               exposure = log2(exposure in seconds),
-                              gain, gain_factor)
+                              gain, gain_factor, graph_type)
             # OpenCV wants its own log-2 scale, not seconds or microseconds
 
         if camera_choice is "3" (Allied Vision):
-            call module.main(camera_index, exposure_us, gain, gain_factor)
+            call module.main(camera_index, exposure_us, gain, gain_factor,
+                              graph_type)
 
     if a ValueError happened (e.g. log2 of a non-positive number):
         print "Invalid exposure value" with the underlying reason

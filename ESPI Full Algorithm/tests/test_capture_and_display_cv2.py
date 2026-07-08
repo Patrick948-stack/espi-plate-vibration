@@ -199,3 +199,96 @@ class TestGainFactorSaturation:
             cad_cv2.main(gain_factor=4)
 
         assert np.all(captured["Frame Subtraction"] == 20)
+
+
+# ===========================================================================
+# _capture_backend() — Windows/Mac/Linux camera backend selection
+# ===========================================================================
+
+class TestCaptureBackend:
+    """
+    capture_and_display_cv2.py used to hardcode cv2.CAP_AVFOUNDATION, a
+    macOS-only backend constant. On Windows this either fails to open the
+    camera or silently falls back to a slower default. _capture_backend()
+    picks the right one per OS instead.
+    """
+
+    def test_mac_uses_avfoundation(self):
+        with patch("capture_and_display_cv2.sys.platform", "darwin"):
+            assert cad_cv2._capture_backend() == cv2.CAP_AVFOUNDATION
+
+    def test_windows_uses_dshow(self):
+        with patch("capture_and_display_cv2.sys.platform", "win32"):
+            assert cad_cv2._capture_backend() == cv2.CAP_DSHOW
+
+    def test_linux_uses_cap_any(self):
+        with patch("capture_and_display_cv2.sys.platform", "linux"):
+            assert cad_cv2._capture_backend() == cv2.CAP_ANY
+
+    def test_backend_is_forwarded_to_videocapture(self):
+        cap = _make_mock_cap([(False, None)])
+        with patch("cv2.VideoCapture", return_value=cap) as mock_vc, \
+             patch("capture_and_display_cv2.sys.platform", "win32"):
+            cad_cv2.main()
+        assert mock_vc.call_args[0][1] == cv2.CAP_DSHOW
+
+
+# ===========================================================================
+# main() — optional live graph (graph_type)
+# ===========================================================================
+
+class TestGraphType:
+    def test_default_graph_type_creates_no_graph(self):
+        cap = _make_mock_cap([(True, _bgr_frame(1))])
+        with patch("cv2.VideoCapture", return_value=cap), \
+             patch("capture_and_display_cv2.live_graphs.create_live_graph") as mock_create, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", return_value=ord("q")), \
+             patch("cv2.destroyAllWindows"):
+            cad_cv2.main()
+        mock_create.assert_called_once_with(None)
+
+    def test_histogram_graph_type_forwarded_and_updated_per_frame(self):
+        cap = _make_mock_cap([
+            (True, _bgr_frame(1)),
+            (True, _bgr_frame(2)),
+        ])
+        mock_graph = MagicMock()
+
+        with patch("cv2.VideoCapture", return_value=cap), \
+             patch("capture_and_display_cv2.live_graphs.create_live_graph",
+                   return_value=mock_graph) as mock_create, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", side_effect=[-1, ord("q")]), \
+             patch("cv2.destroyAllWindows"):
+            cad_cv2.main(graph_type="histogram")
+
+        mock_create.assert_called_once_with("histogram")
+        assert mock_graph.update.call_count == 2
+
+    def test_graph_closed_when_loop_ends_cleanly(self):
+        cap = _make_mock_cap([(True, _bgr_frame(1))])
+        mock_graph = MagicMock()
+
+        with patch("cv2.VideoCapture", return_value=cap), \
+             patch("capture_and_display_cv2.live_graphs.create_live_graph",
+                   return_value=mock_graph), \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", return_value=ord("q")), \
+             patch("cv2.destroyAllWindows"):
+            cad_cv2.main(graph_type="3d")
+
+        mock_graph.close.assert_called_once()
+
+    def test_graph_closed_even_if_read_raises(self):
+        cap = _make_mock_cap([])
+        cap.read.side_effect = RuntimeError("driver crashed")
+        mock_graph = MagicMock()
+
+        with patch("cv2.VideoCapture", return_value=cap), \
+             patch("capture_and_display_cv2.live_graphs.create_live_graph",
+                   return_value=mock_graph):
+            with pytest.raises(RuntimeError):
+                cad_cv2.main(graph_type="histogram")
+
+        mock_graph.close.assert_called_once()

@@ -33,7 +33,7 @@ file and calling `main(...)` yourself, the caller's values are used instead.
 
 ```
 function main(exposure_us = EXPOSURE_US, gain_db = GAIN_DB,
-              gain_factor = Gain_factor):
+              gain_factor = Gain_factor, graph_type = nothing):
     camera = connect_camera()
     if camera is nothing:
         print "No camera found" and stop
@@ -41,7 +41,12 @@ function main(exposure_us = EXPOSURE_US, gain_db = GAIN_DB,
     set_exposure_manual(camera, exposure_us)
     set_gain_manual(camera, gain_db)
 
-    print instructions for the two windows and the quit key
+    live_graph = live_graphs.create_live_graph(graph_type)
+        # nothing unless graph_type is "histogram" or "3d" — see
+        # live_graphs.md for how each type works
+
+    print instructions for the two (or three, if a graph was requested) windows
+        and the quit key
 
     previous_frame = nothing
 
@@ -52,6 +57,9 @@ function main(exposure_us = EXPOSURE_US, gain_db = GAIN_DB,
 
         if a frame arrived successfully:
             show it in the "Live Feed" window
+
+            if live_graph is not nothing:
+                live_graph.update(frame)   # the RAW frame, not the diff
 
             if there was a previous frame:
                 difference = absolute difference between this frame and
@@ -70,7 +78,8 @@ function main(exposure_us = EXPOSURE_US, gain_db = GAIN_DB,
 
         if the 'q' key was pressed: stop looping
 
-    stop grabbing, close all windows, disconnect the camera
+    stop grabbing, close all windows, close live_graph if it exists,
+        disconnect the camera
 ```
 
 ## Why this script exists

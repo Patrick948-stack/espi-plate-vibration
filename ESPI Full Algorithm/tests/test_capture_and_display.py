@@ -237,3 +237,90 @@ class TestGainFactorSaturation:
 
         # 5 * 4 = 20, well under 255, no clipping expected.
         assert np.all(captured["Frame Subtraction"] == 20)
+
+
+# ===========================================================================
+# main() — optional live graph (graph_type)
+# ===========================================================================
+
+class TestGraphType:
+    def test_default_graph_type_creates_no_graph(self):
+        # graph_type defaults to None, live_graphs.create_live_graph(None)
+        # returns None — main() must never call .update()/.close() on
+        # anything in that case, since there is nothing to call it on.
+        cam = make_mock_basler_camera()
+        cam.IsGrabbing.side_effect = [True, False]
+        cam.RetrieveResult.side_effect = [
+            _make_grab_result(np.full((5, 5), 1, dtype=np.uint8))
+        ]
+
+        with patch("capture_and_display.connect_camera", return_value=cam), \
+             patch("capture_and_display.disconnect_camera"), \
+             patch("capture_and_display.set_exposure_manual"), \
+             patch("capture_and_display.set_gain_manual"), \
+             patch("capture_and_display.live_graphs.create_live_graph") as mock_create, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", return_value=ord("q")), \
+             patch("cv2.destroyAllWindows"):
+            cad.main()
+
+        mock_create.assert_called_once_with(None)
+
+    def test_histogram_graph_type_forwarded_and_updated_per_frame(self):
+        cam = make_mock_basler_camera()
+        frame_a = np.full((5, 5), 1, dtype=np.uint8)
+        frame_b = np.full((5, 5), 2, dtype=np.uint8)
+        cam.IsGrabbing.side_effect = [True, True, False]
+        cam.RetrieveResult.side_effect = [
+            _make_grab_result(frame_a),
+            _make_grab_result(frame_b),
+        ]
+
+        mock_graph = MagicMock()
+
+        with patch("capture_and_display.connect_camera", return_value=cam), \
+             patch("capture_and_display.disconnect_camera"), \
+             patch("capture_and_display.set_exposure_manual"), \
+             patch("capture_and_display.set_gain_manual"), \
+             patch("capture_and_display.live_graphs.create_live_graph",
+                   return_value=mock_graph) as mock_create, \
+             patch("cv2.imshow"), \
+             patch("cv2.waitKey", side_effect=[-1, ord("q")]), \
+             patch("cv2.destroyAllWindows"):
+            cad.main(graph_type="histogram")
+
+        mock_create.assert_called_once_with("histogram")
+        assert mock_graph.update.call_count == 2
+        np.testing.assert_array_equal(mock_graph.update.call_args_list[0].args[0], frame_a)
+        np.testing.assert_array_equal(mock_graph.update.call_args_list[1].args[0], frame_b)
+
+    def test_graph_closed_when_camera_loop_ends(self):
+        cam = make_mock_basler_camera()
+        cam.IsGrabbing.side_effect = [False]
+        mock_graph = MagicMock()
+
+        with patch("capture_and_display.connect_camera", return_value=cam), \
+             patch("capture_and_display.disconnect_camera"), \
+             patch("capture_and_display.set_exposure_manual"), \
+             patch("capture_and_display.set_gain_manual"), \
+             patch("capture_and_display.live_graphs.create_live_graph",
+                   return_value=mock_graph):
+            cad.main(graph_type="3d")
+
+        mock_graph.close.assert_called_once()
+
+    def test_graph_closed_even_if_loop_raises(self):
+        cam = make_mock_basler_camera()
+        cam.IsGrabbing.side_effect = RuntimeError("USB link dropped")
+        mock_graph = MagicMock()
+
+        with patch("capture_and_display.connect_camera", return_value=cam), \
+             patch("capture_and_display.disconnect_camera"), \
+             patch("capture_and_display.set_exposure_manual"), \
+             patch("capture_and_display.set_gain_manual"), \
+             patch("capture_and_display.live_graphs.create_live_graph",
+                   return_value=mock_graph):
+            with pytest.raises(RuntimeError):
+                cad.main(graph_type="histogram")
+
+        mock_graph.close.assert_called_once()
