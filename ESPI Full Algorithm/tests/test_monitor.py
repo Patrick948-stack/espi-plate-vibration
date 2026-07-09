@@ -143,13 +143,15 @@ class TestChooseCameraSettings:
     def test_defaults(self):
         with patch("builtins.input", return_value=""):
             result = monitor.choose_camera_settings()
-        assert result["exposure_s"] == pytest.approx(0.01)
-        assert result["gain_db"] == pytest.approx(0.0)
+        assert result["exposure_s"] == pytest.approx(0.06)
+        assert result["gain_db"] == pytest.approx(1.0)
         assert result["gain_factor"] == pytest.approx(20)
         assert result["graph_type"] is None
 
     def test_typed_values(self):
-        with patch("builtins.input", side_effect=["0.05", "2.5", "10", "histogram"]):
+        # Last value is "1", the menu digit for "histogram" — choose_graph_type()
+        # asks for a number ("1"-"4"), not the type name itself.
+        with patch("builtins.input", side_effect=["0.05", "2.5", "10", "1"]):
             result = monitor.choose_camera_settings()
         assert result["exposure_s"] == pytest.approx(0.05)
         assert result["gain_db"] == pytest.approx(2.5)
@@ -157,7 +159,7 @@ class TestChooseCameraSettings:
         assert result["graph_type"] == "histogram"
 
     def test_zero_exposure_is_rejected_then_retried(self):
-        with patch("builtins.input", side_effect=["0", "0.02", "0.0", "5", "none"]):
+        with patch("builtins.input", side_effect=["0", "0.02", "0.0", "5", "4"]):
             result = monitor.choose_camera_settings()
         assert result["exposure_s"] == pytest.approx(0.02)
         assert result["gain_factor"] == pytest.approx(5)
@@ -166,23 +168,23 @@ class TestChooseCameraSettings:
         # Unlike exposure and gain_factor, gain in dB is a valid setting at
         # or below zero (0 dB = no amplification), so it must not be routed
         # through ask_positive_float.
-        with patch("builtins.input", side_effect=["0.01", "-3.0", "20", "none"]):
+        with patch("builtins.input", side_effect=["0.01", "-3.0", "20", "4"]):
             result = monitor.choose_camera_settings()
         assert result["gain_db"] == pytest.approx(-3.0)
 
     def test_3d_graph_choice(self):
-        with patch("builtins.input", side_effect=["0.01", "0.0", "20", "3d"]):
+        with patch("builtins.input", side_effect=["0.01", "0.0", "20", "3"]):
             result = monitor.choose_camera_settings()
         assert result["graph_type"] == "3d"
 
     def test_log_histogram_graph_choice(self):
-        with patch("builtins.input", side_effect=["0.01", "0.0", "20", "log_histogram"]):
+        with patch("builtins.input", side_effect=["0.01", "0.0", "20", "2"]):
             result = monitor.choose_camera_settings()
         assert result["graph_type"] == "log_histogram"
 
     def test_invalid_graph_choice_is_rejected_then_retried(self):
         with patch("builtins.input",
-                   side_effect=["0.01", "0.0", "20", "bar-chart", "histogram"]):
+                   side_effect=["0.01", "0.0", "20", "bar-chart", "1"]):
             result = monitor.choose_camera_settings()
         assert result["graph_type"] == "histogram"
 
@@ -192,7 +194,7 @@ class TestChooseCameraSettings:
 # ===========================================================================
 
 class TestConfirmSettings:
-    SETTINGS = dict(exposure_s=0.01, gain_db=1.0, gain_factor=20)
+    SETTINGS = dict(exposure_s=0.01, gain_db=1.0, gain_factor=20, graph_type=None)
 
     def test_basler_does_not_show_index(self, capsys):
         with patch("builtins.input", return_value="n"):
@@ -368,9 +370,10 @@ class TestMain:
 
     def test_confirming_calls_launch_monitor_with_chosen_settings(self):
         # camera "1" (Basler, no index prompt), exposure 0.02, gain 1.0,
-        # gain_factor 15, graph_type "histogram", then "y" to confirm.
+        # gain_factor 15, graph_type "1" (menu digit for "histogram"), then
+        # "y" to confirm.
         with patch("builtins.input",
-                   side_effect=["1", "0.02", "1.0", "15", "histogram", "y"]), \
+                   side_effect=["1", "0.02", "1.0", "15", "1", "y"]), \
              patch.object(monitor, "launch_monitor") as mock_launch, \
              patch.object(monitor, "clear"), \
              patch.object(monitor, "header"):

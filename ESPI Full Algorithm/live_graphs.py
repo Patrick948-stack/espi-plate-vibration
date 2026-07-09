@@ -12,11 +12,9 @@ with plt.show(). Neither works for a live feed.
 
 WHAT CHANGED TO MAKE THESE "LIVE"
 ----------------------------------
-  * Both classes below take a numpy array directly (the frame you already
-    have in memory) instead of a file path.
-  * Both create their matplotlib figure ONCE, then update it in place every
-    call to update() — never opening a new window or calling the blocking
-    plt.show().
+  * Both classes below take a numpy array directly (the frame already existent in memory) instead of a file path.
+  * Both create their matplotlib figure once, then update it in place every
+    call to update().
   * LiveHistogram counts pixels with numpy.bincount (implemented in C)
     instead of a Python "for pixel in image" loop. For a 1920x1200 frame
     that is the difference between a sub-millisecond count and a loop that
