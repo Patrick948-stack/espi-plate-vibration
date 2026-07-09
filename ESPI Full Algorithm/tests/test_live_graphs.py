@@ -127,6 +127,72 @@ class TestLiveHistogram:
 
 
 # ===========================================================================
+# LiveLogHistogram
+# ===========================================================================
+
+class TestLiveLogHistogram:
+    def test_starts_open(self):
+        hist = live_graphs.LiveLogHistogram()
+        assert hist.is_open() is True
+
+    def test_update_does_not_raise(self):
+        hist = live_graphs.LiveLogHistogram()
+        hist.update(_frame())
+
+    def test_y_axis_is_log_scale(self):
+        hist = live_graphs.LiveLogHistogram()
+        assert hist.ax.get_yscale() == "log"
+
+    def test_bincount_matches_known_pixel_values(self):
+        hist = live_graphs.LiveLogHistogram()
+        frame = np.full((8, 8), 100, dtype=np.uint8)
+        hist.update(frame)
+
+        y = hist._line.get_ydata()
+        assert y[100] == 64
+        assert y[99] == 0
+        assert y[101] == 0
+        assert y.sum() == 64
+
+    def test_second_update_replaces_not_adds(self):
+        hist = live_graphs.LiveLogHistogram()
+        hist.update(np.full((4, 4), 50, dtype=np.uint8))
+        hist.update(np.full((4, 4), 60, dtype=np.uint8))
+
+        y = hist._line.get_ydata()
+        assert y[50] == 0
+        assert y[60] == 16
+
+    def test_ylim_lower_bound_never_goes_to_zero(self):
+        # A log-scale axis cannot have a limit of 0 or below — matplotlib
+        # would raise or silently misbehave. The lower bound must stay
+        # fixed at 1 no matter what the frame contains.
+        hist = live_graphs.LiveLogHistogram()
+        hist.update(np.full((50, 50), 7, dtype=np.uint8))
+        assert hist.ax.get_ylim()[0] == pytest.approx(1)
+
+    def test_ylim_upper_bound_grows_to_fit_tallest_point(self):
+        hist = live_graphs.LiveLogHistogram()
+        big_frame = np.full((100, 100), 5, dtype=np.uint8)  # 10,000 pixels
+        hist.update(big_frame)
+        assert hist.ax.get_ylim()[1] > 10_000
+
+    def test_dark_theme_applied(self):
+        hist = live_graphs.LiveLogHistogram()
+        assert hist.ax.get_facecolor() == (0.0, 0.0, 0.0, 1.0)  # black
+
+    def test_close_sets_is_open_false(self):
+        hist = live_graphs.LiveLogHistogram()
+        hist.close()
+        assert hist.is_open() is False
+
+    def test_update_after_close_is_a_safe_no_op(self):
+        hist = live_graphs.LiveLogHistogram()
+        hist.close()
+        hist.update(_frame())  # must not raise
+
+
+# ===========================================================================
 # LiveSurfacePlot
 # ===========================================================================
 
@@ -226,6 +292,10 @@ class TestCreateLiveGraph:
     def test_histogram_returns_live_histogram(self):
         graph = live_graphs.create_live_graph("histogram")
         assert isinstance(graph, live_graphs.LiveHistogram)
+
+    def test_log_histogram_returns_live_log_histogram(self):
+        graph = live_graphs.create_live_graph("log_histogram")
+        assert isinstance(graph, live_graphs.LiveLogHistogram)
 
     def test_3d_returns_live_surface_plot(self):
         graph = live_graphs.create_live_graph("3d")

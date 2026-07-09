@@ -71,9 +71,11 @@ function choose_camera_settings():
     explain that gain_factor only brightens the on-screen display, not the
         raw camera data
     ask_positive_float for gain_factor
-    explain the two live graph options and that a 3D redraw is much slower
-        than a histogram redraw
-    ask for graph type: "none" (default), "histogram", or "3d"
+    explain the three live graph options: "histogram" (linear bar chart),
+        "log_histogram" (LabVIEW-style log-scale line plot, keeps rare
+        values visible next to a dominant peak), and "3d" (much slower to
+        redraw than either histogram option)
+    ask for graph type: "none" (default), "histogram", "log_histogram", or "3d"
     graph_type = nothing if the answer was "none", otherwise the answer
     return all four (exposure_s, gain_db, gain_factor, graph_type) as one
         dictionary

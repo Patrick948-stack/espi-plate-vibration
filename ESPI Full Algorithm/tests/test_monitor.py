@@ -175,6 +175,11 @@ class TestChooseCameraSettings:
             result = monitor.choose_camera_settings()
         assert result["graph_type"] == "3d"
 
+    def test_log_histogram_graph_choice(self):
+        with patch("builtins.input", side_effect=["0.01", "0.0", "20", "log_histogram"]):
+            result = monitor.choose_camera_settings()
+        assert result["graph_type"] == "log_histogram"
+
     def test_invalid_graph_choice_is_rejected_then_retried(self):
         with patch("builtins.input",
                    side_effect=["0.01", "0.0", "20", "bar-chart", "histogram"]):

@@ -4,12 +4,14 @@
 
 An optional third preview window for `monitor.py` and the
 `capture_and_display*.py` scripts: a live graph of the raw camera frame's
-pixel intensity, either a histogram or a 3D surface. It replaces two
-exploratory scripts, `Learning/graph.py` (3D surface of one saved image
-file) and `Learning/graph2.py` (histogram of one saved image file) —
-neither of those worked for a live feed, since both read a file from disk
-and both called the blocking `plt.show()`, which freezes a program until
-the window is closed by hand.
+pixel intensity — a linear-scale histogram, a log-scale histogram, or a 3D
+surface. It replaces two exploratory scripts, `Learning/graph.py` (3D
+surface of one saved image file) and `Learning/graph2.py` (linear
+histogram of one saved image file), plus a LabVIEW-style log-scale
+histogram function written directly for live use. Neither `Learning/`
+script worked for a live feed, since both read a file from disk and both
+called the blocking `plt.show()`, which freezes a program until the window
+is closed by hand.
 
 ## Why a live version needs different code, not just a loop around the old one
 
@@ -55,6 +57,49 @@ class LiveHistogram:
         close the window if still open
 ```
 
+## LiveLogHistogram
+
+```
+class LiveLogHistogram:
+    function __init__():
+        turn on matplotlib's interactive mode
+        create one figure with a single line (256 points, x = 0-255,
+            y starts at 1 for every point)
+        set the y-axis to LOG scale
+        apply a dark theme once: black background, white line and text
+            # matches the "Number of Pixels vs Pixel Value" plot style
+            # LabVIEW produces
+
+    function is_open():
+        return whether the user has closed this window
+
+    function update(frame):
+        if the window was closed: do nothing
+        counts = np.bincount(frame, one bucket per value 0-255)
+            # same vectorized counting as LiveHistogram, just drawn as a
+            # line instead of bars
+        set the line's y-data to counts
+            # updating one line's data is cheap — same idea as LiveHistogram
+            # updating bar heights, nothing is rebuilt from scratch
+        only grow the y-axis upper limit if the tallest point grew past it
+            # the lower limit stays fixed at 1 — a log-scale axis cannot
+            # have a limit of 0
+        redraw just the changed parts of the figure
+
+    function close():
+        close the window if still open
+```
+
+### Why this exists alongside the plain histogram
+
+`LiveHistogram`'s bar chart uses a LINEAR y-axis, which means whichever
+intensity value has the most pixels (almost always the background) makes
+every other bar look nearly invisible by comparison — a rare-but-real
+value elsewhere in the range gets squashed to a sliver a few pixels tall
+next to a bar that towers over the whole plot. A LOG-scale y-axis fixes
+this: the dominant peak and the rare values are both readable at the same
+time, which is exactly what this "LabVIEW-style" plot format is for.
+
 ## LiveSurfacePlot
 
 ```
@@ -87,16 +132,16 @@ class LiveSurfacePlot:
         close the window if still open
 ```
 
-### Why the 3D plot is throttled and the histogram isn't
+### Why the 3D plot is throttled and neither histogram is
 
 matplotlib's 3D renderer (`mplot3d`) is pure Python and not GPU
 accelerated — it depth-sorts every quad in the surface by hand on every
 single redraw. A camera can deliver 15-30+ frames a second; there is no
 downsample factor that makes a full 3D surface redraw keep up with that in
 matplotlib. `min_interval_s` caps redraws to a few times a second instead —
-still clearly live, just not frame-locked to the camera. The histogram has
-no such ceiling: it only ever redraws 256 numbers, so it can genuinely
-track every single frame.
+still clearly live, just not frame-locked to the camera. Neither histogram
+option has that ceiling: both only ever redraw 256 numbers (as bar heights
+or as one line's y-data), so both can genuinely track every single frame.
 
 ## create_live_graph(graph_type)
 
@@ -106,6 +151,7 @@ function create_live_graph(graph_type):
         # this is the default — most of the time nobody wants the extra
         # window, so it costs nothing unless explicitly requested
     if graph_type is "histogram": return a new LiveHistogram()
+    if graph_type is "log_histogram": return a new LiveLogHistogram()
     if graph_type is "3d": return a new LiveSurfacePlot()
     otherwise: raise an error naming the valid choices
         # a typo like "histogramm" fails loudly here instead of the graph
@@ -135,9 +181,10 @@ is what the histogram/3D view are for.
 `monitor.py`'s "current focus" note in the project's own instructions was
 literally "find the best graph to represent pixel number vs intensity for
 any given image" and "embed the graph function in capture and display for
-the live feed frames." `Learning/graph.py` and `graph2.py` were the
-exploration that answered the first half of that (a 3D surface and a
-histogram are both reasonable answers, so both are offered, the user
-picks). `live_graphs.py` is the second half: turning that exploration into
-something that can actually run inside a live camera loop instead of
-freezing on the first frame.
+the live feed frames." `Learning/graph.py`, `graph2.py`, and the
+LabVIEW-style log-histogram function were the exploration that answered
+the first half of that — a 3D surface, a linear histogram, and a log-scale
+histogram are all reasonable answers depending on what the image looks
+like, so all three are offered and the user picks. `live_graphs.py` is the
+second half: turning that exploration into something that can actually run
+inside a live camera loop instead of freezing on the first frame.
