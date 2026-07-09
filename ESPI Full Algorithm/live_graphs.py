@@ -8,9 +8,7 @@ monitor.py and the capture_and_display*.py scripts.
 This grew out of two exploratory scripts in Learning/graph.py (a 3D surface
 plot of one saved image) and Learning/graph2.py (a histogram of one saved
 image). Both of those read a file from disk and opened one blocking window
-with plt.show(). Neither works for a live feed: a live feed never touches
-disk, and plt.show() blocks the entire program until the window is closed,
-which would freeze the camera loop on the very first frame.
+with plt.show(). Neither works for a live feed.
 
 WHAT CHANGED TO MAKE THESE "LIVE"
 ----------------------------------

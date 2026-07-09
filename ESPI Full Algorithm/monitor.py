@@ -8,12 +8,11 @@ matching capture and display script with two live windows:
 
     "Live Feed"         : the raw frame straight from the camera
     "Frame Subtraction" : the difference between each pair of consecutive
-                          frames, useful for checking focus and alignment
-                          before starting a real sweep
+                          frames
 
 You can also turn on a third, optional window that graphs the pixel
 intensity of the raw live feed frame, either as a histogram (updates every
-frame) or a 3D surface (updates a few times per second — see live_graphs.py
+frame) or a log scale histogram similar to the labview one or a 3D surface (updates a few times per second — see live_graphs.py
 for why a full 3D redraw cannot keep up with a full camera frame rate).
 
 Press 'q' inside any of the camera windows to close the monitor and return
@@ -60,6 +59,14 @@ _CAPTURE_MODULES = {
     "3": "capture_and_display_allied",
 }
 
+_GRAPH_TYPES = {
+    "1": "histogram",
+    "2": "log_histogram",
+    "3": "3d",
+    "4": "none",
+
+}
+
 
 # ==============================================================================
 # STEP-BY-STEP QUESTIONS
@@ -73,7 +80,7 @@ def choose_camera():
     """
     Displays a menu of supported cameras and asks the user to select one.
 
-    Prints a stylized header section listing the available choices (Basler, USB/Webcam, 
+    Prints a header section listing the available choices (Basler, USB/Webcam, 
     or Allied Vision) and forces the user to choose an option from the restricted list.
 
     Returns:
@@ -115,15 +122,43 @@ def choose_camera_index(camera_choice):
             return index
         print("  Camera index must be 0 or a positive whole number.")
 
+def choose_graph_type():
+    """
+    Displays a menu of available graph types and asks the user to select one.
+
+    Prints a header section listing the available choices (histogram, log_histogram, 
+    or 3d) and forces the user to choose an option from the restricted list.
+
+    Returns:
+        str: The user's selection choice as a string ("1", "2", "3", or "4").
+    """
+    section("Which intensity graph do you want to see?")
+    print()
+    print("    Optional: show a live graph of each raw frame's pixel")
+    print("    intensity, in a third window alongside the camera preview.")    
+    print("    1.  Histogram     — bar chart of intensity counts, linear scale,")
+    print("                      updates every frame")
+    print("    2.  log_histogram — LabVIEW-style line plot, log scale, keeps")
+    print("                      rare pixel values visible next to a")
+    print("                      dominant peak, updates every frame")
+    print("    3.  3D           — 3D surface plot, updates a few times per")
+    print("                      second (matplotlib's 3D renderer is too slow")
+    print("                      to match full camera frame rate, even")
+    print("                      downsampled)")
+    print("    4.  none         — no extra window (fastest, default)")
+
+    print()
+    return ask("Graph Type", default="4", cast=str, valid=["1", "2", "3", "4"])
 
 def choose_camera_settings():
     """
     Prompts the user to enter experimental parameters for the camera feed.
 
-    Guides the user through setting up three configurations:
+    Guides the user through setting up four configurations:
     1. Exposure time (in seconds)
     2. Camera Gain (in decibels)
     3. Gain factor (a software contrast booster for live display only)
+    4. Graph type (delegates to choose_graph_type(), see that function)
 
     Returns:
         dict: A dictionary containing the collected values map-keyed to:
@@ -137,8 +172,8 @@ def choose_camera_settings():
     print("    Exposure is in SECONDS.  0.01 = 10 ms (good starting point).")
     print("    Increase if the image is too dark; decrease if too bright.")
     print()
-    exposure_s = ask_positive_float("Exposure (s)", default=0.01)
-    gain_db = ask("Gain (dB)", default=0.0, cast=float)
+    exposure_s = ask_positive_float("Exposure (s)", default=0.06)
+    gain_db = ask("Gain (dB)", default=1.0, cast=float)
 
     print()
     print("    gain_factor multiplies the subtraction display so faint")
@@ -146,22 +181,10 @@ def choose_camera_settings():
     print("    screen, not the raw camera data.")
     gain_factor = ask_positive_float("gain_factor", default=20)
 
-    print()
-    print("    Optional: show a live graph of each raw frame's pixel")
-    print("    intensity, in a third window alongside the camera preview.")
-    print("      none          — no extra window (fastest, default)")
-    print("      histogram     — bar chart of intensity counts, linear scale,")
-    print("                      updates every frame")
-    print("      log_histogram — LabVIEW-style line plot, log scale, keeps")
-    print("                      rare pixel values visible next to a")
-    print("                      dominant peak, updates every frame")
-    print("      3d            — 3D surface plot, updates a few times per")
-    print("                      second (matplotlib's 3D renderer is too slow")
-    print("                      to match full camera frame rate, even")
-    print("                      downsampled)")
-    graph_choice = ask("Graph type", default="none", cast=str,
-                        valid=["none", "histogram", "log_histogram", "3d"])
-    graph_type = None if graph_choice == "none" else graph_choice
+    
+    graph_choice = choose_graph_type()      # "1" / "2" / "3" / "4" — the raw menu key
+    graph_name = _GRAPH_TYPES[graph_choice]  # "histogram" / "log_histogram" / "3d" / "none"
+    graph_type = None if graph_name == "none" else graph_name
 
     return dict(exposure_s=exposure_s, gain_db=gain_db, gain_factor=gain_factor,
                 graph_type=graph_type)
@@ -191,7 +214,7 @@ def confirm_settings(camera_choice, camera_index, settings):
     print(f"    Exposure      :  {settings['exposure_s']} s")
     print(f"    Gain          :  {settings['gain_db']} dB")
     print(f"    gain_factor   :  {settings['gain_factor']}")
-    print(f"    Graph         :  {settings.get('graph_type') or 'none'}")
+    print(f"    Graph         :  {settings['graph_type']}")
     print()
 
     go = ask(
