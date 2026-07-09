@@ -6,18 +6,13 @@ pyusb
 matplotlib
 pytest
 
-# Basler cameras only — uncomment if you have a Basler camera:
-# pypylon
+# Basler cameras only:
+pypylon
 
 # Allied Vision cameras only — install from wheel instead of pip:
 # Download from https://github.com/alliedvision/VmbPy
 # pip install <downloaded_wheel>.whl
 
 # Windows only — pyusb needs this to find the native libusb library.
-# The "; sys_platform == 'win32'" marker means pip only installs this line
-# on Windows, so a single `pip install -r requirements.txt` does the right
-# thing on every OS instead of Windows users needing a second manual
-# `pip install libusb-package` command. A one-time Zadig driver step is
-# still required separately; see README.md Stage 8.5 — that part can't be
-# done through pip, it's a Windows USB driver binding, not a package.
-libusb-package; sys_platform == "win32"
+# Also requires a one-time Zadig driver step; see README.md Stage 8.5.
+libusb-package

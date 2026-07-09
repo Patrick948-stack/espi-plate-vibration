@@ -104,9 +104,27 @@ source venv_physics/bin/activate
 
 **Windows**
 
+In Command Prompt:
+
 ```
 venv_physics\Scripts\activate
 ```
+
+In PowerShell:
+
+```
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\venv_physics\Scripts\Activate.ps1
+```
+
+If activation does not work, you can also run the project Python directly:
+
+```
+.\venv_physics\Scripts\python.exe -m pip install -r requirements.txt
+.\venv_physics\Scripts\python.exe monitor.py
+```
+
+> Run these commands one line at a time. That makes it easier to see exactly which step fails if there is a problem.
 
 Check: the beginning of your terminal line should now show `(venv_physics)`. If you don't see that, the environment is not active and the next steps will not work.
 
@@ -222,6 +240,14 @@ python -c "import pyvisa; rm = pyvisa.ResourceManager('@py'); print(rm.list_reso
 ```
 
 The signal generator's address (something like `USB0::...::INSTR`) should appear in the printed list. You can also run `python test_signal_generator_only.py` for a full step-by-step connection test with clearer diagnostics at each stage.
+
+If the device is found but the instrument replies slowly or times out, run:
+
+```
+python debug_signal_generator_response.py --backend '@py' --timeout 20000
+```
+
+This prints the VISA backend path, resource discovery time, and query latency for several common SCPI commands.
 
 **Option B — NI-VISA (heavier, official vendor runtime)**
 
