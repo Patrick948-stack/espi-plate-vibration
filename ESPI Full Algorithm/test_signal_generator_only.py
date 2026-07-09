@@ -45,21 +45,21 @@ def main():
     # ------------------------------------------------------------------
     # STEP 1 — list every VISA instrument currently visible
     # ------------------------------------------------------------------
-    print("\n[1/5] Scanning for VISA instruments...")
+    print("\n[1/5] Looking for the signal generator...")
     rm = pyvisa.ResourceManager("@py")
     addresses = rm.list_resources()
 
     if len(addresses) == 0:
-        print("\n[FAILED] No VISA instruments found.")
-        print("  This means pyvisa-py cannot see ANY USB instrument at all —")
-        print("  Python and pyvisa are not the problem here. Check, in order:")
+        print("\nNo instruments found.")
+        print("  This means your computer cannot see any USB instrument at all right now.")
+        print("  That is a hardware or driver problem, not a Python problem. Check, in order:")
         print("    1. Is the signal generator powered on and the USB cable connected?")
         print("    2. (Windows) Has Zadig been used to bind a WinUSB driver to it?")
-        print("    3. (Windows) Is 'pyusb' AND 'libusb-package' both installed?")
+        print("    3. (Windows) Are 'pyusb' AND 'libusb-package' both installed?")
         print("    4. Try: python -c \"import usb.core; "
               "print(list(usb.core.find(find_all=True)))\"")
-        print("       An empty list or a 'NoBackendError' here confirms the")
-        print("       problem is at the USB driver level, not in this script.")
+        print("       An empty list or a 'NoBackendError' here confirms the problem is")
+        print("       with the USB driver, not with this script.")
         return
 
     print(f"  Found {len(addresses)} instrument(s):")
@@ -69,20 +69,20 @@ def main():
     # ------------------------------------------------------------------
     # STEP 2 — connect to the first instrument found
     # ------------------------------------------------------------------
-    print("\n[2/5] Connecting to instrument [0]...")
+    print("\n[2/5] Connecting to it...")
     instr = connect_instrument(rm, addresses, index=0)
 
     # ------------------------------------------------------------------
     # STEP 3 — identify it
     # ------------------------------------------------------------------
-    print("\n[3/5] Requesting identity...")
+    print("\n[3/5] Asking the instrument to identify itself...")
     identity = get_identity(instr)
     print(f"  Identity: {identity}")
 
     # ------------------------------------------------------------------
     # STEP 4 — configure a safe, quiet test signal
     # ------------------------------------------------------------------
-    print("\n[4/5] Configuring test signal: 1 kHz sine, 1 Vpp, 0 V offset...")
+    print("\n[4/5] Setting a quiet test signal: 1 kHz sine wave, 1 Vpp, 0 V offset...")
     configure_channel(
         instr,
         waveform="sine",
@@ -95,13 +95,13 @@ def main():
     # ------------------------------------------------------------------
     # STEP 5 — leave the output on briefly, then turn it off and disconnect
     # ------------------------------------------------------------------
-    print("\n[5/5] Output is ON for 3 seconds, then turning off...")
+    print("\n[5/5] Turning the output on for 3 seconds, then off again...")
     time.sleep(3)
     turn_off_output(instr, channel=1)
     close_connection(instr)
 
-    print("\nSUCCESS — the signal generator connected, responded, and")
-    print("accepted commands correctly.")
+    print("\nSuccess. The signal generator connected, responded, and accepted")
+    print("every command correctly.")
 
 
 if __name__ == "__main__":

@@ -70,23 +70,23 @@ def timed_call(fn, *args, **kwargs):
 
 def measure_query(instr, command, trials, timing_log):
     """Run `command` `trials` times, print each attempt, log timings."""
-    print(f"\n>>> Query: {command}")
+    print(f"\nAsking the instrument: {command}")
     last_response = None
     for trial in range(1, trials + 1):
         elapsed, response, error = timed_call(instr.query, command)
-        label = f"  trial {trial}/{trials}" if trials > 1 else "  "
+        label = f"  attempt {trial}/{trials}" if trials > 1 else "  "
         if error:
-            print(f"{label} [ERROR] failed after {elapsed:.0f} ms: {error}")
+            print(f"{label} no reply after {elapsed:.0f} ms: {error}")
             timing_log.append((command, elapsed, False))
         else:
-            print(f"{label} ({elapsed:.0f} ms): {response.strip()}")
+            print(f"{label} replied in {elapsed:.0f} ms: {response.strip()}")
             timing_log.append((command, elapsed, True))
             last_response = response
     return last_response
 
 
 def run_read_only_diagnostics(instr, trials, timing_log):
-    print("\n--- Read-only diagnostics ---")
+    print("\nStep: asking the instrument some safe, read-only questions...")
     for command in READ_ONLY_QUERIES:
         measure_query(instr, command, trials, timing_log)
 
@@ -131,21 +131,21 @@ def set_and_verify(instr, channel, param_key, write_value, expect_value,
     query separately so you can tell which one is slow.
     """
     write_cmd = f"{channel}:BSWV {param_key},{write_value}"
-    print(f"\n>>> Set: {write_cmd}")
+    print(f"\nTrying to change a setting: {write_cmd}")
     write_elapsed, _, write_error = timed_call(instr.write, write_cmd)
     if write_error:
-        print(f"  [ERROR] write failed after {write_elapsed:.0f} ms: {write_error}")
+        print(f"  Could not send that command after {write_elapsed:.0f} ms: {write_error}")
         if timing_log is not None:
             timing_log.append((write_cmd, write_elapsed, False))
         return False
-    print(f"  write acknowledged in {write_elapsed:.0f} ms")
+    print(f"  The instrument accepted the command in {write_elapsed:.0f} ms.")
     if timing_log is not None:
         timing_log.append((write_cmd, write_elapsed, True))
 
     verify_cmd = f"{channel}:BSWV?"
     verify_elapsed, response, verify_error = timed_call(instr.query, verify_cmd)
     if verify_error:
-        print(f"  [ERROR] verify query failed after {verify_elapsed:.0f} ms: {verify_error}")
+        print(f"  Could not check whether the change took effect (no reply after {verify_elapsed:.0f} ms): {verify_error}")
         if timing_log is not None:
             timing_log.append((verify_cmd, verify_elapsed, False))
         return False
@@ -155,7 +155,7 @@ def set_and_verify(instr, channel, param_key, write_value, expect_value,
     parsed = parse_bswv_response(response)
     actual = parsed.get(param_key)
     if actual is None:
-        print(f"  [ERROR] verify query ({verify_elapsed:.0f} ms) did not return {param_key}")
+        print(f"  The instrument replied in {verify_elapsed:.0f} ms, but did not include a value for {param_key}.")
         return False
 
     if numeric:
@@ -168,22 +168,22 @@ def set_and_verify(instr, channel, param_key, write_value, expect_value,
     else:
         ok = actual.upper() == expect_value.upper()
 
-    status = "OK" if ok else "MISMATCH"
-    print(f"  verify ({verify_elapsed:.0f} ms): {param_key} = {actual}  [{status}, expected {expect_value}]")
+    status = "correct" if ok else "does not match"
+    print(f"  Checked in {verify_elapsed:.0f} ms: {param_key} is now {actual} ({status}, expected {expect_value}).")
     return ok
 
 
 def run_write_tests(instr, channel, timing_log):
-    print(f"\n--- Write-and-verify tests on channel {channel} ---")
+    print(f"\nStep: changing a few settings on channel {channel} and checking they actually took effect...")
 
     save_cmd = f"{channel}:BSWV?"
     elapsed, original_response, error = timed_call(instr.query, save_cmd)
     if error:
-        print(f"[ERROR] Could not read original waveform state, skipping write tests: {error}")
+        print(f"Could not read the current waveform settings, so skipping the write tests: {error}")
         return
     timing_log.append((save_cmd, elapsed, True))
     original_response = original_response.strip()
-    print(f"Saved original state ({elapsed:.0f} ms): {original_response}")
+    print(f"Saved the current settings so they can be restored afterward ({elapsed:.0f} ms): {original_response}")
 
     results = []
     results.append(set_and_verify(
@@ -193,17 +193,18 @@ def run_write_tests(instr, channel, timing_log):
     results.append(set_and_verify(
         instr, channel, "AMP", "1V", "1V", numeric=True, timing_log=timing_log))
 
-    print(f"\nRestoring original state: {original_response}")
+    print(f"\nRestoring the original settings: {original_response}")
     elapsed, _, error = timed_call(instr.write, original_response)
     if error:
-        print(f"[ERROR] Restore failed after {elapsed:.0f} ms: {error}")
-        print("  Instrument may be left in the test state above. Restore manually if needed.")
+        print(f"Could not restore the original settings after {elapsed:.0f} ms: {error}")
+        print("  The signal generator may still be set to the test values above. You may")
+        print("  need to set it back to your desired settings by hand.")
     else:
-        print(f"  restored in {elapsed:.0f} ms")
+        print(f"  Restored in {elapsed:.0f} ms.")
     timing_log.append((f"{channel}:BSWV (restore)", elapsed, error is None))
 
     passed = sum(1 for r in results if r)
-    print(f"\nWrite tests: {passed}/{len(results)} passed.")
+    print(f"\n{passed} out of {len(results)} write tests passed.")
 
 
 # ---------------------------------------------------------------------
@@ -212,29 +213,29 @@ def run_write_tests(instr, channel, timing_log):
 
 def connect(backend):
     if backend:
-        print(f"Starting VISA ResourceManager with backend: {backend}")
+        print(f"Connecting to instruments using the '{backend}' backend...")
         return pyvisa.ResourceManager(backend)
-    print("Starting VISA ResourceManager with default backend.")
+    print("Connecting to instruments using your computer's default backend...")
     return pyvisa.ResourceManager()
 
 
 def print_summary(timing_log):
-    print("\n=== Summary ===")
+    print("\nSummary")
     slow = [(cmd, ms) for cmd, ms, ok in timing_log if ok and ms > SLOW_THRESHOLD_MS]
     failed = [cmd for cmd, ms, ok in timing_log if not ok]
 
     if not slow and not failed:
-        print(f"All {len(timing_log)} commands completed under {SLOW_THRESHOLD_MS:.0f} ms.")
+        print(f"All {len(timing_log)} commands got a reply in under {SLOW_THRESHOLD_MS:.0f} ms. Nothing looks slow.")
         return
 
     if slow:
-        print(f"Commands slower than {SLOW_THRESHOLD_MS:.0f} ms:")
+        print(f"These commands took longer than {SLOW_THRESHOLD_MS:.0f} ms to get a reply:")
         for cmd, ms in slow:
             print(f"  {ms:7.0f} ms  {cmd}")
     if failed:
-        print("Commands that failed:")
+        print("These commands never got a reply (they failed or timed out):")
         for cmd in failed:
-            print(f"  FAILED  {cmd}")
+            print(f"  no reply  {cmd}")
 
 
 def main():
@@ -258,13 +259,13 @@ def main():
                          help="Only run read-only diagnostics; do not change instrument state.")
     args = parser.parse_args()
 
-    print("Signal generator response debugger")
-    print("===================================\n")
+    print("Signal generator speed test")
+    print("Checking how fast the signal generator replies, and whether changing its settings actually works.\n")
 
     try:
         rm = connect(args.backend)
     except Exception as exc:
-        print(f"[ERROR] Could not start VISA ResourceManager: {exc}")
+        print(f"Could not start talking to instruments at all: {exc}")
         print("  Make sure pyvisa and a backend driver are installed.")
         print("  Example: pip install pyvisa pyvisa-py libusb-package")
         return 1
@@ -273,7 +274,7 @@ def main():
         backend_path = rm.visalib.library_path
     except Exception:
         backend_path = "unknown"
-    print(f"VISA backend path: {backend_path}")
+    print(f"Using this VISA backend: {backend_path}")
 
     if args.address:
         address = args.address
@@ -283,14 +284,15 @@ def main():
             resources = rm.list_resources()
             elapsed = (time.perf_counter() - start) * 1000.0
         except Exception as exc:
-            print(f"[ERROR] Could not list VISA resources: {exc}")
+            print(f"Could not list the available instruments: {exc}")
             return 1
 
-        print(f"Found {len(resources)} VISA resource(s) in {elapsed:.0f} ms.")
+        print(f"Found {len(resources)} instrument(s) in {elapsed:.0f} ms.")
         if len(resources) == 0:
-            print("  No instruments were discovered.")
+            print("  No instruments were found.")
             print("  Make sure the signal generator is powered on and the USB cable is connected.")
-            print("  On Windows, check Zadig or use NI-VISA. If using pyvisa-py, confirm libusb-package is installed.")
+            print("  On Windows, check the Zadig driver step or use NI-VISA. If using pyvisa-py,")
+            print("  confirm libusb-package is installed.")
             print("  You can also run:")
             print("    python -c \"import usb.core; print(list(usb.core.find(find_all=True)))\"")
             return 1
@@ -299,21 +301,21 @@ def main():
             print(f"  [{index}] {resource}")
         address = resources[0]
 
-    print(f"\nOpening resource: {address}")
+    print(f"\nConnecting to: {address}")
     try:
         instr = rm.open_resource(address)
     except pyvisa.VisaIOError as exc:
-        print(f"[ERROR] Could not open resource: {describe_visa_error(exc)}")
+        print(f"Could not connect to that instrument: {describe_visa_error(exc)}")
         return 1
     except Exception as exc:
-        print(f"[ERROR] Unexpected failure opening resource: {exc}")
+        print(f"Something unexpected went wrong while connecting: {exc}")
         return 1
 
     instr.timeout = args.timeout
     instr.read_termination = "\n"
     instr.write_termination = "\n"
-    print(f"Instrument timeout set to {instr.timeout} ms.")
-    print("Instrument opened successfully.")
+    print(f"Will wait up to {instr.timeout} ms for each reply.")
+    print("Connected.")
 
     timing_log = []  # list of (command, elapsed_ms, ok)
 
@@ -322,7 +324,7 @@ def main():
     if not args.skip_write_tests:
         run_write_tests(instr, args.channel, timing_log)
     else:
-        print("\n--skip-write-tests set: not touching waveform output.")
+        print("\n--skip-write-tests was set: not touching the signal generator's output.")
 
     print_summary(timing_log)
 

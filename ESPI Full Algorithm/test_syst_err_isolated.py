@@ -31,7 +31,7 @@ def main():
     # '@py' forces the pure-Python pyvisa-py backend, which correctly finds
     # this instrument's real USB SCPI resource (USB0::...::INSTR) instead of
     # whatever the default (NI-VISA) backend decides to report.
-    print("Opening ResourceManager with the '@py' backend...")
+    print("Connecting to instruments using the '@py' backend...")
     rm = pyvisa.ResourceManager('@py')
 
     # find_instruments() (from signal_generator_control) scans for VISA
@@ -60,14 +60,14 @@ def main():
     # find that out every time I re-run this test while isolating the problem.
     instr.timeout = 5000
 
-    print("Connection opened. Sending ONLY SYST:ERR? now, nothing else before it.")
+    print("Connected. Now sending just one command, SYST:ERR?, with nothing sent before it.")
 
     # This is the actual test. instr.query() both writes the command AND
     # waits for a response, all in one call. There is nothing else sent
     # to the instrument before this line in this whole script, on purpose.
     try:
         response = instr.query('SYST:ERR?')
-        print(f"SUCCESS: instrument replied with: {response.strip()}")
+        print(f"Success: the instrument replied with: {response.strip()}")
     except pyvisa.VisaIOError as e:
         # I'm catching specifically VisaIOError (not a generic Exception)
         # because that's the exact error type PyVISA raises for
@@ -75,9 +75,10 @@ def main():
         # error type here, instead of a broad "except Exception", makes
         # it obvious in my own code what kind of failure I'm expecting
         # and handling.
-        print(f"FAILED: {e.abbreviation}: {e.description}")
+        print(f"No reply: {e.abbreviation}: {e.description}")
         print("This means SYST:ERR? timed out even with nothing else sent first.")
-        print("That points to the command itself, not to leftover state from a prior query.")
+        print("That means the problem is with this specific command, not something")
+        print("left over from an earlier command.")
 
     # close_connection() (from signal_generator_control) closes the session
     # and prints confirmation, so the USB resource isn't left open and

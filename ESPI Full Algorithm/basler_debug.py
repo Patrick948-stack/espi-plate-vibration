@@ -2,9 +2,9 @@
 Basler Pylon Camera Diagnostic Tool
 Author: patrick mulikuza
 
-This script diagnoses connection and environment issues between Python and 
-Basler industrial cameras using the `pypylon` library. It walks through a 
-5-step verification checklist to ensure drivers, hardware, and libraries 
+This script diagnoses connection and environment issues between Python and
+Basler industrial cameras using the `pypylon` library. It walks through a
+5-step verification checklist to ensure drivers, hardware, and libraries
 are communicating correctly.
 """
 
@@ -17,16 +17,16 @@ from pypylon import pylon
 def find_pylon_sdk_dir():
     """
     Locate the Basler pylon SDK directory on a Windows operating system.
-    
-    Checks environment variables first, then falls back to checking standard 
+
+    Checks environment variables first, then falls back to checking standard
     64-bit and 32-bit Program Files installation paths.
-    
+
     Returns:
         str: The absolute path to the SDK directory if found.
         None: If the directory could not be located.
     """
     candidates = []
-    
+
     # Check if Windows already has the pylon path stored in system environment variables
     env_dir = os.environ.get('PYLON_DEV_DIR') or os.environ.get('PYLON_ROOT') or os.environ.get('PYLONC_ROOT')
     if env_dir:
@@ -35,7 +35,7 @@ def find_pylon_sdk_dir():
     # Standard default installation paths for Basler software on Windows
     candidates.extend([
         r'C:\Program Files\Basler\pylon',
-        r'C:\Program Files\Basler\pylon 5', 
+        r'C:\Program Files\Basler\pylon 5',
         r'C:\Program Files (x86)\Basler\pylon',
     ])
 
@@ -50,10 +50,10 @@ def find_pylon_sdk_dir():
 def query_windows_pnp_devices():
     """
     Query Windows Device Manager via PowerShell for connected hardware.
-    
-    Filters for devices with names/descriptions matching 'Basler', 'pylon', 
+
+    Filters for devices with names/descriptions matching 'Basler', 'pylon',
     or 'Vision' to see if the operating system detects the hardware at all.
-    
+
     Returns:
         str: A formatted table listing discovered devices, or an error message string.
     """
@@ -79,125 +79,144 @@ def query_windows_pnp_devices():
 
 def debug_basler_pylon_connection():
     """
-    Execute a sequential 5-step diagnostic pipeline to find and test 
+    Execute a sequential 5-step diagnostic pipeline to find and test
     attached Basler camera hardware and its software configurations.
     """
-    print("=== STARTING BASLER PYLON DEBUG DIAGNOSTIC ===")
-    
+    print("Basler camera diagnostic tool")
+    print("This checks, one step at a time, why Python might not be able to see your Basler camera.")
+
     # -------------------------------------------------------------
     # STEP 1: Check Windows Environment & Pylon Installation Path
     # -------------------------------------------------------------
-    print("\n[1/5] Checking Windows Environment Variables...")
+    print("\n[1/5] Looking for the Basler pylon software on this computer...")
     pylon_dev_dir = find_pylon_sdk_dir()
-    
+
     if pylon_dev_dir:
-        print(f" -> SUCCESS: Pylon SDK installation found at: {pylon_dev_dir}")
+        print(f" -> Found it. The Basler pylon software is installed at: {pylon_dev_dir}")
         # Dynamically map the path so Python knows exactly where to look for C++ drivers
         os.environ['PYLON_DEV_DIR'] = pylon_dev_dir
     else:
-        print(" -> ERROR: No Basler Pylon SDK directory was found.")
-        print("    REASON: The native Basler Pylon Runtime/SDK for Windows is not installed or not in a standard location.")
-        print("    FIX: Download and install 'pylon Camera Software Suite for Windows' from Basler.")
+        print(" -> Could not find the Basler pylon software on this computer.")
+        print("    Likely cause: the pylon Camera Software Suite is not installed, or it is")
+        print("    installed somewhere this script does not know to look.")
+        print("    What to do: download and install the full pylon Camera Software Suite from")
+        print("    Basler's website (see this project's README, Stage 8, for exact steps),")
+        print("    then run this script again.")
         return
 
     # -------------------------------------------------------------
     # STEP 2: Check for Windows OS Subsystem Blocks (WSL/WSL2)
     # -------------------------------------------------------------
-    print("\n[2/5] Checking Environment Layer...")
+    print("\n[2/5] Checking whether Python is running directly on Windows...")
     # Industrial USB3 vision cameras cannot pass through native WSL2 USB architecture easily.
     if platform.system() == 'Linux' and 'microsoft' in platform.release().lower():
-        print(" -> ERROR: You are running Python inside WSL/WSL2 (Linux subsystem).")
-        print("    REASON: WSL does not natively support USB3 Vision transport layers.")
-        print("    FIX: Execute your script using native Windows Command Prompt or PowerShell.")
+        print(" -> This script is running inside WSL (Windows Subsystem for Linux), not Windows itself.")
+        print("    That is a problem: USB cameras like this one cannot be reached from inside WSL.")
+        print("    What to do: close this and run the script again from a normal Windows")
+        print("    Command Prompt or PowerShell window, not from a WSL or Linux terminal.")
         return
     else:
-        print(" -> SUCCESS: Running on native host system.")
+        print(" -> Good, this is running directly on Windows.")
 
     # -------------------------------------------------------------
     # STEP 3: Verify the Windows Device Manager Class Driver
     # -------------------------------------------------------------
-    print("\n[3/5] Querying Windows Device Manager for Basler/USB Vision Hardware...")
+    print("\n[3/5] Checking Windows Device Manager to see if it notices the camera...")
     try:
         raw_output = query_windows_pnp_devices()
 
         # If the string is empty or returned our custom failure message
         if not raw_output or raw_output.startswith('<device-query-failed'):
-            print(" -> ERROR: Could not query relevant Windows device entries automatically.")
-            print("    MANUAL FIX: Verify the camera shows up under 'Cameras' or 'Imaging devices' in Device Manager.")
+            print(" -> Could not check Device Manager automatically.")
+            print("    What to do: open Device Manager yourself and look for the camera under")
+            print("    'Cameras' or 'Imaging devices'.")
             return
 
-        print(" -> Windows device entries found:")
+        print(" -> Windows found these matching devices:")
         print(f"\n{raw_output}\n")
 
         # Check if the text output contains any variations of the keyword 'vision'
         if any(token in raw_output.lower() for token in ['usb vision', 'usb3 vision', 'vision device']):
-            print(" -> INFO: Windows sees the camera as a USB Vision device.")
-            print("    This is a stronger signal than 'no device' and suggests the camera is present,")
-            print("    but the pylon driver/transport layer is not yet being enumerated correctly.")
+            print(" -> Windows can see the camera; it shows up as a USB Vision device.")
+            print("    That is a good sign, the camera itself is connected. If the next steps")
+            print("    still fail, the problem is the pylon driver talking to it, not the USB")
+            print("    connection itself.")
         elif 'camera' not in raw_output.lower():
-            print(" -> WARN: The camera does not appear under the expected camera-related classes.")
-            print("    FIX: Open the Basler pylon USB Configurator or check whether the device is being exposed under 'Universal Serial Bus devices' or 'Imaging devices'.")
+            print(" -> Windows does not seem to recognize this as a camera yet.")
+            print("    What to do: open the Basler pylon USB Configurator (installed with the")
+            print("    pylon software), or check Device Manager under 'Universal Serial Bus")
+            print("    devices' or 'Imaging devices' to see how Windows currently sees it.")
             return
 
     except Exception as e:
         # A safety net in case checking the string contents raises an unexpected code bug
-        print(f" -> Code could not query Device Manager automatically: {e}")
-        print("    MANUAL FIX: Manually verify the camera shows up under 'Imaging devices' or 'Cameras' inside Windows Device Manager.")
+        print(f" -> Could not check Device Manager automatically: {e}")
+        print("    What to do: open Device Manager yourself and check under 'Imaging devices'")
+        print("    or 'Cameras'.")
 
     # -------------------------------------------------------------
     # STEP 4: Initialize Transport Layer and Enumerate Devices
     # -------------------------------------------------------------
-    print("\n[4/5] Initializing pypylon Transport Layer Factory...")
+    print("\n[4/5] Asking the pylon software to list every camera it can find...")
     try:
         # Access Basler's core software factory responsible for managing device drivers
         tl_factory = pylon.TlFactory.GetInstance()
         # Look for physical cameras plugged into ports
         devices = tl_factory.EnumerateDevices()
-        
-        print(f" -> Transport layer initialized. Total Basler cameras discovered: {len(devices)}")
-        
+
+        print(f" -> The pylon software started up correctly. Cameras it can see: {len(devices)}")
+
         if len(devices) == 0:
-            print(" -> ERROR: Pylon library is healthy, but 'EnumerateDevices()' returned 0 hardware units.")
-            print("    REASON: Windows can see the device, but the Basler pylon transport layer still is not enumerating it.")
-            print("            This often points to a driver-binding problem, a stale pylon runtime state, or another")
-            print("            application (such as pylon Viewer) holding the device open.")
-            print("    FIX: Close other software instances, restart the pylon runtime, and try the Basler 'pylon USB Configurator'.")
+            print(" -> The pylon software is working, but it cannot find any cameras.")
+            print("    Likely cause: Windows sees the device (Step 3 above), but the pylon")
+            print("    driver is not recognizing it as a camera yet. This often happens if")
+            print("    another program (such as pylon Viewer) already has the camera open,")
+            print("    or if the driver just needs to be reset.")
+            print("    What to do: close any other program that might be using the camera")
+            print("    (including pylon Viewer), then try the Basler pylon USB Configurator,")
+            print("    or unplug and replug the camera.")
             return
-            
+
         # Loop through each found camera and print its unique identity specs
         for i, device_info in enumerate(devices):
             print(f"    [Camera {i}]: Model: {device_info.GetModelName()} | SN: {device_info.GetSerialNumber()} | Connection: {device_info.GetDeviceClass()}")
-            
+
     except Exception as e:
         # If pypylon crashes immediately when calling GetInstance(), Python can't connect to the drivers at all
-        print(f" -> CRITICAL ERROR: pypylon bindings crashed during factory enumeration: {e}")
-        print("    FIX: Reinstall the python wheel using: pip install --force-reinstall pypylon")
+        print(f" -> Something went wrong while pypylon (the Python package for Basler cameras)")
+        print(f"    tried to start up: {e}")
+        print("    What to do: try reinstalling it with: pip install --force-reinstall pypylon")
         return
 
     # -------------------------------------------------------------
     # STEP 5: Attempt Hardware Initialization and Open Command
     # -------------------------------------------------------------
-    print("\n[5/5] Attempting to hook and open the primary camera device...")
+    print("\n[5/5] Trying to actually open a connection to the camera...")
     try:
         # Bind the very first camera discovered index [0] to an InstantCamera object
         camera = pylon.InstantCamera(tl_factory.CreateFirstDevice())
-        
+
         # Test physical communication line open (this boots up the camera handshake)
         camera.Open()
-        print(f" -> SUCCESS: Camera '{camera.GetDeviceInfo().GetModelName()}' successfully locked and opened!")
-        
+        print(f" -> Success. Connected to the camera: {camera.GetDeviceInfo().GetModelName()}")
+
         # Safely shut down connection so other programs can use it afterwards
         camera.Close()
-        print(" -> Connection closed cleanly. Your python pypylon stack is working perfectly.")
-        
+        print(" -> Closed the connection cleanly. Everything is working correctly: Python")
+        print("    can find and talk to this camera.")
+
     except pylon.RuntimeException as runtime_err:
         # Handle errors specific to Basler's internal system (e.g., bandwidth or busy issues)
-        print(f" -> ERROR: Found the camera but failed to initialize it: {runtime_err}")
-        print("    REASON: Typically means the camera is already locked by another process (like pylon Viewer)")
-        print("            or the USB host controller cannot handle the packet size/bandwidth demands.")
+        print(f" -> Found the camera, but could not open a connection to it: {runtime_err}")
+        print("    Likely cause: another program (such as pylon Viewer) already has the")
+        print("    camera open, or your computer's USB port cannot keep up with the amount")
+        print("    of data the camera is trying to send.")
+        print("    What to do: close any other program using the camera, and if possible")
+        print("    try a different USB port (ideally USB 3.0, plugged in directly rather")
+        print("    than through a hub).")
     except Exception as general_err:
         # Handle any other generic errors (e.g., script issues, cable sudden disconnections)
-        print(f" -> UNEXPECTED ERROR: {general_err}")
+        print(f" -> Something unexpected went wrong: {general_err}")
 
 
 # This prevents code from automatically running if imported into another script as a module
