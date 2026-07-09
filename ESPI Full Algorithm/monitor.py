@@ -149,13 +149,18 @@ def choose_camera_settings():
     print()
     print("    Optional: show a live graph of each raw frame's pixel")
     print("    intensity, in a third window alongside the camera preview.")
-    print("      none      — no extra window (fastest, default)")
-    print("      histogram — bar chart of intensity counts, updates every frame")
-    print("      3d        — 3D surface plot, updates a few times per second")
-    print("                  (matplotlib's 3D renderer is too slow to match")
-    print("                  full camera frame rate, even downsampled)")
+    print("      none          — no extra window (fastest, default)")
+    print("      histogram     — bar chart of intensity counts, linear scale,")
+    print("                      updates every frame")
+    print("      log_histogram — LabVIEW-style line plot, log scale, keeps")
+    print("                      rare pixel values visible next to a")
+    print("                      dominant peak, updates every frame")
+    print("      3d            — 3D surface plot, updates a few times per")
+    print("                      second (matplotlib's 3D renderer is too slow")
+    print("                      to match full camera frame rate, even")
+    print("                      downsampled)")
     graph_choice = ask("Graph type", default="none", cast=str,
-                        valid=["none", "histogram", "3d"])
+                        valid=["none", "histogram", "log_histogram", "3d"])
     graph_type = None if graph_choice == "none" else graph_choice
 
     return dict(exposure_s=exposure_s, gain_db=gain_db, gain_factor=gain_factor,

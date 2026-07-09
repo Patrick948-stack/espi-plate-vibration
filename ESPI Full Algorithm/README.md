@@ -280,7 +280,7 @@ Once you confirm, it opens the matching `capture_and_display*.py` script with tw
 
 - **Live Feed** — the raw frame straight from the camera
 - **Frame Subtraction** — the absolute difference between each pair of consecutive frames, amplified by `gain_factor`
-- **histogram / 3d** (optional) — a live graph of the raw frame's pixel intensity, see [Live pixel intensity graph](#live-pixel-intensity-graph) below
+- **histogram / log_histogram / 3d** (optional) — a live graph of the raw frame's pixel intensity, see [Live pixel intensity graph](#live-pixel-intensity-graph) below
 
 Press `q` inside any of the camera windows to close the monitor and return to the terminal. Basler only ever connects to the first camera pypylon finds (`camera_control.py` has no index parameter), so `monitor.py` skips the camera index question for that choice.
 
@@ -294,16 +294,19 @@ cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20, graph_type="histogram")
 
 ## Live pixel intensity graph
 
-`live_graphs.py` provides an optional third preview window: a live graph of the raw "Live Feed" frame's pixel intensity, either as a histogram or a 3D surface. It grew out of two exploratory scripts, `Learning/graph.py` (3D surface of one saved image) and `Learning/graph2.py` (histogram of one saved image) — this file rebuilds both as fast, in-place-updating versions that work on frames straight out of the camera instead of a file on disk.
+`live_graphs.py` provides an optional third preview window: a live graph of the raw "Live Feed" frame's pixel intensity, as a histogram (linear or log scale) or a 3D surface. It grew out of two exploratory scripts, `Learning/graph.py` (3D surface of one saved image) and `Learning/graph2.py` (linear histogram of one saved image), plus a LabVIEW-style log-scale histogram function written directly for live use — this file rebuilds all three as fast, in-place-updating versions that work on frames straight out of the camera instead of a file on disk.
 
 | Type | What it shows | Update rate |
 |---|---|---|
-| `histogram` | Bar chart: how many pixels have each intensity value (0-255) | Every frame — `numpy.bincount` counts all pixels in one vectorized call, and only the 256 bar heights change per frame, nothing is rebuilt |
+| `histogram` | Bar chart, linear y-axis: how many pixels have each intensity value (0-255) | Every frame — `numpy.bincount` counts all pixels in one vectorized call, and only the 256 bar heights change per frame, nothing is rebuilt |
+| `log_histogram` | Line plot, log y-axis, dark theme (matches LabVIEW's "Number of Pixels vs Pixel Value" plot) | Every frame — same `numpy.bincount` counting, only the line's y-data changes per frame |
 | `3d` | 3D surface: X = column, Y = row, Z = intensity | A few times per second (throttled), not every frame |
 
-The 3D option is intentionally throttled and heavily downsampled. matplotlib's 3D renderer (`mplot3d`) is a pure-Python, non-GPU-accelerated renderer that depth-sorts every quad in the surface on every redraw — there is no way to make a full 3D surface redraw at full camera frame rate (15-30+ fps) in matplotlib, downsampled or not. The histogram has no such ceiling since it only ever updates 256 numbers.
+`log_histogram` exists alongside the plain `histogram` because a linear y-axis is dominated by whichever intensity value has the most pixels (usually the background) — every rarer value gets squashed to an invisible sliver near the bottom. A log y-axis keeps rare values visible at the same time as the dominant peak.
 
-Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`, or `3d`; `none` is the default, so nothing changes for anyone who doesn't ask for it), or pass `graph_type="histogram"` / `graph_type="3d"` directly to any `capture_and_display*.py` script's `main()`.
+The 3D option is intentionally throttled and heavily downsampled. matplotlib's 3D renderer (`mplot3d`) is a pure-Python, non-GPU-accelerated renderer that depth-sorts every quad in the surface on every redraw — there is no way to make a full 3D surface redraw at full camera frame rate (15-30+ fps) in matplotlib, downsampled or not. Neither histogram option has that ceiling since they only ever update 256 numbers.
+
+Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`, `log_histogram`, or `3d`; `none` is the default, so nothing changes for anyone who doesn't ask for it), or pass `graph_type="histogram"` / `graph_type="log_histogram"` / `graph_type="3d"` directly to any `capture_and_display*.py` script's `main()`.
 
 
 ## What is in this folder
