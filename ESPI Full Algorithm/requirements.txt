@@ -6,18 +6,82 @@ pyusb
 matplotlib
 pytest
 
-# Basler cameras only — uncomment if you have a Basler camera:
-# pypylon
+# ==============================================================================
+# Basler camera (pypylon) — only needed if you have a Basler camera
+# ==============================================================================
+# 1. Google: "Basler pylon Camera Software Suite download"
+#    Go to the official Basler downloads page (basler.com > Support >
+#    Downloads > pylon Camera Software Suite) and pick the installer for
+#    your OS.
+# 2. The download page offers more than one file — a small "pylon Runtime"
+#    and a much larger full "pylon Camera Software Suite" installer.
+#    DOWNLOAD THE BIGGER ONE. We tried the slim Runtime first and it was
+#    missing pieces this project needs (no pylon Viewer, incomplete SDK);
+#    the full Software Suite installer includes pylon Viewer (handy for
+#    testing the camera outside Python) and everything pypylon needs.
+# 3. Run the installer and keep the default/full component selection —
+#    it installs the camera drivers, not just software.
+# 4. Then, with venv_physics active:
+#      pip install pypylon
+# 5. Verify:
+#      python -c "from pypylon import pylon; print('Basler ready')"
+pypylon
 
-# Allied Vision cameras only — install from wheel instead of pip:
-# Download from https://github.com/alliedvision/VmbPy
-# pip install <downloaded_wheel>.whl
+# ==============================================================================
+# Allied Vision camera (vmbpy) — only needed if you have an Allied Vision camera
+# ==============================================================================
+# 1. Google: "Allied Vision Vimba X download"
+#    Go to the official Allied Vision website (alliedvision.com) > Products
+#    > Software > Vimba X, and download the installer for your OS.
+#    Vimba X is the current SDK — do NOT download the older "Vimba"
+#    (non-X) SDK, it is not compatible with this project's code.
+# 2. Run the installer with the default options. This installs the camera
+#    drivers plus the Python API as a .whl file (it is not on PyPI, so
+#    plain "pip install vmbpy" will not work).
+# 3. Find the wheel file inside the install folder — look under a path like:
+#      Windows:   C:\Program Files\Allied Vision\Vimba X\api\python\
+#      Mac/Linux: wherever Vimba X was installed, under api/python/
+#    The file is named something like vmbpy-<version>-py3-none-any.whl.
+# 4. Then, with venv_physics active, install that exact file:
+#      Windows:   pip install "C:\path\to\vmbpy-<version>-py3-none-any.whl"
+#      Mac/Linux: pip install /path/to/vmbpy-<version>-py3-none-any.whl
+# 5. Verify:
+#      python -c "import vmbpy; print('Allied Vision ready')"
 
-# Windows only — pyusb needs this to find the native libusb library.
-# The "; sys_platform == 'win32'" marker means pip only installs this line
-# on Windows, so a single `pip install -r requirements.txt` does the right
-# thing on every OS instead of Windows users needing a second manual
-# `pip install libusb-package` command. A one-time Zadig driver step is
-# still required separately; see README.md Stage 8.5 — that part can't be
-# done through pip, it's a Windows USB driver binding, not a package.
-libusb-package; sys_platform == "win32"
+# ==============================================================================
+# Zadig driver step (Windows only) — required for the signal generator (and
+# any other USB instrument pyvisa-py talks to) to be visible to Python
+# ==============================================================================
+# Windows blocks direct USB access by default until a compatible driver is
+# bound to the device. pyusb/libusb-package (below) need that access to talk
+# to the signal generator over USB. Zadig is the tool that binds the right
+# driver — it is NOT a Python package, so pip cannot do this step. It has to
+# be run once, manually, per computer (and again if you move the instrument
+# to a different USB port).
+#
+# 1. Google: "Zadig download" — or go directly to zadig.akeo.ie.
+#    It's a single small executable (a few MB), no installer, nothing else
+#    to download.
+# 2. Plug in the signal generator and power it on BEFORE opening Zadig, so
+#    it actually shows up in the device list.
+# 3. Run the downloaded zadig-*.exe. Windows may show a SmartScreen warning
+#    since it's a small unsigned utility — click "More info" > "Run anyway".
+# 4. In Zadig, click Options > List All Devices (instrument-type USB
+#    devices are hidden by default).
+# 5. Open the dropdown at the top of the window and find the signal
+#    generator. It may show up under its model name, as "USB Test and
+#    Measurement Device", or as "Unknown Device". If more than one entry
+#    looks related to it, repeat steps 5-7 for each one — one of them is
+#    the right interface.
+# 6. Make sure the box on the right (next to the green arrow) says
+#    "WinUSB". If it shows something else, use the up/down arrows next to
+#    it to select WinUSB specifically.
+# 7. Click "Replace Driver" (it may say "Install Driver" the first time).
+#    Wait for the progress bar to finish, then close Zadig. No reboot
+#    needed.
+#
+# Once done, verify with (venv_physics active):
+#   python -c "import usb.core; print(list(usb.core.find(find_all=True)))"
+# An empty list [] or a NoBackendError means this step still needs fixing.
+# See README.md Stage 8.5 for the full verification walkthrough.
+libusb-package

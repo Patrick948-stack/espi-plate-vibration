@@ -12,7 +12,7 @@ Hardware limits are enforced automatically through clamping functions before any
 is sent to the instrument, preventing out-of-range values from causing errors or damage.
 
 Key variables:
-    rm = pyvisa.ResourceManager()
+    rm = pyvisa.ResourceManager('@py')
     instrs = find_instruments(rm)
     instr = select_instrument(rm, instrs)
     set_frequency(instr, 1000, channel=1, waveform="sine")
@@ -137,7 +137,7 @@ def find_instruments(rm):
 
     Parameters:
         rm: A pyvisa.ResourceManager object. This is the entry point PyVISA uses
-            to search for connected devices. Create it with: rm = pyvisa.ResourceManager()
+            to search for connected devices. Create it with: rm = pyvisa.ResourceManager('@py')
 
     Returns:
         tuple: A tuple of VISA resource strings, one per detected instrument.
@@ -437,7 +437,11 @@ def main():
     Entry point. Connects to the instrument and runs through a full configuration sequence:
     turn on output, prompt user to select a waveform type, then set frequency, amplitude, and offset.
     """
-    rm = pyvisa.ResourceManager()  # Create the VISA resource manager — entry point for all communication
+    # '@py' forces the pure-Python pyvisa-py backend, which correctly finds
+    # the instrument's USB0::...::INSTR resource on Windows, macOS, and Linux
+    # alike. Without it, Windows may default to NI-VISA, which can report the
+    # wrong resource (e.g. an ASRL/serial port) and cause commands to time out.
+    rm = pyvisa.ResourceManager('@py')  # Create the VISA resource manager — entry point for all communication
     instrs = find_instruments(rm)
     if instrs is None:
         return  # Exit early — no point continuing without an instrument

@@ -2,7 +2,11 @@
 import pyvisa
 import time
 
-rm = pyvisa.ResourceManager() #Create a resource manager object that will find the instruments
+rm = pyvisa.ResourceManager('@py') #Create a resource manager object that will find the instruments
+# '@py' forces the pure-Python pyvisa-py backend, which correctly finds the
+# instrument's USB0::...::INSTR resource on Windows, macOS, and Linux alike.
+# Without it, Windows may default to NI-VISA, which can report the wrong
+# resource (e.g. an ASRL/serial port) and cause commands to time out.
 instrs = rm.list_resources() #A tuple of all the instruments connected
 if len(instrs) == 0: 
     print("Sorry, no instrument found!")
