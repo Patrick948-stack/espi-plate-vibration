@@ -251,9 +251,11 @@ This prints the VISA backend path, resource discovery time, and query latency fo
 
 **Option B — NI-VISA (heavier, official vendor runtime)**
 
-Download and install the free **NI-VISA** runtime from National Instruments (ni.com). It installs its own driver and its own VISA backend. Once installed, `pyvisa.ResourceManager()` detects and uses it automatically instead of `pyvisa-py` — no code changes needed.
+Download and install the free **NI-VISA** runtime from National Instruments (ni.com). It installs its own driver and its own VISA backend.
 
-Zadig is the better default for this project: it's a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux. NI-VISA is a much larger install and is only worth it if it's already needed for other instruments.
+Note: every script in this project now opens its connection with `pyvisa.ResourceManager('@py')` explicitly, so installing NI-VISA will **not** change which backend is used — `@py` is always requested. This is intentional: on at least one development machine, NI-VISA reported the signal generator under the wrong resource address (an `ASRL`/serial port instead of its real `USB0::...::INSTR` address), which made every SCPI command time out. Forcing `@py` sidesteps that ambiguity entirely rather than depending on whichever backend the OS decides to prioritize. If you need NI-VISA for a different instrument in the same script, pass its backend string explicitly where that instrument's connection is opened.
+
+Zadig is the better default for this project: it's a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux.
 
 
 ### Stage 9 — Run the experiment

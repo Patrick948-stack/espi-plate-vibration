@@ -35,7 +35,11 @@ def open_connection(index=0):
     Convenience wrapper: create a resource manager, scan, and open the
     instrument at `index`. Returns None if nothing is connected.
     """
-    rm = pyvisa.ResourceManager()
+    # '@py' forces the pure-Python pyvisa-py backend so we always land on the
+    # instrument's real USB0::...::INSTR resource instead of whatever NI-VISA
+    # decides to report (e.g. an ASRL/serial port). Works the same way on
+    # Windows, macOS, and Linux.
+    rm = pyvisa.ResourceManager('@py')
     instrs = find_instruments(rm)
     if instrs is None:
         return None

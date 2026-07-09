@@ -241,8 +241,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Debug slow signal generator response time, and test set/verify commands via PyVISA."
     )
-    parser.add_argument("--backend", default=None,
-                         help="Optional PyVISA backend string, e.g. '@py' or '@ni'.")
+    parser.add_argument("--backend", default="@py",
+                         help="PyVISA backend string. Defaults to '@py' (pyvisa-py), which "
+                              "reliably finds this instrument's USB0::...::INSTR resource on "
+                              "Windows, macOS, and Linux. Pass '' to use the OS default "
+                              "(e.g. NI-VISA) instead, or '@ni' to force NI-VISA explicitly.")
     parser.add_argument("--timeout", type=int, default=20000,
                          help="Instrument timeout in milliseconds. Default: 20000.")
     parser.add_argument("--address", default=None,

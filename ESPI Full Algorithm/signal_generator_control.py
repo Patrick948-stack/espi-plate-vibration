@@ -330,8 +330,14 @@ def clamp_offset(offset, amplitude=0.0):
 # and the signal generator.
 #
 # HOW THE CONNECTION WORKS:
-#   1. pyvisa.ResourceManager() — creates a "manager" object that knows how
-#      to speak to instruments over USB, GPIB, or Ethernet.
+#   1. pyvisa.ResourceManager('@py') — creates a "manager" object that knows
+#      how to speak to instruments over USB, GPIB, or Ethernet. We always pass
+#      '@py' to force the pure-Python pyvisa-py backend. On this machine, the
+#      default (NI-VISA) backend reports the wrong resource for this
+#      instrument (an ASRL/serial port instead of its real USB0::...::INSTR
+#      address), which makes every command time out. '@py' finds the correct
+#      USB resource every time and works the same way on Windows, macOS, and
+#      Linux.
 #   2. rm.list_resources()      — scans all ports and returns the VISA address
 #      of every instrument it finds.  A USB address looks like:
 #        USB0::62701::60986::SDG10GAC3R0028::0::INSTR
@@ -362,7 +368,7 @@ def find_instruments(rm):
 
     Args:
         rm : A pyvisa.ResourceManager instance.
-             Create one with:  rm = pyvisa.ResourceManager()
+             Create one with:  rm = pyvisa.ResourceManager('@py')
 
     Returns:
         tuple : One VISA address string per detected instrument.
@@ -371,7 +377,7 @@ def find_instruments(rm):
                 stop early rather than trying to connect to a missing device.
 
     Example:
-        rm    = pyvisa.ResourceManager()
+        rm    = pyvisa.ResourceManager('@py')
         addrs = find_instruments(rm)
         if addrs is None:
             print("No instruments found.")
@@ -445,7 +451,7 @@ def connect_instrument(rm, instrs, index=0):
                 finding it and this call trying to open it).
 
     Example:
-        rm    = pyvisa.ResourceManager()
+        rm    = pyvisa.ResourceManager('@py')
         addrs = find_instruments(rm)
         instr = connect_instrument(rm, addrs, index=0)
         if instr is None:
@@ -509,7 +515,9 @@ def open_connection(index=0):
             print("Could not connect.")
     """
     try:
-        rm = pyvisa.ResourceManager()
+        # '@py' forces the pure-Python pyvisa-py backend so we always land on
+        # the instrument's real USB0::...::INSTR resource, on every OS.
+        rm = pyvisa.ResourceManager('@py')
     except Exception as e:
         print(f"[ERROR] Could not start a VISA resource manager: {e}")
         print("  Make sure both packages are installed: pip install pyvisa pyvisa-py")

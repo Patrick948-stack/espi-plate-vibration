@@ -147,7 +147,7 @@ def find_instruments(rm):
 
     Parameters:
         rm : A pyvisa.ResourceManager instance.
-             Create one with:  rm = pyvisa.ResourceManager()
+             Create one with:  rm = pyvisa.ResourceManager('@py')
 
     Returns:
         tuple : One VISA address string per detected instrument.
@@ -215,7 +215,11 @@ def open_connection(index=0):
     Returns:
         instr : An open PyVISA resource object, or None if no instrument found.
     """
-    rm = pyvisa.ResourceManager()
+    # '@py' forces the pure-Python pyvisa-py backend, which correctly finds
+    # the instrument's USB0::...::INSTR resource on Windows, macOS, and Linux
+    # alike. Without it, Windows may default to NI-VISA, which can report the
+    # wrong resource (e.g. an ASRL/serial port) and cause commands to time out.
+    rm = pyvisa.ResourceManager('@py')
     instrs = find_instruments(rm)
 
     if instrs is None:
