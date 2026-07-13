@@ -107,6 +107,13 @@ def connect_camera():
         # any camera features or grabbing images.
         camera.Open()
 
+        # Basler cameras remember their pixel format in their own onboard
+        # memory across power cycles and reconnects. Without this, whatever
+        # format the camera was last left in (pylon Viewer, an older script,
+        # anything) silently carries over, and every image this project
+        # saves or displays assumes the 0-255 Mono8 format.
+        set_pixel_format(camera, "Mono8")
+
         print(f"Connected to: {camera.GetDeviceInfo().GetModelName()}")
         return camera
 

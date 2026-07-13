@@ -42,13 +42,14 @@ _SENTINEL = object()  # distinguishes "key was absent" from "key was None"
 def _default_params(**overrides):
     """Return a minimal valid params dict, optionally overriding fields."""
     base = dict(
-        start_freq = 100.0,
-        end_freq   = 200.0,
-        step       = 100.0,
-        n_averages = 5,
-        exposure   = 0.01,     # 10 ms in seconds
-        gain       = 0.0,
-        output_dir = "out",
+        start_freq  = 100.0,
+        end_freq    = 200.0,
+        step        = 100.0,
+        n_averages  = 5,
+        exposure    = 0.01,     # 10 ms in seconds
+        gain        = 0.0,
+        gain_factor = 1,
+        output_dir  = "out",
     )
     base.update(overrides)
     return base
@@ -204,6 +205,67 @@ class TestRunPipelineExposureConversion:
 
 
 # ===========================================================================
+# run_pipeline() — gain_factor propagation
+# ===========================================================================
+
+class TestRunPipelineGainFactor:
+    """
+    gain_factor must reach every sweep function, for every camera and both
+    subtraction modes, unchanged from what the user typed.
+    """
+
+    def setup_method(self):
+        self._basler_mod = _mock_pipeline_module("complete_pipeline")
+        self._cv_mod     = _mock_pipeline_module("complete_pipeline_inclusive")
+        self._av_mod     = _mock_pipeline_module("complete_pipeline_allied_vision")
+
+    def teardown_method(self):
+        for name in ("complete_pipeline",
+                     "complete_pipeline_inclusive",
+                     "complete_pipeline_allied_vision"):
+            sys.modules.pop(name, None)
+
+    def test_basler_pair_mode(self):
+        run_experiment.run_pipeline("1", "1", _default_params(gain_factor=15))
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(15)
+
+    def test_basler_reference_mode(self):
+        run_experiment.run_pipeline("1", "2", _default_params(gain_factor=15))
+        kwargs = self._basler_mod.reference_frequency_sweep.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(15)
+
+    def test_opencv_pair_mode(self):
+        run_experiment.run_pipeline("2", "1", _default_params(gain_factor=30))
+        kwargs = self._cv_mod.frequency_sweep_inclusive.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(30)
+
+    def test_opencv_reference_mode(self):
+        run_experiment.run_pipeline("2", "2", _default_params(gain_factor=30))
+        kwargs = self._cv_mod.reference_frequency_sweep_inclusive.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(30)
+
+    def test_allied_pair_mode(self):
+        run_experiment.run_pipeline("3", "1", _default_params(gain_factor=5))
+        kwargs = self._av_mod.frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(5)
+
+    def test_allied_reference_mode(self):
+        run_experiment.run_pipeline("3", "2", _default_params(gain_factor=5))
+        kwargs = self._av_mod.reference_frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(5)
+
+    def test_default_gain_factor_is_1(self):
+        # _default_params() itself defaults gain_factor to 1 (no amplification),
+        # matching the sweep functions' own default — confirms run_pipeline()
+        # doesn't silently drop or override it when the caller didn't ask for
+        # anything unusual.
+        run_experiment.run_pipeline("1", "1", _default_params())
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["gain_factor"] == pytest.approx(1)
+
+
+# ===========================================================================
 # run_pipeline() — ImportError handling
 # ===========================================================================
 
@@ -332,6 +394,45 @@ class TestShowPreviewFeed:
         mock_lib.show_live_feed_from_camera.assert_called_once_with(mock_cam)
         mock_lib.disconnect_camera.assert_called_once_with(mock_cam)
 
+    def test_applies_exposure_and_gain_before_showing_feed(self):
+        # Basler/Allied Vision (any choice but "2") convert seconds to
+        # microseconds, the same as run_pipeline() does for the real sweep.
+        mock_cam = MagicMock()
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = mock_cam
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("3", exposure_s=0.01, gain=2.0)
+        mock_lib.set_exposure_manual.assert_called_once_with(mock_cam, pytest.approx(10_000.0))
+        mock_lib.set_gain_manual.assert_called_once_with(mock_cam, 2.0)
+
+    def test_applies_exposure_using_log2_scale_for_webcam(self):
+        mock_cam = MagicMock()
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = mock_cam
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("2", exposure_s=0.015625, gain=0.0)
+        mock_lib.set_exposure_manual.assert_called_once_with(mock_cam, pytest.approx(-6.0, abs=0.01))
+
+    def test_no_exposure_or_gain_given_skips_applying_settings(self):
+        mock_cam = MagicMock()
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = mock_cam
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("3")  # exposure_s/gain default to None
+        mock_lib.set_exposure_manual.assert_not_called()
+        mock_lib.set_gain_manual.assert_not_called()
+
+    def test_failure_applying_settings_is_caught_and_feed_still_shows(self, capsys):
+        mock_cam = MagicMock()
+        mock_lib = MagicMock()
+        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.set_exposure_manual.side_effect = RuntimeError("camera busy")
+        with patch("importlib.import_module", return_value=mock_lib):
+            run_experiment._show_preview_feed("3", exposure_s=0.01, gain=0.0)
+        mock_lib.show_live_feed_from_camera.assert_called_once_with(mock_cam)
+        out = capsys.readouterr().out
+        assert "Could not apply exposure/gain" in out
+
     def test_feed_crash_is_caught_and_disconnect_still_runs(self, capsys):
         # The preview is a convenience, not a requirement — a crash here
         # (e.g. a cable came loose while aiming) must not take down the
@@ -357,7 +458,7 @@ class TestReconfigureIfNeeded:
 
     PARAMS = dict(
         start_freq=100.0, end_freq=200.0, step=100.0, n_averages=5,
-        exposure=0.01, gain=0.0,
+        exposure=0.01, gain=0.0, gain_factor=1,
     )
 
     def test_returns_params_unchanged_when_no(self):
@@ -367,11 +468,12 @@ class TestReconfigureIfNeeded:
         assert result == self.PARAMS
 
     def test_camera_choice_updates_exposure_and_gain(self):
-        with patch("builtins.input", side_effect=["camera", "0.02", "1.0", "n"]), \
+        with patch("builtins.input", side_effect=["camera", "0.02", "1.0", "25", "n"]), \
              patch.object(run_experiment, "_show_preview_feed"):
             result = run_experiment.reconfigure_if_needed("2", dict(self.PARAMS))
-        assert result["exposure"] == pytest.approx(0.02)
-        assert result["gain"]     == pytest.approx(1.0)
+        assert result["exposure"]    == pytest.approx(0.02)
+        assert result["gain"]        == pytest.approx(1.0)
+        assert result["gain_factor"] == pytest.approx(25)
 
     def test_signal_choice_updates_frequency_params(self):
         with patch("builtins.input",
@@ -384,10 +486,12 @@ class TestReconfigureIfNeeded:
         assert result["n_averages"] == 3
 
     def test_preview_feed_shown_after_adjustment(self):
-        with patch("builtins.input", side_effect=["camera", "0.02", "1.0", "n"]), \
+        # The preview must reflect the settings just typed (0.02 s, 1.0 dB),
+        # not the ones the camera happened to already be sitting at.
+        with patch("builtins.input", side_effect=["camera", "0.02", "1.0", "20", "n"]), \
              patch.object(run_experiment, "_show_preview_feed") as mock_feed:
             run_experiment.reconfigure_if_needed("2", dict(self.PARAMS))
-        mock_feed.assert_called_once_with("2")
+        mock_feed.assert_called_once_with("2", pytest.approx(0.02), pytest.approx(1.0))
 
     def test_preview_not_shown_when_no_changes(self):
         with patch("builtins.input", return_value="no"), \
@@ -396,7 +500,7 @@ class TestReconfigureIfNeeded:
         mock_feed.assert_not_called()
 
     def test_loops_when_user_wants_more_changes(self):
-        with patch("builtins.input", side_effect=["camera", "0.05", "2.0", "y", "no"]), \
+        with patch("builtins.input", side_effect=["camera", "0.05", "2.0", "30", "y", "no"]), \
              patch.object(run_experiment, "_show_preview_feed"):
             result = run_experiment.reconfigure_if_needed("1", dict(self.PARAMS))
         assert result["exposure"] == pytest.approx(0.05)
@@ -437,7 +541,7 @@ class TestAskPositiveFloat:
         # ask() that would silently accept 0.
         answers = ["100", "1000", "100", "5",   # freq/step/averages
                    "0", "0.02",                  # exposure: rejected, retried
-                   "0.0", "out"]                 # gain, output_dir
+                   "0.0", "20", "out"]           # gain, gain_factor, output_dir
         with patch("builtins.input", side_effect=answers):
             params = run_experiment.choose_sweep_params()
         assert params["exposure"] == pytest.approx(0.02)

@@ -336,6 +336,18 @@ class TestConnectCamera:
             cc.connect_camera()
         cam.Open.assert_called_once()
 
+    def test_forces_pixel_format_to_mono8(self):
+        # The camera remembers its own pixel format across reconnects, in its
+        # own onboard memory. Without forcing it here, a camera left in some
+        # other format by an earlier session would silently stay that way,
+        # and every downstream function assumes 0-255 Mono8 data.
+        cam = make_mock_basler_camera()
+        with patch("camera_control.pylon") as mock_pylon:
+            mock_pylon.TlFactory.GetInstance().CreateFirstDevice.return_value = MagicMock()
+            mock_pylon.InstantCamera.return_value = cam
+            cc.connect_camera()
+        assert cam.PixelFormat.Value == "Mono8"
+
 
 class TestDisconnectCamera:
     def test_calls_stop_grabbing_if_grabbing(self):

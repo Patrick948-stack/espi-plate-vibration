@@ -44,6 +44,7 @@ import numpy as np
 import vmbpy
 
 import live_graphs
+from camera_control_allied_vision import to_gray
 
 
 # ==============================================================================
@@ -58,7 +59,7 @@ EXPOSURE_US   = 10000       # exposure time in microseconds (10000 µs = 10 ms)
 GAIN          = None        # camera gain in dB, or None to leave it unchanged
 LIST_CAMERAS  = False       # set True to print all detected cameras and exit
 
-Gain_factor = 20 # Factor by which the difference will be multiplied
+GAIN_FACTOR = 20 # Factor by which the difference will be multiplied
 
 
 
@@ -107,13 +108,14 @@ def set_gain(cam, gain):
 
 
 def frame_to_gray(frame):
-    """Convert a vmbpy Frame to an 8-bit greyscale numpy array."""
-    cv_img = frame.as_opencv_image()
-    if cv_img.ndim == 3:
-        if cv_img.shape[2] == 1:
-            return cv_img[:, :, 0]
-        return cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
-    return cv_img
+    """
+    Convert a vmbpy Frame to an 8-bit greyscale numpy array.
+
+    Unwraps the Frame into a plain numpy array, then hands the shape
+    handling (mono vs colour camera) to camera_control_allied_vision's
+    to_gray(), instead of keeping a second copy of that same logic here.
+    """
+    return to_gray(frame.as_opencv_image())
 
 
 # ==============================================================================
@@ -121,7 +123,7 @@ def frame_to_gray(frame):
 # ==============================================================================
 
 def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
-         gain_factor=Gain_factor, list_cameras=LIST_CAMERAS, graph_type=None):
+         gain_factor=GAIN_FACTOR, list_cameras=LIST_CAMERAS, graph_type=None):
     """
     Open an Allied Vision camera and show the live feed and frame
     subtraction windows until 'q' is pressed.
@@ -137,10 +139,10 @@ def main(camera_index=CAMERA_INDEX, exposure_us=EXPOSURE_US, gain=GAIN,
                        uint8 array would.
         list_cameras : if True, print all detected cameras and their IDs,
                        then return without opening a live feed
-        graph_type   : None (default, no extra window), "histogram", or
-                       "3d". Opens a third window that graphs the pixel
-                       intensity of the raw "Live Feed" frame, updated
-                       live. See live_graphs.py for details.
+        graph_type   : None (default, no extra window), "histogram",
+                       "log_histogram", or "3d". Opens a third window that
+                       graphs the pixel intensity of the raw "Live Feed"
+                       frame, updated live. See live_graphs.py for details.
     """
     with vmbpy.VmbSystem.get_instance() as vmb:
 

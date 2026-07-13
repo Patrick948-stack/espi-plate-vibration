@@ -456,6 +456,16 @@ import capture_and_display as cad
 cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20, graph_type="histogram")
 ```
 
+### Graphical version (`monitor_gui.py`)
+
+Prefer clicking over typing in a terminal? `monitor_gui.py` is a PyQt5 window that walks through the exact same three steps as `monitor.py` (camera, settings, confirm) with radio buttons, spin boxes, and a Back/Next/Launch Monitor wizard instead of typed answers:
+
+```
+python monitor_gui.py
+```
+
+It requires PyQt5 (`pip install -r requirements.txt` already covers this). Everything it launches, and every rule about what counts as a valid exposure or gain_factor, comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices.
+
 ## Live pixel intensity graph
 
 `live_graphs.py` provides an optional third preview window: a live graph of the raw "Live Feed" frame's pixel intensity, shown either as a histogram (linear or log scale) or as a 3D surface. It grew out of two exploratory scripts, `Learning/graph.py` (a 3D surface of one saved image) and `Learning/graph2.py` (a linear histogram of one saved image), plus a LabVIEW style log scale histogram function written directly for live use. This file rebuilds all three as fast, continuously updating versions that work on frames straight out of the camera instead of a single file saved to disk.
@@ -478,6 +488,7 @@ Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`,
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
 | `monitor.py` | Script you run | Interactive live preview. Pick a camera, set exposure, gain, gain_factor, and graph type, then watch Live Feed and Frame Subtraction, plus an optional graph |
+| `monitor_gui.py` | Script you run | Same live preview as `monitor.py`, as a PyQt5 wizard instead of typed terminal answers |
 | `live_graphs.py` | Library | Live histogram or 3D surface plot of pixel intensity, `create_live_graph(graph_type)` |
 | `requirements.txt` | Package list | Install everything with `pip install -r requirements.txt` |
 | `complete_pipeline.py` | Script or importable | Full frequency sweep for a Basler camera |
@@ -617,6 +628,8 @@ After a sweep, the output folder will contain:
 
 Filenames use exactly as many decimal places as the frequency needs, and are padded with leading zeros so they sort correctly in any file browser.
 
+`run_experiment.py` also asks for a `gain_factor` (default 1, meaning no amplification), which multiplies every saved difference image before it is averaged, using `cv2.convertScaleAbs` so values saturate at 255 instead of wrapping around. It is baked into every `espi_raw*.png` file for every camera and both subtraction modes, so raising or lowering it changes the actual saved data, not just what you see on screen.
+
 ## Running the automated tests
 
 There are hundreds of tests covering every function in every file. They all run without a real camera or signal generator; the hardware is replaced with fake, simulated objects during testing, so you can run the full test suite even if you have no equipment plugged in at all.
@@ -646,6 +659,7 @@ python -m pytest tests/ -v
 | `test_complete_pipeline_allied_vision.py` | Allied Vision sweep logic |
 | `test_run_experiment.py` | Interactive entry point, exposure conversion, preview feed, settings loop |
 | `test_monitor.py` | monitor.py entry point: camera choice, settings prompts, exposure conversion, error messages |
+| `test_monitor_gui.py` | monitor_gui.py wizard: page defaults, spin box validation, confirm summary, launch dispatch |
 | `test_capture_and_display.py` | Basler live preview script |
 | `test_capture_and_display_cv2.py` | USB or OpenCV live preview script |
 | `test_capture_and_display_allied.py` | Allied Vision live preview script |

@@ -75,7 +75,8 @@ def _settle_with_live_feed(camera, seconds, freq):
         cv2.waitKey(1)
 
 
-def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir):
+def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
+                     gain_factor=1):
     """
     Run a full ESPI frequency sweep and save one averaged difference image per frequency.
 
@@ -111,6 +112,13 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
                               also amplify noise. Typical range: 0.0 – 24.0 dB.
         output_dir  (str)   : Folder path where images will be saved.
                               Created automatically if it does not exist.
+        gain_factor (float) : Multiplier applied to each difference image before
+                              it is averaged and saved, so faint fringes are easier
+                              to see. Applied with cv2.convertScaleAbs, which
+                              saturates at 255 instead of wrapping around the way
+                              plain multiplication of a uint8 array would. Defaults
+                              to 1 (no amplification) so the saved data matches the
+                              raw camera difference unless you explicitly ask for more.
 
     Returns:
         dict : Maps each frequency (float, Hz) to its averaged difference image
@@ -249,7 +257,9 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
                       f" — only {len(imgs_grab)} frame(s) received. Skipping.")
                 continue
 
-            diff = 20 * substract_frames(imgs_grab[0], imgs_grab[1])
+            diff = cv2.convertScaleAbs(
+                substract_frames(imgs_grab[0], imgs_grab[1]), alpha=gain_factor
+            )
             imgs_subs.append(diff)
 
         # ----------------------------------------------------------------------
@@ -311,7 +321,8 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
     return results
 
 
-def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir):
+def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
+                               gain_factor=1):
     """
     Reference-based ESPI frequency sweep.
 
@@ -350,6 +361,11 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         exposure_us (float) : Camera exposure time in microseconds.
         gain        (float) : Camera gain in dB.
         output_dir  (str)   : Folder where images are saved.
+        gain_factor (float) : Multiplier applied to each difference image before
+                              it is averaged and saved. See frequency_sweep()'s
+                              docstring for why cv2.convertScaleAbs is used
+                              instead of plain multiplication. Defaults to 1
+                              (no amplification).
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } or None on error.
@@ -448,7 +464,7 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         frames = grab_n_frames(camera, n_averages)
 
         for frame in frames:
-            diff = substract_frames(reference, frame)
+            diff = cv2.convertScaleAbs(substract_frames(reference, frame), alpha=gain_factor)
             imgs_subs.append(diff)
 
         if len(imgs_subs) == 0:

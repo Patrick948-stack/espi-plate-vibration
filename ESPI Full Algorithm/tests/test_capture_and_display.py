@@ -173,6 +173,26 @@ class TestMainGrabLoop:
 
         mock_disc.assert_called_once_with(cam)
 
+    def test_retrieve_result_timeout_is_caught_not_raised(self, capsys):
+        # TimeoutHandling_ThrowException means a stalled/disconnected camera
+        # makes RetrieveResult() raise instead of returning a failed result.
+        # main() must report this and stop cleanly, not let it become an
+        # uncaught traceback the way running this script directly would show.
+        cam = make_mock_basler_camera()
+        cam.IsGrabbing.side_effect = [True, False]
+        cam.RetrieveResult.side_effect = RuntimeError("grab timeout")
+
+        with patch("capture_and_display.connect_camera", return_value=cam), \
+             patch("capture_and_display.disconnect_camera") as mock_disc, \
+             patch("capture_and_display.set_exposure_manual"), \
+             patch("capture_and_display.set_gain_manual"), \
+             patch("cv2.destroyAllWindows"):
+            cad.main()  # must not raise
+
+        out = capsys.readouterr().out
+        assert "Frame grab failed" in out
+        mock_disc.assert_called_once_with(cam)
+
 
 # ===========================================================================
 # main() — gain_factor amplification must saturate, not wrap around

@@ -70,13 +70,20 @@ from matplotlib import pyplot as plt
 # load so unrelated functions (image processing, file saving) still work.
 # ---------------------------------------------------------------------------
 try:
-    from vmbpy import VmbSystem as Vimba, FrameStatus, VmbFeatureError as VimbaFeatureError
+    from vmbpy import (
+        VmbSystem as Vimba,
+        FrameStatus,
+        VmbFeatureError as VimbaFeatureError,
+        PixelFormat,
+    )
     _VIMBA_AVAILABLE = True
 except ImportError:
     _VIMBA_AVAILABLE = False
     print("[camera_control_allied_vision] WARNING: vmbpy package not found.")
-    print("  Download from: https://github.com/alliedvision/VmbPy")
-    print("  Then run: pip install <downloaded_wheel>.whl")
+    print("  Download the Vimba X SDK from Allied Vision, find the .whl file")
+    print("  inside its install folder, then run (replace the path with the")
+    print("  real one you found):")
+    print("    pip install /path/to/vmbpy-<version>-py3-none-any.whl")
 
 
 # ==============================================================================
@@ -169,7 +176,16 @@ def connect_camera(camera_index: int = 0) -> _AVHandle | None:
         height = cam.Height.get()
         print(f"Connected to Allied Vision: {model}  ({width} x {height} px)")
 
-        return _AVHandle(vimba, cam)
+        handle = _AVHandle(vimba, cam)
+
+        # Allied Vision cameras remember their pixel format in their own
+        # onboard memory across power cycles and reconnects. Without this,
+        # whatever format the camera was last left in (by Vimba Viewer, an
+        # older script, anything) silently carries over, and every image
+        # this project saves or displays assumes the 0-255 Mono8 format.
+        set_pixel_format(handle, "Mono8")
+
+        return handle
 
     except Exception as e:
         print(f"[connect_camera] Failed to connect: {e}")
@@ -319,15 +335,21 @@ def set_pixel_format(camera: _AVHandle, pixel_format: str = "Mono8") -> None:
     """
     Set the pixel format the camera uses to deliver frames.
 
-    'Mono8' is recommended for ESPI: 8-bit greyscale (0-255), smallest files,
-    no conversion needed. 'Mono12' gives more dynamic range if the plate
-    contrast is too low in 8-bit, but requires normalisation before display.
+    We use 'Mono8' for several reasons: 8-bit greyscale (0-255), smallest files,
+    no conversion needed.
+
+    vmbpy's own set_pixel_format() does not accept a plain string like "Mono8".
+    It needs the matching member of its own PixelFormat type (the same
+    object capture_and_display_allied.py uses directly as
+    vmbpy.PixelFormat.Mono8). getattr(PixelFormat, pixel_format) looks up that
+    member from the string name, the same way dict["Mono8"] would look up a
+    dictionary entry by its key.
 
     Example:
         set_pixel_format(camera, "Mono8")
     """
     try:
-        camera.cam.set_pixel_format(pixel_format)
+        camera.cam.set_pixel_format(getattr(PixelFormat, pixel_format))
         print(f"  Pixel format set to: {pixel_format}")
     except Exception as e:
         print(f"[set_pixel_format] Could not set format '{pixel_format}': {e}")
@@ -462,7 +484,7 @@ def _apply_roi(frame: np.ndarray, camera) -> np.ndarray:
 # SECTION 4 — IMAGE CAPTURE
 # ==============================================================================
 
-def _to_gray(img: np.ndarray) -> np.ndarray:
+def to_gray(img: np.ndarray) -> np.ndarray:
     """
     Internal helper — convert any camera output to a 2D greyscale array.
 
@@ -510,7 +532,7 @@ def grab_single_frame(camera: _AVHandle,
             return None
 
         img = frame.as_numpy_ndarray()
-        img = _to_gray(img)
+        img = to_gray(img)
 
         # Normalise to uint8 if the camera is in a 12-bit or 16-bit mode.
         # ESPI processing assumes 8-bit (0-255), so we rescale here.
@@ -934,7 +956,7 @@ def save_and_display_img(image: np.ndarray,
         save_and_display_img(frame)
         save_and_display_img(frame, "my_image")
     """
-    gray = _to_gray(image)
+    gray = to_gray(image)
 
     if filename is None:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -999,7 +1021,7 @@ def show_live_feed_from_camera(camera: _AVHandle) -> None:
         try:
             if frame.get_status() == FrameStatus.Complete:
                 img = frame.as_numpy_ndarray()
-                latest[0] = _to_gray(img)
+                latest[0] = to_gray(img)
         except Exception as e:
             print(f"[live feed] Frame handler error: {e}")
         finally:
@@ -1089,8 +1111,10 @@ def capture_and_display(camera: _AVHandle, n_images: int = 5) -> list:
 # __all__ — CONTROLS WHAT GETS EXPORTED WITH "from camera_control_allied_vision import *"
 # ==============================================================================
 # Only the public API is listed here. Internal helpers (_AVHandle, _roi_store,
-# _feature_exists, _apply_roi, _to_gray) are not exported — they are
-# implementation details that callers should not depend on.
+# _feature_exists, _apply_roi) are not exported — they are implementation
+# details that callers should not depend on. to_gray() is public and exported
+# because capture_and_display_allied.py reuses it instead of keeping its own
+# separate copy of the same frame-shape handling logic.
 # ==============================================================================
 __all__ = [
     # Section 1: Connection
@@ -1104,6 +1128,7 @@ __all__ = [
     "set_gain_auto",
     "set_pixel_format",
     "get_camera_info",
+    "to_gray",
 
     # Section 3: ROI
     "set_capture_roi",

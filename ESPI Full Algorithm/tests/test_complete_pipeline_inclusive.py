@@ -222,6 +222,42 @@ class TestReferenceFrequencySweepInclusiveMocked:
 
 
 # ===========================================================================
+# gain_factor — must scale every difference image before it is averaged and
+# saved, saturating at 255 instead of wrapping around (uint8 overflow).
+# ===========================================================================
+
+class TestGainFactorInclusive:
+
+    def test_pair_mode_scales_the_difference_before_averaging(self, hw):
+        flat_five = np.full((50, 50), 5, dtype=np.uint8)
+        with patch("complete_pipeline_inclusive.substract_frames", return_value=flat_five), \
+             patch("complete_pipeline_inclusive.average_img", return_value=flat_five) as mock_avg:
+            cp.frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw["tmp_path"]),
+                                         gain_factor=10)
+        diffs = mock_avg.call_args[0][0]
+        assert all((d == 50).all() for d in diffs)   # 5 * 10 = 50
+
+    def test_pair_mode_saturates_instead_of_wrapping(self, hw):
+        # 20 * 20 = 400, which would wrap to 144 under plain uint8 multiplication.
+        flat_twenty = np.full((50, 50), 20, dtype=np.uint8)
+        with patch("complete_pipeline_inclusive.substract_frames", return_value=flat_twenty), \
+             patch("complete_pipeline_inclusive.average_img", return_value=flat_twenty) as mock_avg:
+            cp.frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw["tmp_path"]),
+                                         gain_factor=20)
+        diffs = mock_avg.call_args[0][0]
+        assert all((d == 255).all() for d in diffs)
+
+    def test_reference_mode_scales_the_difference_before_averaging(self, hw_ref):
+        flat_five = np.full((50, 50), 5, dtype=np.uint8)
+        with patch("complete_pipeline_inclusive.substract_frames", return_value=flat_five), \
+             patch("complete_pipeline_inclusive.average_img", return_value=flat_five) as mock_avg:
+            cp.reference_frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw_ref["tmp_path"]),
+                                                    gain_factor=10)
+        diffs = mock_avg.call_args[0][0]
+        assert all((d == 50).all() for d in diffs)
+
+
+# ===========================================================================
 # skip_live_feed parameter
 # ===========================================================================
 

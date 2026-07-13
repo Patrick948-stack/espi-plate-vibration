@@ -58,7 +58,7 @@ EXPOSURE     = -6   # manual exposure (OpenCV log₂ scale):
                     # support manual exposure via OpenCV — images still work.
 GAIN         = 0.0  # camera gain, camera-dependent scale. Not all cameras
                     # let OpenCV control gain, it may be silently ignored.
-Gain_factor  = 20   # multiplier applied to the subtraction display
+GAIN_FACTOR  = 20   # multiplier applied to the subtraction display
 
 
 def _capture_backend():
@@ -88,7 +88,7 @@ def _capture_backend():
 # ==============================================================================
 
 def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
-         gain_factor=Gain_factor, graph_type=None):
+         gain_factor=GAIN_FACTOR, graph_type=None):
     """
     Open camera_index and show the live feed and frame subtraction windows
     until 'q' is pressed.
@@ -106,10 +106,10 @@ def main(camera_index=CAMERA_INDEX, exposure=EXPOSURE, gain=GAIN,
                        cv2.convertScaleAbs, which saturates at 255 instead
                        of wrapping around the way plain multiplication of a
                        uint8 array would.
-        graph_type   : None (default, no extra window), "histogram", or
-                       "3d". Opens a third window that graphs the pixel
-                       intensity of the raw "Live Feed" frame, updated
-                       live. See live_graphs.py for details.
+        graph_type   : None (default, no extra window), "histogram",
+                       "log_histogram", or "3d". Opens a third window that
+                       graphs the pixel intensity of the raw "Live Feed"
+                       frame, updated live. See live_graphs.py for details.
     """
     cap = cv2.VideoCapture(camera_index, _capture_backend())
 

@@ -103,6 +103,27 @@ def _av_frame(array):
 
 
 # ===========================================================================
+# frame_to_gray() — must reuse camera_control_allied_vision.to_gray(),
+# not keep its own separate copy of the same shape-handling logic
+# ===========================================================================
+
+class TestFrameToGray:
+    def test_mono_frame_unwraps_third_dimension(self):
+        mono = np.full((10, 10, 1), 42, dtype=np.uint8)
+        result = cad_av.frame_to_gray(_av_frame(mono))
+        assert result.shape == (10, 10)
+        assert (result == 42).all()
+
+    def test_delegates_to_shared_to_gray(self):
+        # Proves the reuse, not just matching behavior by coincidence.
+        arr = np.zeros((5, 5), dtype=np.uint8)
+        with patch.object(cad_av, "to_gray", return_value="sentinel") as mock_to_gray:
+            result = cad_av.frame_to_gray(_av_frame(arr))
+        mock_to_gray.assert_called_once()
+        assert result == "sentinel"
+
+
+# ===========================================================================
 # get_camera()
 # ===========================================================================
 

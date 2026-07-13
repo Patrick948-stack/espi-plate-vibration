@@ -17,7 +17,7 @@ HOW TO RUN
 
 HOW TO CHANGE THE BRIGHTNESS
 -----------------------------
-Change EXPOSURE_US, GAIN_DB, and Gain_factor below, or call main() directly
+Change EXPOSURE_US, GAIN_DB, and GAIN_FACTOR below, or call main() directly
 with your own values, exactly what monitor.py does:
 
     import capture_and_display as cad
@@ -46,14 +46,14 @@ import numpy as np
 
 EXPOSURE_US = 60000    # shutter time in microseconds (10 000 µs = 10 ms)
 GAIN_DB     = 1.0      # amplification in dB. 0 means no extra gain
-Gain_factor = 20        # multiplier applied to the subtraction display
+GAIN_FACTOR = 20        # multiplier applied to the subtraction display
 
 
 # ==============================================================================
 # MAIN
 # ==============================================================================
 
-def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor,
+def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=GAIN_FACTOR,
          graph_type=None):
     """
     Open the first Basler camera and show the live feed and frame
@@ -67,7 +67,8 @@ def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor,
                       cv2.convertScaleAbs, which saturates at 255 instead of
                       wrapping around the way plain multiplication of a
                       uint8 array would.
-        graph_type  : None (default, no extra window), "histogram", or "3d".
+        graph_type  : None (default, no extra window), "histogram",
+                      "log_histogram", or "3d".
                       Opens a third window that graphs the pixel intensity
                       of the raw "Live Feed" frame, updated live. See
                       live_graphs.py for how each type works and why the
@@ -96,7 +97,18 @@ def main(exposure_us=EXPOSURE_US, gain_db=GAIN_DB, gain_factor=Gain_factor,
         camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 
         while camera.IsGrabbing():
-            grab_result = camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
+            try:
+                grab_result = camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
+            except Exception as e:
+                # TimeoutHandling_ThrowException means a stalled or
+                # disconnected camera raises here instead of returning a
+                # failed result. Report it and stop cleanly instead of
+                # letting a raw pylon traceback end the whole program —
+                # the same behavior capture_and_display_allied.py already
+                # has for its own grab loop.
+                print(f"\n[ERROR] Frame grab failed: {e}")
+                print("  Stopping. If this repeats, unplug and replug the camera cable.")
+                break
 
             if grab_result.GrabSucceeded():
                 frame = grab_result.Array.copy()

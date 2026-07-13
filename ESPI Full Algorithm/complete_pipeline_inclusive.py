@@ -109,6 +109,7 @@ def frequency_sweep_inclusive(
     warmup_frames  = 10,
     channel        = 1,
     skip_live_feed = False,
+    gain_factor    = 1,
 ):
     """
     Run a full ESPI frequency sweep using any OpenCV-compatible camera.
@@ -168,6 +169,13 @@ def frequency_sweep_inclusive(
                                 Defaults to 10.
         channel       (int)   : Which signal generator channel to use (1 or 2).
                                 Defaults to 1.
+        gain_factor   (float) : Multiplier applied to each difference image,
+                                before averaging, with cv2.convertScaleAbs (which
+                                saturates at 255 instead of wrapping around the
+                                way plain multiplication of a uint8 array would).
+                                Baked into the saved "espi_raw" file itself, the
+                                same way it is for every other camera in this
+                                project. Defaults to 1 (no amplification).
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } for every frequency
@@ -440,7 +448,7 @@ def frequency_sweep_inclusive(
                           f"{i + 1}/{n_averages} — skipping.")
                     continue
 
-                difference_images.append(diff)
+                difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))
 
             # ------------------------------------------------------------------
             # 8e. Average all difference images together.
@@ -466,11 +474,13 @@ def frequency_sweep_inclusive(
             # 8f. Save images to disk.
             #
             #     We save two versions:
-            #       "espi_raw"       — the averaged difference straight from the
-            #                          camera.  Use this for quantitative analysis.
-            #       "espi_amplified" — contrast-stretched so the fringe pattern
-            #                          fills the full 0-255 range.  Use this to
-            #                          visually inspect the mode shape on screen.
+            #       "espi_raw"       — the averaged difference, already scaled by
+            #                          gain_factor (default 1, saturating so it
+            #                          cannot wrap around). Not the untouched
+            #                          camera data — see gain_factor above.
+            #       "espi_amplified" — contrast-stretched on top of that so the
+            #                          fringe pattern fills the full 0-255 range.
+            #                          Use this to visually inspect the mode shape.
             # ------------------------------------------------------------------
             saved_raw = save_image(
                 averaged,
@@ -563,6 +573,7 @@ def reference_frequency_sweep_inclusive(
     warmup_frames  = 10,
     channel        = 1,
     skip_live_feed = False,
+    gain_factor    = 1,
 ):
     """
     Reference-based ESPI frequency sweep using any OpenCV-compatible camera.
@@ -609,6 +620,12 @@ def reference_frequency_sweep_inclusive(
         amplitude     (float) : Peak-to-peak output voltage in Vpp.
         warmup_frames (int)   : Frames to discard while sensor settles.
         channel       (int)   : Signal generator channel (1 or 2).
+        gain_factor   (float) : Multiplier applied to each difference image,
+                                before averaging, with cv2.convertScaleAbs (which
+                                saturates at 255 instead of wrapping around).
+                                Baked into the saved "espi_raw" file itself, the
+                                same as every other pipeline in this project.
+                                Defaults to 1 (no amplification).
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } for each successful
@@ -798,7 +815,7 @@ def reference_frequency_sweep_inclusive(
             for frame in frames:
                 diff = substract_frames(reference, frame)
                 if diff is not None:
-                    difference_images.append(diff)
+                    difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))
 
             if len(difference_images) == 0:
                 print(f"  [SKIP] No valid frames at {freq:.1f} Hz — skipping.")
@@ -813,7 +830,9 @@ def reference_frequency_sweep_inclusive(
                 failed_frequencies.append(freq)
                 continue
 
-            # 9f. Save raw and contrast-amplified images.
+            # 9f. Save raw and contrast-amplified images. "espi_ref_raw" is
+            #     already scaled by gain_factor (see docstring); it is not the
+            #     untouched camera data.
             saved_raw = save_image(
                 averaged,
                 output_dir   = output_dir,

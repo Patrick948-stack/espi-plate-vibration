@@ -300,6 +300,7 @@ def frequency_sweep_allied_vision(
     warmup_frames:   int   = 10,
     channel:         int   = 1,
     skip_live_feed:  bool  = False,
+    gain_factor:     float = 1,
 ) -> dict | None:
     """
     Run a full ESPI pair-subtraction sweep using an Allied Vision camera.
@@ -336,6 +337,11 @@ def frequency_sweep_allied_vision(
         amplitude     : peak-to-peak voltage in Vpp
         warmup_frames : frames to discard after connecting the camera
         channel       : signal generator output channel, 1 or 2
+        gain_factor   : multiplier applied to each difference image, before
+                        averaging, with cv2.convertScaleAbs (saturates at 255
+                        instead of wrapping around). Baked into the saved
+                        "espi_av_raw" file itself, the same as every other
+                        camera in this project. Defaults to 1 (no amplification).
 
     Returns:
         dict of { frequency_hz: averaged_image } if the sweep ran.
@@ -424,7 +430,7 @@ def frequency_sweep_allied_vision(
 
                 diff = substract_frames(pair[0], pair[1])
                 if diff is not None:
-                    difference_images.append(diff)
+                    difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))
 
             if not difference_images:
                 print(f"  [SKIP] No valid frame pairs at {freq:.1f} Hz.")
@@ -439,6 +445,8 @@ def frequency_sweep_allied_vision(
                 continue
 
             # Save both a raw and a contrast-amplified version of the result.
+            # "espi_av_raw" is already scaled by gain_factor (see docstring);
+            # it is not the untouched camera data.
             saved_raw = save_image(averaged, output_dir=output_dir,
                                    frequency_hz=freq, exposure_us=exposure_us,
                                    step="espi_av_raw")
@@ -490,6 +498,7 @@ def reference_frequency_sweep_allied_vision(
     warmup_frames:   int   = 10,
     channel:         int   = 1,
     skip_live_feed:  bool  = False,
+    gain_factor:     float = 1,
 ) -> dict | None:
     """
     Run an ESPI reference-subtraction sweep using an Allied Vision camera.
@@ -594,7 +603,7 @@ def reference_frequency_sweep_allied_vision(
             for frame in frames:
                 diff = substract_frames(reference, frame)
                 if diff is not None:
-                    difference_images.append(diff)
+                    difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))
 
             if not difference_images:
                 print(f"  [SKIP] No valid frames at {freq:.1f} Hz.")
@@ -607,6 +616,8 @@ def reference_frequency_sweep_allied_vision(
                 failed_frequencies.append(freq)
                 continue
 
+            # "espi_av_ref_raw" is already scaled by gain_factor (see docstring);
+            # it is not the untouched camera data.
             saved_raw = save_image(averaged, output_dir=output_dir,
                                    frequency_hz=freq, exposure_us=exposure_us,
                                    step="espi_av_ref_raw")

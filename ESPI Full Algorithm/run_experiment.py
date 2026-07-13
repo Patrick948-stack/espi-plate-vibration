@@ -174,6 +174,21 @@ def ask_positive_float(prompt, default):
 
 
 # ==============================================================================
+# CAMERA LOOKUP TABLE
+# ==============================================================================
+# Defined here (not in monitor.py) because monitor.py already imports from
+# this file — putting it there and importing it back would create a circular
+# import. monitor.py imports this same dict instead of keeping its own copy,
+# so the two wizards can never show different names for the same camera.
+
+CAMERA_NAMES = {
+    "1": "Basler",
+    "2": "USB / webcam (eg. elp camera)",
+    "3": "Allied Vision",
+}
+
+
+# ==============================================================================
 # STEP-BY-STEP QUESTIONS
 # ==============================================================================
 
@@ -218,33 +233,39 @@ def choose_sweep_params():
     gain       = ask("Gain (dB)", default=0.0, cast=float)
 
     print()
+    print("    gain_factor multiplies each saved difference image so faint")
+    print("    fringes are easier to see. Same idea as monitor.py's gain_factor.")
+    gain_factor = ask_positive_float("gain_factor", default=1)
+
+    print()
     output_dir = ask("Output folder", default="output", cast=str)
 
     return dict(
-        start_freq = start_freq,
-        end_freq   = end_freq,
-        step       = step,
-        n_averages = n_averages,
-        exposure   = exposure,
-        gain       = gain,
-        output_dir = output_dir,
+        start_freq  = start_freq,
+        end_freq    = end_freq,
+        step        = step,
+        n_averages  = n_averages,
+        exposure    = exposure,
+        gain        = gain,
+        gain_factor = gain_factor,
+        output_dir  = output_dir,
     )
 
 
 def confirm_settings(camera_choice, mode_choice, params):
-    camera_names = {"1": "Basler", "2": "USB / webcam", "3": "Allied Vision"}
     mode_names   = {"1": "Pair subtraction", "2": "Reference subtraction"}
     exp_unit     = "s"
 
     section("Step 4 of 4 — Confirm your settings")
     print()
-    print(f"    Camera        :  {camera_names[camera_choice]}")
+    print(f"    Camera        :  {CAMERA_NAMES[camera_choice]}")
     print(f"    Mode          :  {mode_names[mode_choice]}")
     print(f"    Frequency     :  {params['start_freq']:g} – "
           f"{params['end_freq']:g} Hz  (step {params['step']:g} Hz)")
     print(f"    Frames/freq   :  {params['n_averages']}")
     print(f"    Exposure      :  {params['exposure']} {exp_unit}")
     print(f"    Gain          :  {params['gain']} dB")
+    print(f"    gain_factor   :  {params['gain_factor']}")
     print(f"    Output folder :  {params['output_dir']}")
     print()
 
@@ -375,10 +396,18 @@ _CAMERA_LIBRARY = {
 }
 
 
-def _show_preview_feed(camera_choice):
+def _show_preview_feed(camera_choice, exposure_s=None, gain=None):
     """
     Open the camera, show a live feed so the user can aim and focus,
     then close the camera.  Press 'e' inside the feed window to continue.
+
+    If exposure_s and/or gain are given, they are locked in before the feed
+    opens, using the same per-camera unit conversion run_pipeline() uses
+    (seconds -> microseconds for Basler/Allied Vision, log2 scale for a USB
+    camera). Without this, the preview shows the camera at whatever exposure
+    and gain it already happened to be sitting at — which can look nothing
+    like the actual sweep, since the sweep always locks in the settings you
+    just typed.  Either argument left as None skips changing that setting.
 
     Uses importlib to load the right camera library for the chosen camera
     without importing it at module level (avoids crashing when a library
@@ -419,6 +448,22 @@ def _show_preview_feed(camera_choice):
         print("  [WARNING] Could not open camera — skipping preview.")
         return
 
+    if exposure_s is not None or gain is not None:
+        try:
+            set_exposure_manual = cam_lib.set_exposure_manual
+            set_gain_manual     = cam_lib.set_gain_manual
+            if exposure_s is not None:
+                # Camera 2 (USB/webcam) takes a log2 scale, not seconds —
+                # the same conversion run_pipeline() applies before the sweep.
+                exposure_value = math.log2(exposure_s) if camera_choice == "2" \
+                                  else exposure_s * 1_000_000
+                set_exposure_manual(camera, exposure_value)
+            if gain is not None:
+                set_gain_manual(camera, gain)
+        except Exception as e:
+            print(f"  [WARNING] Could not apply exposure/gain to the preview: {e}")
+            print("  Continuing with the camera's current settings instead.")
+
     try:
         show_live_feed_from_camera(camera)
     except Exception as e:
@@ -458,8 +503,9 @@ def reconfigure_if_needed(camera_choice, params):
             print("    Exposure is in SECONDS.  0.01 = 10 ms.")
             print("    Increase if the image was too dark; decrease if too bright.")
             print()
-            params["exposure"] = ask_positive_float("Exposure (s)", default=params["exposure"])
-            params["gain"]     = ask("Gain (dB)",    default=params["gain"],    cast=float)
+            params["exposure"]    = ask_positive_float("Exposure (s)", default=params["exposure"])
+            params["gain"]        = ask("Gain (dB)",    default=params["gain"],    cast=float)
+            params["gain_factor"] = ask_positive_float("gain_factor", default=params["gain_factor"])
 
         if choice in ("signal", "both"):
             section("Signal generator settings")
@@ -469,7 +515,7 @@ def reconfigure_if_needed(camera_choice, params):
             params["step"]       = ask("Step size       (Hz)", default=params["step"],       cast=float)
             params["n_averages"] = ask("Frames per frequency", default=params["n_averages"], cast=int)
 
-        _show_preview_feed(camera_choice)
+        _show_preview_feed(camera_choice, params["exposure"], params["gain"])
 
         section("Updated settings")
         print()
@@ -478,6 +524,7 @@ def reconfigure_if_needed(camera_choice, params):
         print(f"    Frames/freq:  {params['n_averages']}")
         print(f"    Exposure   :  {params['exposure']} s")
         print(f"    Gain       :  {params['gain']} dB")
+        print(f"    gain_factor:  {params['gain_factor']}")
         print()
 
         again = ask("Change anything else? (y/n)", default="n", cast=str, valid=["y", "n"])
@@ -492,17 +539,19 @@ def reconfigure_if_needed(camera_choice, params):
 def run_pipeline(camera_choice, mode_choice, params):
     """Import the right pipeline and call the right function."""
 
-    exposure   = params["exposure"]
-    gain       = params["gain"]
-    output_dir = params["output_dir"]
+    exposure    = params["exposure"]
+    gain        = params["gain"]
+    gain_factor = params["gain_factor"]
+    output_dir  = params["output_dir"]
 
     base_params = dict(
-        start_freq = params["start_freq"],
-        end_freq   = params["end_freq"],
-        step       = params["step"],
-        n_averages = params["n_averages"],
-        gain       = gain,
-        output_dir = output_dir,
+        start_freq  = params["start_freq"],
+        end_freq    = params["end_freq"],
+        step        = params["step"],
+        n_averages  = params["n_averages"],
+        gain        = gain,
+        gain_factor = gain_factor,
+        output_dir  = output_dir,
     )
 
     # ---- Basler ----
@@ -602,7 +651,7 @@ def _run():
         print("\n  Experiment cancelled.")
         sys.exit(0)
 
-    _show_preview_feed(camera_choice)
+    _show_preview_feed(camera_choice, params["exposure"], params["gain"])
 
     while True:
         params = reconfigure_if_needed(camera_choice, params)

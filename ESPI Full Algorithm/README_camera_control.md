@@ -120,6 +120,8 @@ These are the first and last calls you make every time you use the camera.
 
 If you forget to call `disconnect_camera`, the camera may refuse your next connection attempt until you unplug it. The pipeline files always call it inside a `finally` block so it runs even if something crashes during the sweep.
 
+Basler and Allied Vision cameras save their pixel format (how many brightness levels each pixel can hold — "Mono8" for 0-255, "Mono12" for 0-4095) in the camera's own memory, so it carries over across reconnects and power cycles, no matter which program last touched it. Every image function in this project assumes "Mono8". `connect_camera()` now forces the camera into "Mono8" every time it connects, specifically so a camera left in some other format by another program (Vimba Viewer, pylon Viewer, an older script) can never silently make every picture in this project look far too dark.
+
 
 ### Section 2 — Camera settings
 

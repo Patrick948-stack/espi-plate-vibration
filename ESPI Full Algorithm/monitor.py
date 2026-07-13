@@ -34,7 +34,9 @@ import importlib
 import math
 import sys
 
-from run_experiment import ask, ask_positive_float, section, header, clear
+from run_experiment import (
+    ask, ask_positive_float, section, header, clear, CAMERA_NAMES,
+)
 
 
 # ==============================================================================
@@ -44,27 +46,28 @@ from run_experiment import ask, ask_positive_float, section, header, clear
 # types in choose_camera(), so the rest of the script never has to branch on
 # camera type by name, only by this one string.
 
-_CAMERA_NAMES = {
-    "1": "Basler",
-    "2": "USB / webcam (eg. elp camera)",
-    "3": "Allied Vision",
-}
-
-# Each capture and display module is imported lazily inside launch_monitor(),
-# only after the user has picked it. That way a machine that only has one
-# camera SDK installed can still run every other part of this file.
-_CAPTURE_MODULES = {
-    "1": "capture_and_display",
-    "2": "capture_and_display_cv2",
-    "3": "capture_and_display_allied",
-}
-
-_GRAPH_TYPES = {
+# CAMERA_NAMES itself lives in run_experiment.py, not here — see the comment
+# next to its definition there for why. Both it and GRAPH_TYPES are public
+# (no leading underscore) because monitor_gui.py also needs them to build
+# its menus. Keeping one shared copy of each means the terminal wizard and
+# the GUI wizard can never drift out of sync on what a camera or graph
+# choice means.
+GRAPH_TYPES = {
     "1": "histogram",
     "2": "log_histogram",
     "3": "3d",
     "4": "none",
 
+}
+
+# Each capture and display module is imported lazily inside launch_monitor(),
+# only after the user has picked it. That way a machine that only has one
+# camera SDK installed can still run every other part of this file. Only
+# launch_monitor() needs this one, so it stays private.
+_CAPTURE_MODULES = {
+    "1": "capture_and_display",
+    "2": "capture_and_display_cv2",
+    "3": "capture_and_display_allied",
 }
 
 
@@ -183,7 +186,7 @@ def choose_camera_settings():
 
     
     graph_choice = choose_graph_type()      # "1" / "2" / "3" / "4" — the raw menu key
-    graph_name = _GRAPH_TYPES[graph_choice]  # "histogram" / "log_histogram" / "3d" / "none"
+    graph_name = GRAPH_TYPES[graph_choice]  # "histogram" / "log_histogram" / "3d" / "none"
     graph_type = None if graph_name == "none" else graph_name
 
     return dict(exposure_s=exposure_s, gain_db=gain_db, gain_factor=gain_factor,
@@ -207,7 +210,7 @@ def confirm_settings(camera_choice, camera_index, settings):
     """
     section("Step 3 of 3 — Confirm and launch")
     print()
-    camera_line = _CAMERA_NAMES[camera_choice]
+    camera_line = CAMERA_NAMES[camera_choice]
     if camera_choice != "1":
         camera_line += f"  (index {camera_index})"
     print(f"    Camera        :  {camera_line}")
@@ -264,7 +267,9 @@ def launch_monitor(camera_choice, camera_index, settings):
         else:
             print("  Make sure vmbpy is installed.")
             print("  Download from: https://github.com/alliedvision/VmbPy")
-            print("  Then run: pip install <downloaded_wheel>.whl")
+            print("  Then find the .whl file inside the Vimba X install folder and")
+            print("  run (replace the path below with the real one you found):")
+            print("    pip install /path/to/vmbpy-<version>-py3-none-any.whl")
         return False
 
     exposure_us = settings["exposure_s"] * 1_000_000

@@ -288,6 +288,52 @@ class TestConnectCamera:
 
         assert isinstance(result, cc_av._AVHandle)
 
+    def test_forces_pixel_format_to_mono8(self):
+        # The camera remembers its own pixel format across reconnects, in its
+        # own onboard memory. Without forcing it here, a camera left in some
+        # other format by an earlier session would silently stay that way,
+        # and every downstream function assumes 0-255 Mono8 data.
+        cam = _make_av_cam()
+        mock_vimba = MagicMock()
+        mock_vimba.get_all_cameras.return_value = [cam]
+
+        with patch.object(cc_av, "_VIMBA_AVAILABLE", True), \
+             patch.object(cc_av, "Vimba") as MockVimba:
+            MockVimba.get_instance.return_value = mock_vimba
+            cc_av.connect_camera(0)
+
+        cam.set_pixel_format.assert_called_once_with(cc_av.PixelFormat.Mono8)
+
+
+class TestSetPixelFormat:
+    """
+    vmbpy's own set_pixel_format() needs a member of its PixelFormat type
+    (e.g. PixelFormat.Mono8), not a plain string. This was the actual reason
+    forcing Mono8 never worked before: the old code passed the string "Mono8"
+    straight through, which vmbpy does not accept.
+    """
+
+    def test_converts_string_to_pixelformat_member(self):
+        cam = _make_av_cam()
+        handle = _make_handle(cam)
+
+        cc_av.set_pixel_format(handle, "Mono8")
+
+        cam.set_pixel_format.assert_called_once_with(cc_av.PixelFormat.Mono8)
+
+    def test_camera_rejecting_format_is_caught_and_printed(self, capsys):
+        # Simulates the real SDK call failing (e.g. a camera model that
+        # doesn't support the requested format) rather than crashing the
+        # whole connect_camera() call.
+        cam = _make_av_cam()
+        cam.set_pixel_format.side_effect = Exception("format not supported")
+        handle = _make_handle(cam)
+
+        cc_av.set_pixel_format(handle, "Mono8")
+
+        out = capsys.readouterr().out
+        assert "Could not set format" in out
+
 
 class TestDisconnectCamera:
     def test_calls_exit_on_cam_and_vimba(self):
