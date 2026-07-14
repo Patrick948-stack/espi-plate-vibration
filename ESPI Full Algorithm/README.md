@@ -458,13 +458,17 @@ cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20, graph_type="histogram")
 
 ### Graphical version (`monitor_gui.py`)
 
-Prefer clicking over typing in a terminal? `monitor_gui.py` is a PyQt6 window that walks through the exact same three steps as `monitor.py` (camera, settings, confirm) with radio buttons, spin boxes, and a Back/Next/Launch Monitor wizard instead of typed answers:
+Prefer clicking over typing in a terminal? `monitor_gui.py` is a PyQt6 dashboard: a single window with a "Setup" and "Live Monitor" page instead of monitor.py's typed questions, and the Live Feed, Frame Subtraction, and optional intensity graph all embedded directly in the window instead of separate popup windows.
 
 ```
 python monitor_gui.py
 ```
 
-It requires PyQt6 (`pip install -r requirements.txt` already covers this). Everything it launches, and every rule about what counts as a valid exposure or gain_factor, comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices.
+**Setup page** — the same three questions as `monitor.py` (camera + index, exposure/gain/gain_factor, graph type), collected as radio buttons and spin boxes instead of typed answers, with a live-updating summary. Click "Start Monitor" to switch to the Live Monitor page.
+
+**Live Monitor page** — Live Feed and Frame Subtraction side by side, plus the chosen intensity graph beneath them if you picked one, all updating live. Click "Stop Monitor" to end the session and return to Setup; closing the window while a session is running asks you to confirm first.
+
+It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, gain_factor, camera choice, or graph type comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices — this dashboard only composes the same lower-level camera functions (`camera_control*.py`) and graph classes (`live_graphs.py`) that `monitor.py` and `capture_and_display*.py` are themselves built from, wired to Qt widgets instead of terminal prompts and OpenCV/matplotlib windows.
 
 ## Live pixel intensity graph
 
@@ -482,14 +486,16 @@ The 3D option is intentionally slowed down and heavily simplified. matplotlib's 
 
 Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`, `log_histogram`, or `3d`; `none` is the default, so nothing changes for anyone who does not ask for a graph), or pass `graph_type="histogram"`, `graph_type="log_histogram"`, or `graph_type="3d"` directly to any `capture_and_display*.py` script's `main()` function.
 
+`create_live_graph()` also takes an optional `ax=` argument: pass an existing matplotlib `Axes` and the graph draws onto it instead of opening its own window, handing that window's lifetime to whoever passed the axes in. This is what lets `monitor_gui.py` embed the graph inside a Qt widget (`FigureCanvasQTAgg`) instead of it popping up separately; leave `ax` out entirely (the default) and you get the same standalone window as always.
+
 ## What is in this folder
 
 | File | What it is | What it does |
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
 | `monitor.py` | Script you run | Interactive live preview. Pick a camera, set exposure, gain, gain_factor, and graph type, then watch Live Feed and Frame Subtraction, plus an optional graph |
-| `monitor_gui.py` | Script you run | Same live preview as `monitor.py`, as a PyQt6 wizard instead of typed terminal answers |
-| `live_graphs.py` | Library | Live histogram or 3D surface plot of pixel intensity, `create_live_graph(graph_type)` |
+| `monitor_gui.py` | Script you run | Same live preview as `monitor.py`, as a PyQt6 dashboard with everything embedded in one window instead of typed terminal answers and separate popup windows |
+| `live_graphs.py` | Library | Live histogram or 3D surface plot of pixel intensity, `create_live_graph(graph_type, ax=None)` |
 | `requirements.txt` | Package list | Install everything with `pip install -r requirements.txt` |
 | `complete_pipeline.py` | Script or importable | Full frequency sweep for a Basler camera |
 | `complete_pipeline_inclusive.py` | Script or importable | Full frequency sweep for any USB or webcam camera |
@@ -659,7 +665,8 @@ python -m pytest tests/ -v
 | `test_complete_pipeline_allied_vision.py` | Allied Vision sweep logic |
 | `test_run_experiment.py` | Interactive entry point, exposure conversion, preview feed, settings loop |
 | `test_monitor.py` | monitor.py entry point: camera choice, settings prompts, exposure conversion, error messages |
-| `test_monitor_gui.py` | monitor_gui.py wizard: page defaults, spin box validation, confirm summary, launch dispatch |
+| `test_monitor_gui.py` | monitor_gui.py dashboard: page defaults, spin box validation, live summary, the camera/frame-subtraction worker thread's lifecycle and error paths, graph embedding, nav gating, close confirmation |
+| `test_live_graphs.py` | live_graphs.py: histogram/log_histogram/3D correctness, redraw throttling, and the embedded `ax=` seam used by monitor_gui.py |
 | `test_capture_and_display.py` | Basler live preview script |
 | `test_capture_and_display_cv2.py` | USB or OpenCV live preview script |
 | `test_capture_and_display_allied.py` | Allied Vision live preview script |

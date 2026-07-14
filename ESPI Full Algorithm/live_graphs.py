@@ -82,10 +82,22 @@ class LiveHistogram:
         hist.close()
     """
 
-    def __init__(self, window_title: str = "Live Histogram"):
-        plt.ion()  # interactive mode: draws never block waiting for a window close
-        self.fig, self.ax = plt.subplots(figsize=(8, 4))
-        self.fig.canvas.manager.set_window_title(window_title)
+    def __init__(self, window_title: str = "Live Histogram", ax=None):
+        """
+        Args:
+            ax : an existing matplotlib Axes to draw into instead of opening
+                 a new window (used to embed this graph inside a PyQt6
+                 FigureCanvasQTAgg, e.g. from monitor_gui.py). Leave as None
+                 for the normal standalone-window behavior.
+        """
+        self._owns_figure = ax is None
+        if self._owns_figure:
+            plt.ion()  # interactive mode: draws never block waiting for a window close
+            self.fig, self.ax = plt.subplots(figsize=(8, 4))
+            self.fig.canvas.manager.set_window_title(window_title)
+        else:
+            self.ax = ax
+            self.fig = ax.figure
 
         # One bar per possible 8-bit intensity value. Heights start at 0 and
         # are updated in place every frame — the bars themselves are never
@@ -103,10 +115,18 @@ class LiveHistogram:
         self.fig.tight_layout()
 
         self._max_count_seen = 1
-        plt.show(block=False)
+        if self._owns_figure:
+            plt.show(block=False)
 
     def is_open(self) -> bool:
-        """Return False once the user has closed the window."""
+        """
+        Return False once the user has closed the window.
+
+        Always True in embedded mode (ax was passed in) — the GUI that
+        owns the figure decides when this graph goes away, not this class.
+        """
+        if not self._owns_figure:
+            return True
         return plt.fignum_exists(self.fig.number)
 
     def update(self, frame: np.ndarray) -> None:
@@ -138,7 +158,11 @@ class LiveHistogram:
         self.fig.canvas.flush_events()
 
     def close(self) -> None:
-        if self.is_open():
+        """
+        No-op in embedded mode — the GUI owns the figure and closes it
+        itself, so this class must not close a figure it does not own.
+        """
+        if self._owns_figure and self.is_open():
             plt.close(self.fig)
 
 
@@ -171,10 +195,22 @@ class LiveLogHistogram:
         hist.close()
     """
 
-    def __init__(self, window_title: str = "Live Log Histogram"):
-        plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(10, 6))
-        self.fig.canvas.manager.set_window_title(window_title)
+    def __init__(self, window_title: str = "Live Log Histogram", ax=None):
+        """
+        Args:
+            ax : an existing matplotlib Axes to draw into instead of opening
+                 a new window (used to embed this graph inside a PyQt6
+                 FigureCanvasQTAgg, e.g. from monitor_gui.py). Leave as None
+                 for the normal standalone-window behavior.
+        """
+        self._owns_figure = ax is None
+        if self._owns_figure:
+            plt.ion()
+            self.fig, self.ax = plt.subplots(figsize=(10, 6))
+            self.fig.canvas.manager.set_window_title(window_title)
+        else:
+            self.ax = ax
+            self.fig = ax.figure
 
         self._bins = np.arange(256)
         (self._line,) = self.ax.plot(
@@ -198,10 +234,18 @@ class LiveLogHistogram:
         self.fig.tight_layout()
 
         self._max_count_seen = 1
-        plt.show(block=False)
+        if self._owns_figure:
+            plt.show(block=False)
 
     def is_open(self) -> bool:
-        """Return False once the user has closed the window."""
+        """
+        Return False once the user has closed the window.
+
+        Always True in embedded mode (ax was passed in) — the GUI that
+        owns the figure decides when this graph goes away, not this class.
+        """
+        if not self._owns_figure:
+            return True
         return plt.fignum_exists(self.fig.number)
 
     def update(self, frame: np.ndarray) -> None:
@@ -230,7 +274,11 @@ class LiveLogHistogram:
         self.fig.canvas.flush_events()
 
     def close(self) -> None:
-        if self.is_open():
+        """
+        No-op in embedded mode — the GUI owns the figure and closes it
+        itself, so this class must not close a figure it does not own.
+        """
+        if self._owns_figure and self.is_open():
             plt.close(self.fig)
 
 
@@ -263,16 +311,30 @@ class LiveSurfacePlot:
     """
 
     def __init__(self, window_title: str = "Live 3D Intensity Map",
-                 downsample_factor: int = 15, min_interval_s: float = 0.2):
+                 downsample_factor: int = 15, min_interval_s: float = 0.2,
+                 ax=None):
+        """
+        Args:
+            ax : an existing 3D matplotlib Axes (created with
+                 projection="3d") to draw into instead of opening a new
+                 window (used to embed this graph inside a PyQt6
+                 FigureCanvasQTAgg, e.g. from monitor_gui.py). Leave as
+                 None for the normal standalone-window behavior.
+        """
         if downsample_factor < 1:
             raise ValueError(f"downsample_factor must be >= 1, got {downsample_factor}")
         if min_interval_s < 0:
             raise ValueError(f"min_interval_s must be >= 0, got {min_interval_s}")
 
-        plt.ion()
-        self.fig = plt.figure(figsize=(8, 6))
-        self.ax = self.fig.add_subplot(111, projection="3d")
-        self.fig.canvas.manager.set_window_title(window_title)
+        self._owns_figure = ax is None
+        if self._owns_figure:
+            plt.ion()
+            self.fig = plt.figure(figsize=(8, 6))
+            self.ax = self.fig.add_subplot(111, projection="3d")
+            self.fig.canvas.manager.set_window_title(window_title)
+        else:
+            self.ax = ax
+            self.fig = ax.figure
         self.ax.set_title(window_title)
         self.ax.set_xlabel("X pixel")
         self.ax.set_ylabel("Y pixel")
@@ -288,9 +350,18 @@ class LiveSurfacePlot:
         self._Y = None
         self._last_draw_time = 0.0
 
-        plt.show(block=False)
+        if self._owns_figure:
+            plt.show(block=False)
 
     def is_open(self) -> bool:
+        """
+        Return False once the user has closed the window.
+
+        Always True in embedded mode (ax was passed in) — the GUI that
+        owns the figure decides when this graph goes away, not this class.
+        """
+        if not self._owns_figure:
+            return True
         return plt.fignum_exists(self.fig.number)
 
     def update(self, frame: np.ndarray) -> None:
@@ -339,7 +410,11 @@ class LiveSurfacePlot:
         self.fig.canvas.flush_events()
 
     def close(self) -> None:
-        if self.is_open():
+        """
+        No-op in embedded mode — the GUI owns the figure and closes it
+        itself, so this class must not close a figure it does not own.
+        """
+        if self._owns_figure and self.is_open():
             plt.close(self.fig)
 
 
@@ -354,7 +429,7 @@ _GRAPH_TYPES = {
 }
 
 
-def create_live_graph(graph_type: str | None):
+def create_live_graph(graph_type: str | None, ax=None):
     """
     Build the live graph object requested by graph_type, or return None.
 
@@ -363,6 +438,12 @@ def create_live_graph(graph_type: str | None):
                      disable the live graph entirely (the common case —
                      the graph window costs extra render time, so it is
                      opt-in).
+        ax         : an existing matplotlib Axes to draw into instead of
+                     opening a new standalone window (used to embed the
+                     graph inside a PyQt6 FigureCanvasQTAgg, e.g. from
+                     monitor_gui.py). For graph_type="3d" this must already
+                     be a 3D axes (created with projection="3d"). Leave as
+                     None for the normal standalone-window behavior.
 
     Returns:
         A LiveHistogram, a LiveLogHistogram, a LiveSurfacePlot, or None.
@@ -386,7 +467,7 @@ def create_live_graph(graph_type: str | None):
             f"Unknown graph_type: {graph_type!r}. "
             f"Choose from: {', '.join(_GRAPH_TYPES.keys())}, or None."
         )
-    return graph_class()
+    return graph_class(ax=ax)
 
 
 __all__ = [

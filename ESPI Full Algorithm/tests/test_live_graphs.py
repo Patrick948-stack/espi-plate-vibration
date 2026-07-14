@@ -23,6 +23,13 @@ Sections covered
   create_live_graph()
     None/"" -> None, "histogram"/"3d" -> the right class, anything else
     raises ValueError.
+
+  Embedded ax= mode (LiveHistogram, LiveLogHistogram, LiveSurfacePlot)
+    Passing an existing Axes draws onto it instead of opening a new
+    window, is_open() stays True regardless of plt.fignum_exists(), and
+    close() is a no-op that never calls plt.close() on a figure this
+    class does not own (monitor_gui.py's FigureCanvasQTAgg keeps owning
+    it either way).
 """
 
 import sys
@@ -308,3 +315,106 @@ class TestCreateLiveGraph:
     def test_error_message_lists_valid_choices(self):
         with pytest.raises(ValueError, match="histogram"):
             live_graphs.create_live_graph("nonsense")
+
+
+# ===========================================================================
+# Embedded ax= mode
+# ===========================================================================
+# monitor_gui.py embeds these graphs inside a PyQt6 FigureCanvasQTAgg
+# instead of letting them open their own standalone window. Passing an
+# existing Axes must skip plt.ion()/plt.show(), draw onto that Axes, and
+# hand figure lifetime control entirely to the caller.
+
+class TestLiveHistogramEmbedded:
+    def test_draws_onto_the_passed_axes(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveHistogram(ax=ax)
+        assert hist.ax is ax
+        assert hist.fig is fig
+
+    def test_does_not_own_the_figure(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveHistogram(ax=ax)
+        assert hist._owns_figure is False
+
+    def test_is_open_always_true_regardless_of_figure_state(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveHistogram(ax=ax)
+        assert hist.is_open() is True
+        plt.close(fig)
+        assert hist.is_open() is True  # still True — this class doesn't own fig
+
+    def test_close_does_not_close_the_figure(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveHistogram(ax=ax)
+        hist.close()
+        assert plt.fignum_exists(fig.number) is True
+
+    def test_update_still_works_when_embedded(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveHistogram(ax=ax)
+        hist.update(_frame(fill=42))
+        heights = [bar.get_height() for bar in hist._bars]
+        assert heights[42] == _frame(fill=42).size
+
+
+class TestLiveLogHistogramEmbedded:
+    def test_draws_onto_the_passed_axes(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveLogHistogram(ax=ax)
+        assert hist.ax is ax
+        assert hist.fig is fig
+
+    def test_is_open_always_true_regardless_of_figure_state(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveLogHistogram(ax=ax)
+        plt.close(fig)
+        assert hist.is_open() is True
+
+    def test_close_does_not_close_the_figure(self):
+        fig, ax = plt.subplots()
+        hist = live_graphs.LiveLogHistogram(ax=ax)
+        hist.close()
+        assert plt.fignum_exists(fig.number) is True
+
+
+class TestLiveSurfacePlotEmbedded:
+    def test_draws_onto_the_passed_axes(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        surf = live_graphs.LiveSurfacePlot(min_interval_s=0.0, ax=ax)
+        assert surf.ax is ax
+        assert surf.fig is fig
+
+    def test_is_open_always_true_regardless_of_figure_state(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        surf = live_graphs.LiveSurfacePlot(min_interval_s=0.0, ax=ax)
+        plt.close(fig)
+        assert surf.is_open() is True
+
+    def test_close_does_not_close_the_figure(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        surf = live_graphs.LiveSurfacePlot(min_interval_s=0.0, ax=ax)
+        surf.close()
+        assert plt.fignum_exists(fig.number) is True
+
+    def test_update_still_works_when_embedded(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        surf = live_graphs.LiveSurfacePlot(downsample_factor=5, min_interval_s=0.0, ax=ax)
+        surf.update(_frame(height=40, width=40))
+        assert surf._surface is not None
+
+
+class TestCreateLiveGraphEmbedded:
+    def test_forwards_ax_to_histogram(self):
+        fig, ax = plt.subplots()
+        graph = live_graphs.create_live_graph("histogram", ax=ax)
+        assert graph.ax is ax
+        assert graph._owns_figure is False
+
+    def test_ax_none_still_owns_its_own_figure(self):
+        graph = live_graphs.create_live_graph("histogram")
+        assert graph._owns_figure is True
