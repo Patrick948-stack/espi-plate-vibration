@@ -185,7 +185,18 @@ class TestSaveImage:
         assert os.path.isdir(new_dir)
 
     def test_returns_none_on_bad_path(self, gray_100x100):
-        assert cc.save_image(gray_100x100, "/no_such_dir_xyz/sub", step="t") is None
+        # On Windows, a path like "/no_such_dir_xyz/sub" is NOT absolute
+        # (it lacks a drive letter), so os.path.isabs() returns False and
+        # _resolve_output_dir treats it as relative — creating the directory
+        # and returning a real path.  To guarantee rejection on all platforms
+        # we use an absolute path on a different drive (Windows) or a
+        # non-existent root (Linux/macOS).
+        import sys
+        if sys.platform == "win32":
+            bad_dir = "Q:\\no_such_dir_xyz\\sub"
+        else:
+            bad_dir = "/no_such_dir_xyz/sub"
+        assert cc.save_image(gray_100x100, bad_dir, step="t") is None
 
 
 class TestSaveSessionLog:

@@ -235,7 +235,18 @@ class TestSaveImage:
         assert os.path.isdir(new_dir)
 
     def test_returns_none_on_bad_path(self, gray_100x100):
-        result = cc.save_image(gray_100x100, "/nonexistent_root_dir_xyz/test", 0.0, 0.0, "bad")
+        # On Windows, a path like "/nonexistent_root_dir_xyz/test" is NOT
+        # absolute (it lacks a drive letter), so os.path.isabs() returns
+        # False and _resolve_output_dir treats it as relative — creating the
+        # directory and returning a real path.  To guarantee rejection on all
+        # platforms we use an absolute path on a different drive (Windows) or
+        # a non-existent root (Linux/macOS).
+        import sys
+        if sys.platform == "win32":
+            bad_dir = "Q:\\nonexistent_root_dir_xyz\\test"
+        else:
+            bad_dir = "/nonexistent_root_dir_xyz/test"
+        result = cc.save_image(gray_100x100, bad_dir, 0.0, 0.0, "bad")
         assert result is None
 
     def test_defaults_to_desktop_when_no_dir(self, gray_100x100):
