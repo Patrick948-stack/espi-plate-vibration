@@ -493,6 +493,106 @@ def connect_instrument(rm, instrs, index=0):
     return instr
 
 
+def get_resource_manager():
+    """
+    Create a pyvisa ResourceManager, choosing the VISA backend for the
+    current operating system.
+
+    On Windows, this tries the OS's native VISA backend first (NI-VISA, if
+    it happens to be installed) and falls back to the pure-Python '@py'
+    backend if that fails to start. That fallback matters because most
+    Windows machines following this project's README only do the Zadig
+    driver step and never install NI-VISA at all, and the native backend
+    raises immediately if there is no VISA library to find. On macOS and
+    Linux, this always uses '@py' directly, since that is the backend those
+    OSes need.
+
+    Note: this only catches the native backend failing to *start*. It does
+    not protect against the native backend starting successfully but
+    reporting the instrument under the wrong resource address (a real bug
+    seen on one dev machine, see README.md "Signal generator setup") — that
+    failure mode doesn't raise here, so it can't be caught at this step.
+    discover_instruments() below is what actually guards against it.
+
+    Returns:
+        pyvisa.ResourceManager : ready to use for find_instruments().
+    """
+    if _ON_WINDOWS:
+        try:
+            return pyvisa.ResourceManager()
+        except Exception as e:
+            print(f"[WARN] Native VISA backend unavailable ({e}); "
+                  f"falling back to the '@py' backend.")
+    return pyvisa.ResourceManager('@py')
+
+
+def _prefer_usb_resources(instrs):
+    """
+    Narrow a list of VISA resource addresses down to the ones that look like
+    a real USB instrument interface (they start with "USB"), or return the
+    original list unchanged if none of them do.
+
+    Why this matters: VISA resource names encode what kind of connection
+    they are in a prefix — "USB0::..." for a USB instrument, "ASRL3::..."
+    for a serial/COM port, and so on. Some backends (NI-VISA in particular)
+    have been seen reporting this project's signal generator under its
+    serial interface instead of its real USB SCPI interface. Blindly taking
+    whichever resource comes first in the list can silently grab the wrong
+    one; preferring anything that starts with "USB" avoids that.
+
+    Args:
+        instrs (tuple) : Resource address strings, as returned by
+                         find_instruments().
+
+    Returns:
+        tuple : Just the USB-prefixed addresses, if at least one exists.
+                Otherwise, the original tuple unchanged (so a resource type
+                this project hasn't seen before still isn't discarded).
+    """
+    usb_only = tuple(addr for addr in instrs if addr.startswith("USB"))
+    return usb_only if usb_only else instrs
+
+
+def discover_instruments():
+    """
+    Create a resource manager and scan for VISA instruments, retrying with
+    the '@py' backend if the one get_resource_manager() picked didn't
+    report anything that looks like the instrument's real USB interface.
+
+    This is the piece that get_resource_manager() explicitly can't cover:
+    the native Windows backend can start up fine and still hand back the
+    wrong resource address (see get_resource_manager()'s docstring). That
+    doesn't raise an exception, so the only way to catch it is to check
+    what it actually found. If nothing USB-shaped shows up and we're on
+    Windows (where this is possible), we don't trust that result — we
+    build a fresh '@py' resource manager and scan again with that instead.
+
+    Returns:
+        (rm, instrs) : rm is the resource manager that produced the result
+                       being returned (this may be a different one than
+                       get_resource_manager() first handed back, if a retry
+                       happened). instrs is the tuple of resource addresses
+                       from find_instruments(), narrowed to USB-looking ones
+                       when at least one was found.
+        (rm, None)   : if no instruments were found at all, even after a
+                       retry. find_instruments() has already printed why.
+    """
+    rm = get_resource_manager()
+    instrs = find_instruments(rm)
+    saw_usb = instrs is not None and any(addr.startswith("USB") for addr in instrs)
+
+    if _ON_WINDOWS and not saw_usb:
+        print("[WARN] No USB instrument resource found under the current "
+              "backend; retrying with the '@py' backend before giving up.")
+        rm = pyvisa.ResourceManager('@py')
+        instrs = find_instruments(rm)
+
+    if instrs is not None:
+        instrs = _prefer_usb_resources(instrs)
+
+    return rm, instrs
+
+
 def open_connection(index=0):
     """
     One-call shortcut: create a resource manager, scan for instruments, and
@@ -515,9 +615,7 @@ def open_connection(index=0):
             print("Could not connect.")
     """
     try:
-        # '@py' forces the pure-Python pyvisa-py backend so we always land on
-        # the instrument's real USB0::...::INSTR resource, on every OS.
-        rm = pyvisa.ResourceManager('@py')
+        rm, instrs = discover_instruments()
     except Exception as e:
         print(f"[ERROR] Could not start a VISA resource manager: {e}")
         print("  Make sure both packages are installed: pip install pyvisa pyvisa-py")
@@ -526,8 +624,6 @@ def open_connection(index=0):
                   "done (see README.md 'Signal generator setup (Windows only)'), "
                   "or install NI-VISA instead: https://www.ni.com")
         return None
-
-    instrs = find_instruments(rm)
 
     if instrs is None:
         return None  # find_instruments() already printed a specific reason
@@ -1115,6 +1211,8 @@ __all__ = [
     "clamp_offset",
 
     # Section 2: Connection
+    "get_resource_manager",
+    "discover_instruments",
     "find_instruments",
     "connect_instrument",
     "open_connection",

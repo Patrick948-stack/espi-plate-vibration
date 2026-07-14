@@ -1,8 +1,8 @@
 """
 test_monitor_gui.py
-Tests for monitor_gui.py — the PyQt5 wizard version of monitor.py.
+Tests for monitor_gui.py — the PyQt6 wizard version of monitor.py.
 
-QT_QPA_PLATFORM is forced to "offscreen" before PyQt5 is imported, so this
+QT_QPA_PLATFORM is forced to "offscreen" before PyQt6 is imported, so this
 suite (and CI) can run with no real display attached. Set QT_QPA_PLATFORM
 yourself before running pytest if you want to watch the wizard's windows
 while debugging a failing test.
@@ -39,8 +39,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 from unittest.mock import patch
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QWizard
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWizard
 
 import monitor
 from monitor_gui import CameraPage, SettingsPage, ConfirmPage, MonitorWizard
@@ -213,9 +213,9 @@ class TestMonitorWizard:
 
         with patch.object(monitor, "launch_monitor", return_value=True) as mock_launch, \
              patch("monitor_gui.QMessageBox"):
-            qtbot.mouseClick(wizard.button(QWizard.NextButton), Qt.LeftButton)
-            qtbot.mouseClick(wizard.button(QWizard.NextButton), Qt.LeftButton)
-            qtbot.mouseClick(wizard.button(QWizard.FinishButton), Qt.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.NextButton), Qt.MouseButton.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.NextButton), Qt.MouseButton.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.FinishButton), Qt.MouseButton.LeftButton)
 
         mock_launch.assert_called_once()
         camera_choice, camera_index, settings = mock_launch.call_args[0]
@@ -242,9 +242,9 @@ class TestMonitorWizard:
 
         with patch.object(monitor, "launch_monitor", return_value=False), \
              patch("monitor_gui.QMessageBox") as mock_box:
-            qtbot.mouseClick(wizard.button(QWizard.NextButton), Qt.LeftButton)
-            qtbot.mouseClick(wizard.button(QWizard.NextButton), Qt.LeftButton)
-            qtbot.mouseClick(wizard.button(QWizard.FinishButton), Qt.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.NextButton), Qt.MouseButton.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.NextButton), Qt.MouseButton.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.FinishButton), Qt.MouseButton.LeftButton)
 
         mock_box.warning.assert_called_once()
         mock_box.information.assert_not_called()
@@ -261,9 +261,9 @@ class TestMonitorWizard:
         with patch.object(monitor, "launch_monitor",
                           side_effect=RuntimeError("boom")), \
              patch("monitor_gui.QMessageBox") as mock_box:
-            qtbot.mouseClick(wizard.button(QWizard.NextButton), Qt.LeftButton)
-            qtbot.mouseClick(wizard.button(QWizard.NextButton), Qt.LeftButton)
-            qtbot.mouseClick(wizard.button(QWizard.FinishButton), Qt.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.NextButton), Qt.MouseButton.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.NextButton), Qt.MouseButton.LeftButton)
+            qtbot.mouseClick(wizard.button(QWizard.WizardButton.FinishButton), Qt.MouseButton.LeftButton)
 
         mock_box.critical.assert_called_once()
         mock_box.warning.assert_not_called()

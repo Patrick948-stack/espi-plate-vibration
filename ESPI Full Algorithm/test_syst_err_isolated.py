@@ -21,37 +21,26 @@ Run it with:
 import pyvisa
 
 from signal_generator_control import (
-    find_instruments,
+    discover_instruments,
     connect_instrument,
     close_connection,
 )
 
 
 def main():
-    # '@py' forces the pure-Python pyvisa-py backend, which correctly finds
-    # this instrument's real USB SCPI resource (USB0::...::INSTR) instead of
-    # whatever the default (NI-VISA) backend decides to report.
-    print("Connecting to instruments using the '@py' backend...")
-    rm = pyvisa.ResourceManager('@py')
-
-    # find_instruments() (from signal_generator_control) scans for VISA
-    # resources and prints what it finds.
-    instrs = find_instruments(rm)
+    # discover_instruments() picks '@py' on macOS/Linux, and on Windows
+    # tries the native VISA backend first. It also protects against the
+    # exact bug that caused the original problem: NI-VISA reporting this
+    # instrument under the wrong (ASRL/serial) resource address instead of
+    # its real USB one. If that happens, it retries with '@py' instead of
+    # trusting the wrong address (see signal_generator_control.py for why).
+    rm, instrs = discover_instruments()
     if instrs is None:
-        return 1
-
-    # I'm not going to blindly grab instrs[0] here, because that's the exact
-    # assumption that caused the original bug (grabbing an ASRL/serial
-    # resource instead of the real instrument). Instead I filter for the one
-    # that starts with "USB", since that's the real instrument channel.
-    usb_indices = [i for i, addr in enumerate(instrs) if addr.startswith("USB")]
-    if not usb_indices:
-        print("No USB VISA resource found. Is the signal generator on and plugged in?")
         return 1
 
     # connect_instrument() (from signal_generator_control) opens the resource
     # and sets read/write termination characters and a default timeout for us.
-    instr = connect_instrument(rm, instrs, index=usb_indices[0])
+    instr = connect_instrument(rm, instrs, index=0)
     if instr is None:
         return 1
 

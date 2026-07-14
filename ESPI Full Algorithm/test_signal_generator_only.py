@@ -26,9 +26,8 @@ README.md for Windows-specific driver steps).
 
 import time
 
-import pyvisa
-
 from signal_generator_control import (
+    discover_instruments,
     connect_instrument,
     get_identity,
     configure_channel,
@@ -46,10 +45,14 @@ def main():
     # STEP 1 — list every VISA instrument currently visible
     # ------------------------------------------------------------------
     print("\n[1/5] Looking for the signal generator...")
-    rm = pyvisa.ResourceManager("@py")
-    addresses = rm.list_resources()
+    # discover_instruments() lists every VISA resource it can see, and on
+    # Windows also protects against NI-VISA reporting this instrument under
+    # the wrong (ASRL/serial) resource address instead of its real USB one
+    # — if that happens, it retries with the '@py' backend instead of
+    # trusting the wrong address.
+    rm, instrs = discover_instruments()
 
-    if len(addresses) == 0:
+    if instrs is None:
         print("\nNo instruments found.")
         print("  This means your computer cannot see any USB instrument at all right now.")
         print("  That is a hardware or driver problem, not a Python problem. Check, in order:")
@@ -62,15 +65,11 @@ def main():
         print("       with the USB driver, not with this script.")
         return
 
-    print(f"  Found {len(addresses)} instrument(s):")
-    for i, addr in enumerate(addresses):
-        print(f"    [{i}] {addr}")
-
     # ------------------------------------------------------------------
     # STEP 2 — connect to the first instrument found
     # ------------------------------------------------------------------
     print("\n[2/5] Connecting to it...")
-    instr = connect_instrument(rm, addresses, index=0)
+    instr = connect_instrument(rm, instrs, index=0)
 
     # ------------------------------------------------------------------
     # STEP 3 — identify it

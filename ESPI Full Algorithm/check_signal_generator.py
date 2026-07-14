@@ -1,3 +1,4 @@
+import os
 import sys
 
 try:
@@ -31,8 +32,30 @@ except Exception as exc:
 
 print("\nStep 2: checking which of those devices pyvisa recognizes as instruments...")
 try:
-    rm = pyvisa.ResourceManager('@py')
+    # On Windows, try the native VISA backend first (in case NI-VISA is
+    # installed) and fall back to '@py' if that fails to start. On
+    # macOS/Linux, '@py' is the only backend that works reliably here.
+    if os.name == "nt":
+        try:
+            rm = pyvisa.ResourceManager()
+        except Exception as exc:
+            print(f"Native VISA backend unavailable ({exc}); falling back to '@py'.")
+            rm = pyvisa.ResourceManager('@py')
+    else:
+        rm = pyvisa.ResourceManager('@py')
     resources = rm.list_resources()
+
+    # NI-VISA has been seen reporting this instrument under its serial
+    # (ASRL) interface instead of its real USB one, without raising any
+    # error. If the native backend found something but none of it looks
+    # like a USB instrument, don't trust it — rescan with '@py' instead.
+    saw_usb = any(r.startswith("USB") for r in resources)
+    if os.name == "nt" and not saw_usb:
+        print("No USB-looking resource found under the current backend; "
+              "retrying with '@py' before giving up.")
+        rm = pyvisa.ResourceManager('@py')
+        resources = rm.list_resources()
+
     if resources:
         print("pyvisa found these instrument(s):")
         for resource in resources:

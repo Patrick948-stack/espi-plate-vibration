@@ -2,7 +2,7 @@
 monitor_gui.py
 Author: Patrick Mulikuza
 
-A PyQt5 wizard version of monitor.py's three step terminal wizard: pick a
+A PyQt6 wizard version of monitor.py's three step terminal wizard: pick a
 camera, set its exposure, gain, and gain_factor, pick an optional intensity
 graph, then confirm and launch the same live "Live Feed" and
 "Frame Subtraction" windows monitor.py opens.
@@ -19,13 +19,13 @@ HOW TO RUN
 
 DEPENDENCIES
 ------------
-    pip install PyQt5
+    pip install PyQt6
 Plus whichever camera SDK you plan to use, see monitor.py for details.
 """
 
 import sys
 
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QLabel,
@@ -246,7 +246,7 @@ class MonitorWizard(QWizard):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ESPI Camera Monitor")
-        self.setButtonText(QWizard.FinishButton, "Launch Monitor")
+        self.setButtonText(QWizard.WizardButton.FinishButton, "Launch Monitor")
 
         self.camera_page = CameraPage()
         self.settings_page = SettingsPage()
@@ -295,7 +295,7 @@ def main():
     app = QApplication(sys.argv)
     wizard = MonitorWizard()
     wizard.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

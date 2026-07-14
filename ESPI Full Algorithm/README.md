@@ -303,9 +303,9 @@ This prints which VISA backend was used, how long it took to find the device, an
 
 Download and install the free NI-VISA runtime from National Instruments (ni.com). It installs its own driver and its own VISA backend.
 
-Note: every script in this project opens its connection with `pyvisa.ResourceManager('@py')` explicitly, so installing NI-VISA will not change which backend is used; `@py` is always requested regardless. This is intentional. On at least one development machine, NI-VISA reported the signal generator under the wrong resource address (a serial port address instead of its real USB address), which made every command time out. Requesting `@py` directly avoids that problem entirely, instead of depending on whichever backend the operating system happens to prioritize. If you need NI-VISA for a different instrument in the same script, pass its backend string explicitly wherever that other instrument's connection is opened.
+Note: on Windows, this project's `get_resource_manager()` (used everywhere, through `discover_instruments()` and `open_connection()`) tries the OS's native VISA backend first — which only works if NI-VISA (or another VISA runtime) is installed — and falls back to `@py` if that fails to start. On at least one earlier development machine, NI-VISA didn't fail to start; it started fine but reported the signal generator under the wrong resource address (a serial/ASRL address instead of its real USB address), which made every command time out silently instead of raising an error. That specific failure is now handled too: `discover_instruments()` checks whether anything in the list of found resources actually looks like a USB instrument (its address starts with `USB`); if the native backend didn't report one, it doesn't trust that result and rescans with `@py` instead. You should not need to force `@py` by hand anymore. If you still see slow or timed-out commands after installing NI-VISA, please open an issue — that would mean this check needs revisiting. Mac and Linux are unaffected either way — they always use `@py`.
 
-Zadig is the better default choice for this project: it is a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux.
+Zadig remains the simpler default choice for this project if you don't already need NI-VISA for another instrument: it is a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux.
 
 ## Troubleshooting: diagnostic scripts
 
@@ -458,13 +458,13 @@ cad.main(exposure_us=10000, gain_db=1.0, gain_factor=20, graph_type="histogram")
 
 ### Graphical version (`monitor_gui.py`)
 
-Prefer clicking over typing in a terminal? `monitor_gui.py` is a PyQt5 window that walks through the exact same three steps as `monitor.py` (camera, settings, confirm) with radio buttons, spin boxes, and a Back/Next/Launch Monitor wizard instead of typed answers:
+Prefer clicking over typing in a terminal? `monitor_gui.py` is a PyQt6 window that walks through the exact same three steps as `monitor.py` (camera, settings, confirm) with radio buttons, spin boxes, and a Back/Next/Launch Monitor wizard instead of typed answers:
 
 ```
 python monitor_gui.py
 ```
 
-It requires PyQt5 (`pip install -r requirements.txt` already covers this). Everything it launches, and every rule about what counts as a valid exposure or gain_factor, comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices.
+It requires PyQt6 (`pip install -r requirements.txt` already covers this). Everything it launches, and every rule about what counts as a valid exposure or gain_factor, comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices.
 
 ## Live pixel intensity graph
 
@@ -488,7 +488,7 @@ Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`,
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
 | `monitor.py` | Script you run | Interactive live preview. Pick a camera, set exposure, gain, gain_factor, and graph type, then watch Live Feed and Frame Subtraction, plus an optional graph |
-| `monitor_gui.py` | Script you run | Same live preview as `monitor.py`, as a PyQt5 wizard instead of typed terminal answers |
+| `monitor_gui.py` | Script you run | Same live preview as `monitor.py`, as a PyQt6 wizard instead of typed terminal answers |
 | `live_graphs.py` | Library | Live histogram or 3D surface plot of pixel intensity, `create_live_graph(graph_type)` |
 | `requirements.txt` | Package list | Install everything with `pip install -r requirements.txt` |
 | `complete_pipeline.py` | Script or importable | Full frequency sweep for a Basler camera |

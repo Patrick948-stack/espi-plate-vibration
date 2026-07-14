@@ -5,7 +5,9 @@ Typical usage:
     from sdg_control import open_connection, configure_channel, close_connection
 """
 
-from .connection import (
+from .connections import (
+    get_resource_manager,
+    discover_instruments,
     find_instruments,
     connect_instrument,
     open_connection,
@@ -23,7 +25,7 @@ from .waveform import (
 from .limits import clamp_frequency, clamp_amplitude, clamp_offset
 
 __all__ = [
-    "find_instruments", "connect_instrument", "open_connection",
+    "get_resource_manager", "discover_instruments", "find_instruments", "connect_instrument", "open_connection",
     "close_connection", "get_identity", "get_output_status",
     "get_wave_status", "turn_on_output", "turn_off_output",
     "set_waveform", "set_frequency", "set_amplitude", "set_offset",
