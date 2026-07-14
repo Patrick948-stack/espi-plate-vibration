@@ -8,7 +8,7 @@ If you only want to run an experiment and are not interested in how the code wor
 
 Every step below asks you to type a command into "the terminal." If you have never used one before, here is what that means and how to open it.
 
-A terminal (also called a command line, command prompt, or shell) is a window where you type text commands instead of clicking buttons. It looks intimidating the first time, but every command in this guide is written out exactly as you should type it, so you never have to guess.
+A terminal (also called a command line, command prompt, or shell) is a window where you type text commands instead of clicking buttons. It looks intimidating the first time, but every command in this guide is written out exactly as you should type it, so you never have to guess or look up on the internet.
 
 There are two different terminals you might use for this project, and either one works fine.
 
@@ -25,13 +25,13 @@ This opens a terminal panel at the bottom of the VS Code window, already pointed
 
 **On Mac:** press Cmd + Space to open Spotlight Search, type `Terminal`, and press Enter. Or open Finder, go to Applications, then Utilities, and double click Terminal.
 
-**On Windows:** press the Windows key, type `cmd` for Command Prompt (or `PowerShell` for PowerShell), and press Enter. Windows 11 usually opens something called "Windows Terminal," which can run either Command Prompt or PowerShell inside it. Either one works for this guide; anywhere a command only works in one of them, this guide says so explicitly.
+**On Windows:** press the Windows key, type `cmd` for Command Prompt (or `PowerShell`), and press Enter. Windows 11 usually opens something called "Windows Terminal," which can run either Command Prompt or PowerShell inside it. Either one works for this guide; anywhere a command only works in one of them, this guide says so explicitly.
 
 Wherever you open a terminal, the commands below behave the same way once you are inside the right folder. Stage 3 explains how to get there.
 
 ## Getting started: Mac and Windows setup
 
-Follow these stages in order. Each one has a check so you know it worked before moving to the next. Every stage that commonly trips people up also has an "if something goes wrong" note right underneath it; read that before asking for help if a check fails. Do not skip ahead. Every later stage assumes the earlier ones already worked.
+Follow these stages in order. Each one has a check so you know it worked before moving to the next. Every stage that might be commonly confusiong also has an "if something goes wrong" note right underneath it; read that before asking for help if a check fails. Do not skip ahead. Every later stage assumes the earlier ones already worked.
 
 ### Stage 1: Make sure Python is installed
 
@@ -45,7 +45,7 @@ python3 --version
 
 You should see something like `Python 3.10.x` or newer.
 
-If something goes wrong: seeing `command not found: python3` means Python is not installed yet. Download it from python.org, run the installer, then completely close and reopen Terminal (a terminal only notices newly installed programs after it restarts) and try the command again.
+If something goes wrong: seeing `command not found: python3` means Python is not installed yet. Download it from python.org, run the installer, then completely close and reopen Terminal (a terminal sometimes only notices newly installed programs after it restarts) and try the command again.
 
 **Windows**
 
@@ -63,7 +63,9 @@ If something goes wrong: seeing `'python' is not recognized as an internal or ex
 
 You need Git installed to run the command below. If you would rather not install anything extra, you can instead download this project as a ZIP file from its GitHub page (look for a green "Code" button, then "Download ZIP"), unzip it, and skip straight to Stage 3, using wherever you unzipped it as your project folder.
 
-If you are getting the code for the first time and do have Git:
+If you are getting the code for the first time and do have Git, you can do command + shift + 'P' or ctrl + shift + 'P' on your mac, type: Git: Clone on the search menu that appears at the top of your screen, and click on the Git: Clone option that appears. Then paste this inside: https://github.com/Patrick948-stack/espi-plate-vibration.git. 
+
+Another way to clone it is by typing this in your terminal:
 
 ```
 git clone https://github.com/Patrick948-stack/espi-plate-vibration.git
@@ -71,13 +73,13 @@ git clone https://github.com/Patrick948-stack/espi-plate-vibration.git
 
 If something goes wrong: seeing `'git' is not recognized` or `command not found: git` means Git is not installed. Download it from git-scm.com, run the installer using the default options, then completely close and reopen your terminal and try again. Or just use the ZIP download option mentioned above instead.
 
-If you already have the code and want the latest changes:
+If you already have the code and want the latest change, type in your vs code terminal:
 
 ```
 git pull
 ```
 
-Check: you should see an `ESPI Full Algorithm` folder on your computer, either where `git clone` put it or where you unzipped the ZIP file.
+Check: you should see an `ESPI Full Algorithm` folder among many other files on your computer, either where `git clone` put it or where you unzipped the ZIP file.
 
 ### Stage 3: Open a terminal inside the right folder
 
@@ -239,7 +241,7 @@ If you see `Basler ready`, the Basler setup is complete.
 pip install /path/to/vmbpy_file.whl
 ```
 
-**Windows**
+**Windows**: an easy way to get the right file path, instead of typing it manually, is to right click on the file once you find it, and click on "copy as path", then replace what comes after install in the bash command below with the copied text by doing ctr + v right after typing pip install. 
 
 ```
 pip install C:\path\to\vmbpy_file.whl
@@ -259,7 +261,7 @@ Mac and Linux can skip this entire stage; the signal generator works immediately
 
 Windows needs one extra, one time step. This project talks to the signal generator through `pyvisa-py`, a lightweight backend that needs direct access to the USB device. Windows blocks that kind of direct access by default until a compatible driver is bound to the instrument. Mac and Linux allow it out of the box, which is why this step only applies to Windows.
 
-`requirements.txt` already installs the native USB library `pyusb` needs (`libusb-package`) automatically on Windows; Stage 6's `pip install -r requirements.txt` handled that already, nothing extra to run for it. The one step that genuinely cannot be done through pip is binding a working driver to the instrument itself, since that is an operating system level USB permission, not a Python package. Pick one of the two options below for that.
+`requirements.txt` already installs the native USB library `pyusb` needs (`libusb-package`) automatically on Windows; Stage 6's `pip install -r requirements.txt` handled that already, nothing extra to run for it. The one step that cannot be done through pip is binding a working driver to the instrument itself, since that is an operating system level USB permission, not a Python package. Pick one of the two options below for that.
 
 **Option A: Zadig (recommended, free, a few MB, no restart needed)**
 
