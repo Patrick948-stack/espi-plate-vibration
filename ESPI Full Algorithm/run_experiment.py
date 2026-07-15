@@ -278,6 +278,75 @@ def confirm_settings(camera_choice, mode_choice, params):
 # RESULTS VIEWER
 # ==============================================================================
 
+def _format_freq_label(freqs):
+    """
+    Returns a function that formats a frequency with just enough decimal
+    places that no two frequencies in the sweep print identically.
+
+    Used by both build_grid_figure() and show_results()'s interactive
+    viewer, so a grid subplot title and the paged viewer's title always
+    agree on how many decimals to show for the same sweep.
+    """
+    freq_strs = [f"{round(f, 6):.6f}".rstrip("0") for f in freqs]
+    max_dec = max((len(s.split(".")[1]) if "." in s else 0) for s in freq_strs)
+    dec = max(0, max_dec)
+    return lambda f: f"{f:.{dec}f}"
+
+
+def build_grid_figure(results, output_dir):
+    """
+    Build (but do not display) a matplotlib Figure showing every sweep
+    result in a grid, and save it to disk.
+
+    This is the pure, display-free half of show_results()'s old grid step —
+    split out so run_experiment_gui.py can embed the returned Figure in a
+    FigureCanvasQTAgg instead of calling plt.show(), while show_results()
+    itself keeps calling this and then opening its usual interactive
+    viewer, unchanged.
+
+    Args:
+        results    : dict mapping frequency (float, Hz) to an averaged
+                     difference image (numpy array), exactly what
+                     run_pipeline() returns.
+        output_dir : folder the grid PNG is saved into.
+
+    Returns:
+        (grid_fig, grid_filename) : the matplotlib Figure (not yet closed)
+        and the path it was saved to.
+    """
+    import matplotlib.pyplot as plt
+    from datetime import datetime as _dt
+
+    freqs = sorted(results.keys())
+    n = len(freqs)
+    fmt = _format_freq_label(freqs)
+
+    ncols = min(4, n)
+    nrows = (n + ncols - 1) // ncols
+    grid_fig, axes = plt.subplots(nrows, ncols,
+                                  figsize=(ncols * 3.5, nrows * 3.5),
+                                  squeeze=False)
+    grid_fig.suptitle("ESPI Sweep Results", fontsize=14, fontweight="bold")
+    for i, freq in enumerate(freqs):
+        row, col = divmod(i, ncols)
+        ax = axes[row][col]
+        ax.imshow(results[freq], cmap="gray", interpolation="nearest")
+        ax.set_title(f"{fmt(freq)} Hz", fontsize=10)
+        ax.axis("off")
+    for j in range(n, nrows * ncols):
+        row, col = divmod(j, ncols)
+        axes[row][col].set_visible(False)
+    grid_fig.tight_layout()
+
+    grid_filename = os.path.join(
+        output_dir,
+        f"sweep_results_{_dt.now().strftime('%Y-%m-%d_%H%M%S')}.png",
+    )
+    grid_fig.savefig(grid_filename, dpi=150, bbox_inches="tight")
+
+    return grid_fig, grid_filename
+
+
 def show_results(results, output_dir):
     """
     Save a full grid of all sweep images to disk, then open an interactive
@@ -299,40 +368,9 @@ def show_results(results, output_dir):
 
     freqs = sorted(results.keys())
     n     = len(freqs)
+    _fmt  = _format_freq_label(freqs)
 
-    # Determine how many decimal places to show so no frequency looks the same.
-    _freq_strs = [f"{round(f, 6):.6f}".rstrip("0") for f in freqs]
-    _max_dec   = max(
-        (len(s.split(".")[1]) if "." in s else 0) for s in _freq_strs
-    )
-    _dec = max(0, _max_dec)
-
-    def _fmt(f):
-        return f"{f:.{_dec}f}"
-
-    # ── Save the full grid to disk (no window) ────────────────────────────
-    from datetime import datetime as _dt
-    ncols = min(4, n)
-    nrows = (n + ncols - 1) // ncols
-    grid_fig, axes = plt.subplots(nrows, ncols,
-                                  figsize=(ncols * 3.5, nrows * 3.5),
-                                  squeeze=False)
-    grid_fig.suptitle("ESPI Sweep Results", fontsize=14, fontweight="bold")
-    for i, freq in enumerate(freqs):
-        row, col = divmod(i, ncols)
-        ax = axes[row][col]
-        ax.imshow(results[freq], cmap="gray", interpolation="nearest")
-        ax.set_title(f"{_fmt(freq)} Hz", fontsize=10)
-        ax.axis("off")
-    for j in range(n, nrows * ncols):
-        row, col = divmod(j, ncols)
-        axes[row][col].set_visible(False)
-    grid_fig.tight_layout()
-    grid_filename = os.path.join(
-        output_dir,
-        f"sweep_results_{_dt.now().strftime('%Y-%m-%d_%H%M%S')}.png",
-    )
-    grid_fig.savefig(grid_filename, dpi=150, bbox_inches="tight")
+    grid_fig, grid_filename = build_grid_figure(results, output_dir)
     plt.close(grid_fig)
     print(f"\nResults grid saved to: {os.path.abspath(grid_filename)}")
 
@@ -388,8 +426,12 @@ def show_results(results, output_dir):
 # ==============================================================================
 # PRE-SWEEP: LIVE PREVIEW + RECONFIGURE
 # ==============================================================================
+# CAMERA_LIBRARY is public (no leading underscore), the same reasoning as
+# CAMERA_NAMES above it: run_experiment_gui.py also needs this exact
+# camera-choice -> camera_control module mapping to drive its own embedded
+# preview and sweep, so it imports this dict instead of keeping its own copy.
 
-_CAMERA_LIBRARY = {
+CAMERA_LIBRARY = {
     "1": "camera_control",
     "2": "camera_control_inclusive",
     "3": "camera_control_allied_vision",
@@ -413,7 +455,7 @@ def _show_preview_feed(camera_choice, exposure_s=None, gain=None):
     without importing it at module level (avoids crashing when a library
     like pypylon or vmbpy is not installed on the current machine).
     """
-    module_name = _CAMERA_LIBRARY[camera_choice]
+    module_name = CAMERA_LIBRARY[camera_choice]
 
     try:
         cam_lib = importlib.import_module(module_name)

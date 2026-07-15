@@ -21,9 +21,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy opencv-python-headless pyvisa pyvisa-py pypylon pytest matplotlib
+          pip install numpy opencv-python-headless pyvisa pyvisa-py pypylon pytest matplotlib PyQt6==6.11.0 pytest-qt==4.5.0
 
       - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           cd "ESPI Full Algorithm"
           python -m pytest tests/ -v

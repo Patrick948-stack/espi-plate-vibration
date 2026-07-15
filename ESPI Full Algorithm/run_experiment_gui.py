@@ -1,0 +1,1140 @@
+"""
+run_experiment_gui.py
+Author: Patrick Mulikuza
+
+A PyQt6 dashboard version of run_experiment.py: one QMainWindow with a
+left-hand navigation rail (Setup, Preview, Sweep, Results) instead of
+run_experiment.py's four typed terminal questions, an embedded live camera
+preview, a real progress bar for the frequency sweep, and an embedded
+results viewer — instead of the terminal version's separate OpenCV preview
+window and separate matplotlib results windows.
+
+WHAT THIS FILE OWNS, AND WHAT IT DOESN'T
+-----------------------------------------
+Every rule about what a valid exposure is, what a camera choice means, how
+to dispatch to the right pipeline, or how to build the results grid
+already lives in run_experiment.py (fully tested by tests/test_run_experiment.py)
+and in camera_control*.py / complete_pipeline*.py (fully tested by their own
+test files). This file only turns those same rules into widgets and wires
+the preview + sweep + results flow together with Qt signals — it
+introduces no new business logic.
+
+WHY THIS DOES NOT CALL _show_preview_feed() OR reconfigure_if_needed()
+------------------------------------------------------------------------
+_show_preview_feed() opens a blocking OpenCV window ("press 'e' to
+continue") and reconfigure_if_needed() is a terminal input loop — neither
+has a seam to redirect into Qt widgets. Embedding the preview here instead
+means composing the same lower-level, already-tested building blocks
+_show_preview_feed() itself uses — camera_control*.py's connect_camera(),
+grab_single_frame(), disconnect_camera() — inside a QThread that emits each
+frame through a signal instead of showing it in a cv2 window.
+
+WHY THE SWEEP'S PROGRESS BAR PARSES STDOUT INSTEAD OF A CALLBACK
+--------------------------------------------------------------------
+Adding an on_progress() callback parameter to frequency_sweep() and
+reference_frequency_sweep() in all three complete_pipeline*.py files would
+touch six tested call sites in the sweep logic itself. Parsing the print()
+output those functions already produce needs no changes there at all.
+Trade-off: complete_pipeline.py's Basler sweep prints
+"--- Sweeping frequency: X Hz ---" (no index), while
+complete_pipeline_inclusive.py and complete_pipeline_allied_vision.py print
+"[i/N]  X Hz  ..." (index built in) — SweepWorker below matches both
+formats so the bar advances correctly no matter which camera is running.
+
+HOW TO RUN
+----------
+    python3 run_experiment_gui.py
+
+DEPENDENCIES
+------------
+    pip install PyQt6 matplotlib
+Plus whichever camera SDK you plan to use, see run_experiment.py for details.
+"""
+
+import contextlib
+import importlib
+import io
+import math
+import os
+import re
+import sys
+
+import cv2
+import numpy as np
+
+from PyQt6.QtCore import QObject, Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QImage, QKeySequence, QPixmap, QShortcut
+from PyQt6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QStackedWidget,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
+)
+
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
+import run_experiment
+
+
+# ==============================================================================
+# FRAME -> QPIXMAP CONVERSION
+# ==============================================================================
+
+def _frame_to_pixmap(frame: np.ndarray) -> QPixmap:
+    """
+    Convert a 2D uint8 greyscale numpy array (the same shape
+    grab_single_frame() already returns) into a QPixmap a QLabel can
+    display. See monitor_gui.py's identical helper for why .copy() matters:
+    QImage() only wraps frame's existing memory buffer rather than copying
+    it, and the next grabbed frame may reuse that same buffer.
+    """
+    frame = np.ascontiguousarray(frame)
+    height, width = frame.shape
+    image = QImage(frame.data, width, height, width, QImage.Format.Format_Grayscale8)
+    return QPixmap.fromImage(image.copy())
+
+
+def _total_sweep_steps(params):
+    """
+    Same frequency-count formula every complete_pipeline*.py sweep loop
+    uses internally. Needed here because SweepWorker tracks progress by
+    reading stdout rather than calling into the pipeline modules'
+    internals directly (see the module docstring above) — Basler's sweep
+    never prints a running total of its own, so this is the one place that
+    total has to be computed independently instead of read off a log line.
+    """
+    start, end, step = params["start_freq"], params["end_freq"], params["step"]
+    return math.floor((end - start) / step + 1e-9) + 1
+
+
+# ==============================================================================
+# STDOUT -> QT SIGNAL BRIDGE
+# ==============================================================================
+
+class EmittingStream(QObject):
+    """
+    A minimal stand-in for sys.stdout that emits each complete line through
+    a Qt signal instead of printing it. contextlib.redirect_stdout only
+    ever calls .write() and .flush(), so subclassing QObject to also carry
+    a pyqtSignal costs nothing here — there's no real conflict between
+    "is a valid stdout replacement" and "is a QObject."
+
+    print() typically calls write() twice per line (once for the message,
+    once for the trailing newline), so raw text is buffered here and only
+    emitted once a full line (up to a "\\n") has accumulated — otherwise a
+    single print() call could emit two ragged half-lines instead of one
+    whole one.
+    """
+
+    text_written = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._buffer = ""
+
+    def write(self, text):
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line:
+                self.text_written.emit(line)
+
+    def flush(self):
+        pass
+
+
+# ==============================================================================
+# SETUP PAGE
+# ==============================================================================
+
+class SetupPage(QWidget):
+    """
+    Mirrors run_experiment.py's first three terminal questions —
+    choose_camera(), choose_mode(), choose_sweep_params() — as one page
+    with four QGroupBox sections, arranged two-by-two. No separate confirm
+    step: the Preview stage that follows is the confirmation, the same way
+    run_experiment.py's own live preview comes right after the settings are
+    typed in.
+    """
+
+    def __init__(self):
+        super().__init__()
+        outer = QVBoxLayout()
+        grid = QGridLayout()
+        grid.setSpacing(16)
+
+        # ---- Camera group (mirrors choose_camera()) ----
+        camera_group = QGroupBox("Camera")
+        camera_layout = QVBoxLayout()
+        self._camera_group = QButtonGroup(self)
+        self._camera_radios = {}
+        for choice, name in run_experiment.CAMERA_NAMES.items():
+            radio = QRadioButton(name)
+            self._camera_group.addButton(radio)
+            self._camera_radios[choice] = radio
+            camera_layout.addWidget(radio)
+        self._camera_radios["2"].setChecked(True)  # same default as choose_camera()
+        camera_layout.addStretch()
+        camera_group.setLayout(camera_layout)
+        grid.addWidget(camera_group, 0, 0)
+
+        # ---- Mode group (mirrors choose_mode()) ----
+        mode_group = QGroupBox("Subtraction mode")
+        mode_layout = QVBoxLayout()
+        self._mode_group = QButtonGroup(self)
+        self._mode_radios = {}
+        mode_labels = {
+            "1": "Pair subtraction\n(two frames subtracted at each frequency)",
+            "2": "Reference subtraction\n(every frame compared to one resting baseline)",
+        }
+        for choice, label in mode_labels.items():
+            radio = QRadioButton(label)
+            self._mode_group.addButton(radio)
+            self._mode_radios[choice] = radio
+            mode_layout.addWidget(radio)
+        self._mode_radios["1"].setChecked(True)  # same default as choose_mode()
+        mode_layout.addStretch()
+        mode_group.setLayout(mode_layout)
+        grid.addWidget(mode_group, 0, 1)
+
+        # ---- Frequency sweep group (mirrors choose_sweep_params(), part 1) ----
+        freq_group = QGroupBox("Frequency sweep")
+        freq_layout = QGridLayout()
+        freq_layout.addWidget(QLabel("Start frequency:"), 0, 0)
+        self.start_freq_spin = QDoubleSpinBox()
+        self.start_freq_spin.setRange(0.01, 1_000_000.0)
+        self.start_freq_spin.setValue(100.0)
+        self.start_freq_spin.setSuffix(" Hz")
+        freq_layout.addWidget(self.start_freq_spin, 0, 1)
+
+        freq_layout.addWidget(QLabel("End frequency:"), 1, 0)
+        self.end_freq_spin = QDoubleSpinBox()
+        self.end_freq_spin.setRange(0.01, 1_000_000.0)
+        self.end_freq_spin.setValue(1000.0)
+        self.end_freq_spin.setSuffix(" Hz")
+        freq_layout.addWidget(self.end_freq_spin, 1, 1)
+
+        freq_layout.addWidget(QLabel("Step size:"), 2, 0)
+        self.step_spin = QDoubleSpinBox()
+        self.step_spin.setRange(0.01, 1_000_000.0)
+        self.step_spin.setValue(100.0)
+        self.step_spin.setSuffix(" Hz")
+        freq_layout.addWidget(self.step_spin, 2, 1)
+
+        freq_layout.addWidget(QLabel("Frames per frequency:"), 3, 0)
+        self.n_averages_spin = QSpinBox()
+        self.n_averages_spin.setRange(1, 1000)
+        self.n_averages_spin.setValue(5)
+        freq_layout.addWidget(self.n_averages_spin, 3, 1)
+        freq_group.setLayout(freq_layout)
+        grid.addWidget(freq_group, 1, 0)
+
+        # ---- Capture settings group (mirrors choose_sweep_params(), part 2) ----
+        capture_group = QGroupBox("Capture settings")
+        capture_layout = QGridLayout()
+        capture_layout.addWidget(QLabel("Exposure (s):"), 0, 0)
+        self.exposure_spin = QDoubleSpinBox()
+        self.exposure_spin.setDecimals(4)
+        self.exposure_spin.setRange(0.0001, 10.0)
+        self.exposure_spin.setSingleStep(0.01)
+        self.exposure_spin.setValue(0.01)
+        capture_layout.addWidget(self.exposure_spin, 0, 1)
+
+        capture_layout.addWidget(QLabel("Gain (dB):"), 1, 0)
+        self.gain_spin = QDoubleSpinBox()
+        self.gain_spin.setDecimals(2)
+        self.gain_spin.setRange(-20.0, 50.0)  # 0 dB and negative values are valid
+        self.gain_spin.setValue(0.0)
+        capture_layout.addWidget(self.gain_spin, 1, 1)
+
+        capture_layout.addWidget(QLabel("gain_factor:"), 2, 0)
+        self.gain_factor_spin = QDoubleSpinBox()
+        self.gain_factor_spin.setDecimals(2)
+        self.gain_factor_spin.setRange(0.01, 200.0)
+        self.gain_factor_spin.setValue(1.0)
+        capture_layout.addWidget(self.gain_factor_spin, 2, 1)
+
+        capture_layout.addWidget(QLabel("Output folder:"), 3, 0)
+        output_row = QHBoxLayout()
+        self.output_dir_edit = QLineEdit("output")
+        self.browse_button = QPushButton("Browse…")
+        self.browse_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        )
+        self.browse_button.clicked.connect(self._browse_output_dir)
+        output_row.addWidget(self.output_dir_edit)
+        output_row.addWidget(self.browse_button)
+        capture_layout.addLayout(output_row, 3, 1)
+        capture_group.setLayout(capture_layout)
+        grid.addWidget(capture_group, 1, 1)
+
+        outer.addLayout(grid)
+
+        self.continue_button = QPushButton("Continue to Preview")
+        self.continue_button.setObjectName("PrimaryButton")
+        self.continue_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward)
+        )
+        outer.addWidget(self.continue_button)
+
+        self.setLayout(outer)
+
+    def _browse_output_dir(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, "Choose output folder", self.output_dir_edit.text()
+        )
+        if directory:
+            self.output_dir_edit.setText(directory)
+
+    def camera_choice(self):
+        for choice, radio in self._camera_radios.items():
+            if radio.isChecked():
+                return choice
+        return None
+
+    def mode_choice(self):
+        for choice, radio in self._mode_radios.items():
+            if radio.isChecked():
+                return choice
+        return None
+
+    def get_params(self):
+        """Returns the same shape dict choose_sweep_params() does."""
+        return dict(
+            start_freq=self.start_freq_spin.value(),
+            end_freq=self.end_freq_spin.value(),
+            step=self.step_spin.value(),
+            n_averages=self.n_averages_spin.value(),
+            exposure=self.exposure_spin.value(),
+            gain=self.gain_spin.value(),
+            gain_factor=self.gain_factor_spin.value(),
+            output_dir=self.output_dir_edit.text(),
+        )
+
+
+# ==============================================================================
+# PREVIEW WORKER + PAGE
+# ==============================================================================
+
+class CameraPreviewWorker(QThread):
+    """
+    Streams the live camera feed on a background thread, the same
+    connect_camera() / grab_single_frame() / disconnect_camera() building
+    blocks _show_preview_feed() uses, capped at ~15 fps so it never floods
+    the Qt event loop with more frames than the UI can actually draw.
+    """
+
+    frame_ready = pyqtSignal(np.ndarray)
+    error = pyqtSignal(str)
+    finished_cleanly = pyqtSignal()
+
+    _FRAME_INTERVAL_MS = 66  # ~15 fps
+
+    def __init__(self, camera_choice, exposure_s, gain):
+        super().__init__()
+        self._camera_choice = camera_choice
+        self._exposure_s = exposure_s
+        self._gain = gain
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        module_name = run_experiment.CAMERA_LIBRARY[self._camera_choice]
+        try:
+            cam_lib = importlib.import_module(module_name)
+        except ImportError as e:
+            # Reuses _missing_sdk_message()'s exact wording instead of a
+            # second, differently-worded copy of the same install
+            # instructions — captured via redirect_stdout since that
+            # function only knows how to print, not return a string.
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                run_experiment._missing_sdk_message(self._camera_choice, module_name, e)
+            self.error.emit(buffer.getvalue().strip())
+            self.finished_cleanly.emit()
+            return
+
+        camera = None
+        try:
+            camera = cam_lib.connect_camera()
+            if camera is None:
+                self.error.emit(
+                    "Could not open the camera. Check it is plugged in and try again."
+                )
+                return
+
+            # Camera 2 (USB/webcam) takes a log2 scale, not seconds — the
+            # same conversion _show_preview_feed() applies.
+            exposure_value = math.log2(self._exposure_s) if self._camera_choice == "2" \
+                else self._exposure_s * 1_000_000
+            cam_lib.set_exposure_manual(camera, exposure_value)
+            cam_lib.set_gain_manual(camera, self._gain)
+
+            while not self._stop:
+                frame = cam_lib.grab_single_frame(camera)
+                if frame is None:
+                    self.error.emit("Failed to grab frame — check camera connection.")
+                    break
+                self.frame_ready.emit(frame)
+                self.msleep(self._FRAME_INTERVAL_MS)
+        except Exception as e:
+            self.error.emit(f"The preview stopped unexpectedly: {e}")
+        finally:
+            if camera is not None:
+                cam_lib.disconnect_camera(camera)
+            self.finished_cleanly.emit()
+
+
+class PreviewPage(QWidget):
+    """
+    Embedded live feed replacing _show_preview_feed()'s separate cv2
+    window. "Lock in settings & continue" stops the worker and hands off
+    to the Sweep stage, the same moment _run()'s terminal flow moves from
+    the preview into reconfigure_if_needed().
+    """
+
+    continued = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self._worker = None
+
+        layout = QVBoxLayout()
+
+        self.feed_label = QLabel("Camera preview will appear here once started.")
+        self.feed_label.setObjectName("FeedFrame")
+        self.feed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.feed_label.setMinimumSize(480, 360)
+        layout.addWidget(self.feed_label, stretch=1)
+
+        hint = QLabel(
+            "Aim and focus the camera at the plate. These exposure and gain "
+            "values are exactly what the sweep will use."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.continue_button = QPushButton("Lock in settings && continue")
+        self.continue_button.setObjectName("PrimaryButton")
+        self.continue_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward)
+        )
+        self.continue_button.clicked.connect(self._stop_and_continue)
+        layout.addWidget(self.continue_button)
+
+        self.setLayout(layout)
+
+    def start_preview(self, camera_choice, exposure_s, gain):
+        self.feed_label.setText("Connecting to camera…")
+        self._worker = CameraPreviewWorker(camera_choice, exposure_s, gain)
+        self._worker.frame_ready.connect(self._on_frame)
+        self._worker.error.connect(self._on_error)
+        self._worker.finished_cleanly.connect(self._on_finished)
+        self._worker.start()
+
+    def is_running(self):
+        return self._worker is not None and self._worker.isRunning()
+
+    def stop_and_wait(self):
+        if self._worker is not None:
+            self._worker.stop()
+            self._worker.wait()
+
+    def hideEvent(self, event):
+        # Safety net: leaving this page (nav click, programmatic page
+        # switch) must never leave the camera connected in the background,
+        # even if the user never clicked "Lock in settings & continue".
+        self.stop_and_wait()
+        super().hideEvent(event)
+
+    def _stop_and_continue(self):
+        self.stop_and_wait()
+        self.continued.emit()
+
+    def _on_frame(self, frame):
+        pixmap = _frame_to_pixmap(frame).scaled(
+            self.feed_label.size(), Qt.AspectRatioMode.KeepAspectRatio
+        )
+        self.feed_label.setPixmap(pixmap)
+
+    def _on_error(self, message):
+        QMessageBox.warning(self, "Preview error", message)
+
+    def _on_finished(self):
+        self._worker = None
+
+
+# ==============================================================================
+# SWEEP WORKER + PAGE
+# ==============================================================================
+
+class SweepWorker(QThread):
+    """
+    Runs run_pipeline() on a background thread with stdout redirected into
+    an EmittingStream, so the sweep's own print() calls both drive the
+    progress bar and fill the log console live — without run_pipeline() or
+    any complete_pipeline*.py file needing to know a GUI exists.
+
+    KNOWN LIMITATION: there is no cancel button. run_pipeline()'s sweep
+    loop has no interruption checks of its own, and QThread.terminate() is
+    unsafe here — it could stop mid frame-grab or mid signal-generator
+    command and leave hardware connections open. A real Cancel button
+    would need a checked flag added inside complete_pipeline*.py's loops,
+    which is out of scope: it touches tested sweep logic this project
+    deliberately leaves alone (the same trade-off monitor_gui.py's
+    MonitorWorker avoided needing, since that loop already checks a stop
+    flag every frame the terminal version's cv2.waitKey('q') already did).
+
+    CAVEAT: contextlib.redirect_stdout replaces the process-wide
+    sys.stdout for as long as this runs, not just this thread's — safe
+    here because nothing else in this single-purpose app prints
+    concurrently while a sweep is running (the whole nav rail, including
+    the Preview page's own camera thread, is locked out during a sweep).
+    """
+
+    progress = pyqtSignal(int, int, float)  # (current_index, total_steps, freq_hz)
+    finished_sweep = pyqtSignal(object)     # results dict, or None on failure
+
+    # Basler's complete_pipeline.py prints "--- Sweeping frequency: X Hz ---"
+    # with no index of its own; complete_pipeline_inclusive.py and
+    # complete_pipeline_allied_vision.py instead print "[i/N]  X Hz  ..."
+    # with the index and total already built in. Matching both formats is
+    # what lets one progress bar work correctly for all three cameras.
+    _INDEXED_RE = re.compile(r"^\[(\d+)/(\d+)\]\s+([\d.]+)\s*Hz")
+    _BASLER_RE = re.compile(r"--- Sweeping frequency: ([\d.]+) Hz ---")
+
+    error = pyqtSignal(str)
+
+    def __init__(self, camera_choice, mode_choice, params, stream):
+        super().__init__()
+        self._camera_choice = camera_choice
+        self._mode_choice = mode_choice
+        self._params = params
+        self._stream = stream
+        self._basler_index = 0
+        self._total_steps = _total_sweep_steps(params)
+        self._stream.text_written.connect(self._handle_line)
+
+    def _handle_line(self, line):
+        match = self._INDEXED_RE.match(line)
+        if match:
+            self.progress.emit(int(match.group(1)), int(match.group(2)), float(match.group(3)))
+            return
+        match = self._BASLER_RE.search(line)
+        if match:
+            self._basler_index += 1
+            self.progress.emit(self._basler_index, self._total_steps, float(match.group(1)))
+
+    def run(self):
+        results = None
+        try:
+            with contextlib.redirect_stdout(self._stream):
+                results = run_experiment.run_pipeline(
+                    self._camera_choice, self._mode_choice, self._params
+                )
+        except Exception as e:
+            self.error.emit(f"The experiment stopped unexpectedly: {e}")
+        finally:
+            self.finished_sweep.emit(results)
+
+
+class SweepPage(QWidget):
+    """
+    A determinate progress bar plus a "Frequency i of N" label, driven
+    entirely by SweepWorker's parsed stdout. The log_line signal bubbles
+    every raw line up to MainWindow's shared log console.
+    """
+
+    log_line = pyqtSignal(str)
+    sweep_started = pyqtSignal()
+    sweep_finished = pyqtSignal(object, str)  # (results, output_dir)
+
+    _MODE_NAMES = {"1": "Pair subtraction", "2": "Reference subtraction"}
+
+    def __init__(self):
+        super().__init__()
+        self._worker = None
+        self._camera_choice = None
+        self._mode_choice = None
+        self._params = None
+
+        outer = QVBoxLayout()
+
+        summary_group = QGroupBox("Summary")
+        summary_layout = QVBoxLayout()
+        self.summary_label = QLabel(
+            "Complete the Setup and Preview stages to see a summary here."
+        )
+        self.summary_label.setObjectName("SummaryLabel")
+        self.summary_label.setWordWrap(True)
+        summary_layout.addWidget(self.summary_label)
+        summary_group.setLayout(summary_layout)
+        outer.addWidget(summary_group)
+
+        progress_group = QGroupBox("Sweep progress")
+        progress_layout = QVBoxLayout()
+
+        self.freq_label = QLabel("Ready to start the sweep.")
+        self.freq_label.setObjectName("FreqLabel")
+        progress_layout.addWidget(self.freq_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        progress_layout.addWidget(self.progress_bar)
+
+        self.start_button = QPushButton("Start Sweep")
+        self.start_button.setObjectName("PrimaryButton")
+        self.start_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        )
+        self.start_button.clicked.connect(self._start_sweep)
+        progress_layout.addWidget(self.start_button)
+
+        warning = QLabel(
+            "The sweep cannot be safely cancelled once it starts — interrupting "
+            "hardware mid-measurement can leave it in a bad state. "
+            "Do not unplug any cables while it is running."
+        )
+        warning.setWordWrap(True)
+        warning.setObjectName("WarningLabel")
+        progress_layout.addWidget(warning)
+
+        progress_group.setLayout(progress_layout)
+        outer.addWidget(progress_group)
+
+        outer.addStretch()
+        self.setLayout(outer)
+
+    def begin(self, camera_choice, mode_choice, params):
+        """Called by MainWindow once the Preview stage hands off."""
+        self._camera_choice = camera_choice
+        self._mode_choice = mode_choice
+        self._params = params
+
+        total = _total_sweep_steps(params)
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(0)
+        self.freq_label.setText(f"Ready to start the sweep. (0 / {total} frequencies)")
+        self.start_button.setEnabled(True)
+
+        self.summary_label.setText(
+            f"Camera        :  {run_experiment.CAMERA_NAMES[camera_choice]}\n"
+            f"Mode          :  {self._MODE_NAMES[mode_choice]}\n"
+            f"Frequency     :  {params['start_freq']:g} – {params['end_freq']:g} Hz "
+            f"(step {params['step']:g} Hz)\n"
+            f"Frames/freq   :  {params['n_averages']}\n"
+            f"Exposure      :  {params['exposure']} s\n"
+            f"Gain          :  {params['gain']} dB\n"
+            f"gain_factor   :  {params['gain_factor']}\n"
+            f"Output folder :  {params['output_dir']}"
+        )
+
+    def is_running(self):
+        return self._worker is not None and self._worker.isRunning()
+
+    def _start_sweep(self):
+        self.start_button.setEnabled(False)
+        self.sweep_started.emit()
+
+        stream = EmittingStream()
+        stream.text_written.connect(self.log_line)
+
+        self._worker = SweepWorker(self._camera_choice, self._mode_choice, self._params, stream)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.error.connect(self._on_error)
+        self._worker.finished_sweep.connect(self._on_finished)
+        self._worker.start()
+
+    def _on_progress(self, current, total, freq):
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(current)
+        self.freq_label.setText(f"Sweeping frequency {current} of {total} — {freq:g} Hz")
+
+    def _on_error(self, message):
+        QMessageBox.critical(self, "Sweep error", message)
+
+    def _on_finished(self, results):
+        self._worker = None
+        if results:
+            self.freq_label.setText(f"Sweep complete — {len(results)} frequencies measured.")
+        else:
+            self.freq_label.setText("Sweep finished with no results — check the log below.")
+        output_dir = self._params["output_dir"] if self._params else ""
+        self.sweep_finished.emit(results, output_dir)
+
+
+# ==============================================================================
+# RESULTS PAGE
+# ==============================================================================
+
+class ResultsPage(QWidget):
+    """
+    Embeds build_grid_figure()'s Figure directly (default view), plus a
+    second, GUI-owned single-image view with Prev/Next paging — a separate
+    canvas rather than reusing show_results()'s
+    fig.canvas.mpl_connect("key_press_event", ...) viewer, since that
+    relies on matplotlib's own blocking plt.show() event loop, which would
+    conflict with Qt's event loop already running here.
+    """
+
+    run_again = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self._results = None
+        self._output_dir = None
+        self._freqs = []
+        self._fmt = lambda f: f"{f:g}"
+        self._single_index = 0
+
+        self._layout = QVBoxLayout()
+
+        # Both canvases live inside their own "card" container (matching
+        # the QGroupBox card styling used everywhere else in this app),
+        # since a bare FigureCanvasQTAgg paints its entire own rect and
+        # would otherwise ignore a border/background applied directly to
+        # it.
+        self._grid_card, self._grid_canvas = self._make_canvas_card()
+        self._layout.addWidget(self._grid_card, stretch=1)
+
+        self._single_card, self._single_canvas = self._make_canvas_card()
+        self._single_ax = self._single_canvas.figure.add_subplot(111)
+        self._single_card.setVisible(False)
+        self._layout.addWidget(self._single_card, stretch=1)
+
+        nav_row = QHBoxLayout()
+        self.prev_button = QPushButton("← Previous")
+        self.prev_button.clicked.connect(self._show_previous)
+        self.next_button = QPushButton("Next →")
+        self.next_button.clicked.connect(self._show_next)
+        self.prev_button.setVisible(False)
+        self.next_button.setVisible(False)
+        nav_row.addWidget(self.prev_button)
+        nav_row.addWidget(self.next_button)
+        self._layout.addLayout(nav_row)
+
+        button_row = QHBoxLayout()
+        self.toggle_view_button = QPushButton("Switch to single-image view")
+        self.toggle_view_button.clicked.connect(self._toggle_view)
+        self.open_folder_button = QPushButton("Open output folder")
+        self.open_folder_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        )
+        self.open_folder_button.clicked.connect(self._open_folder)
+        self.run_again_button = QPushButton("Run another sweep")
+        self.run_again_button.setObjectName("PrimaryButton")
+        self.run_again_button.clicked.connect(self.run_again.emit)
+        button_row.addWidget(self.toggle_view_button)
+        button_row.addWidget(self.open_folder_button)
+        button_row.addWidget(self.run_again_button)
+        self._layout.addLayout(button_row)
+
+        self.setLayout(self._layout)
+
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self, activated=self._show_previous)
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=self._show_next)
+
+    @staticmethod
+    def _make_canvas_card(figure=None):
+        """Build one 'card' container (matching this app's QGroupBox
+        styling) holding a single FigureCanvasQTAgg, and return both."""
+        card = QWidget()
+        card.setObjectName("CanvasCard")
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        canvas = FigureCanvasQTAgg(figure if figure is not None else Figure(figsize=(6, 6)))
+        card_layout.addWidget(canvas)
+        card.setLayout(card_layout)
+        return card, canvas
+
+    def show_results(self, results, output_dir):
+        self._results = results
+        self._output_dir = output_dir
+        self._freqs = sorted(results.keys())
+        self._fmt = run_experiment._format_freq_label(self._freqs)
+        self._single_index = 0
+
+        grid_fig, _ = run_experiment.build_grid_figure(results, output_dir)
+        new_canvas = FigureCanvasQTAgg(grid_fig)
+        self._grid_card.layout().replaceWidget(self._grid_canvas, new_canvas)
+        # replaceWidget() does not automatically show its replacement the
+        # way adding a widget to an already-visible layout normally does.
+        new_canvas.setVisible(True)
+        self._grid_canvas.deleteLater()
+        self._grid_canvas = new_canvas
+        self._grid_card.setVisible(not self._single_card.isVisible())
+
+        self._draw_single(0)
+        self.prev_button.setVisible(True)
+        self.next_button.setVisible(True)
+
+    def _draw_single(self, index):
+        if not self._freqs:
+            return
+        self._single_index = index
+        freq = self._freqs[index]
+        ax = self._single_ax
+        ax.clear()
+        ax.imshow(self._results[freq], cmap="gray", interpolation="nearest")
+        ax.set_title(f"{self._fmt(freq)} Hz   ({index + 1} / {len(self._freqs)})")
+        ax.axis("off")
+        self._single_canvas.draw_idle()
+
+    def _show_previous(self):
+        if not self.isVisible() or not self._freqs:
+            return
+        self._draw_single(max(0, self._single_index - 1))
+
+    def _show_next(self):
+        if not self.isVisible() or not self._freqs:
+            return
+        self._draw_single(min(len(self._freqs) - 1, self._single_index + 1))
+
+    def _toggle_view(self):
+        grid_was_visible = self._grid_card.isVisible()
+        self._grid_card.setVisible(not grid_was_visible)
+        self._single_card.setVisible(grid_was_visible)
+        self.toggle_view_button.setText(
+            "Switch to grid view" if grid_was_visible else "Switch to single-image view"
+        )
+
+    def _open_folder(self):
+        if self._output_dir:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(self._output_dir)))
+
+
+# ==============================================================================
+# MAIN WINDOW
+# ==============================================================================
+
+class MainWindow(QMainWindow):
+    """
+    Left nav rail (Setup, Preview, Sweep, Results) + QStackedWidget, the
+    same shell shape as monitor_gui.py's dashboard, kept for visual and
+    architectural consistency between the two apps in this project.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("ESPI Plate Vibration — Run Experiment")
+        self.resize(1150, 820)
+
+        self._nav = QListWidget()
+        self._nav.setObjectName("NavRail")
+        self._nav.addItems(["Setup", "Preview", "Sweep", "Results"])
+        self._nav.setFixedWidth(180)
+        self._nav.setCurrentRow(0)
+        for row in (1, 2, 3):
+            self._set_nav_enabled(row, False)
+        self._nav.currentRowChanged.connect(self._on_nav_changed)
+
+        self.setup_page = SetupPage()
+        self.preview_page = PreviewPage()
+        self.sweep_page = SweepPage()
+        self.results_page = ResultsPage()
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self.setup_page)
+        self._stack.addWidget(self.preview_page)
+        self._stack.addWidget(self.sweep_page)
+        self._stack.addWidget(self.results_page)
+
+        self.log_console = QPlainTextEdit()
+        self.log_console.setObjectName("LogConsole")
+        self.log_console.setReadOnly(True)
+        self.log_console.setMaximumBlockCount(2000)
+        self.log_console.setFixedHeight(140)
+        self.log_console.setPlaceholderText(
+            "Sweep progress will be logged here once it starts…"
+        )
+
+        right_side = QWidget()
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.addWidget(self._stack, stretch=1)
+        right_layout.addWidget(self.log_console)
+        right_side.setLayout(right_layout)
+
+        central = QWidget()
+        central_layout = QHBoxLayout()
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._nav)
+        central_layout.addWidget(right_side, stretch=1)
+        central.setLayout(central_layout)
+        self.setCentralWidget(central)
+
+        self.statusBar().showMessage("Idle")
+
+        self.setup_page.continue_button.clicked.connect(self._start_preview)
+        self.preview_page.continued.connect(self._start_sweep_stage)
+        self.sweep_page.log_line.connect(self.log_console.appendPlainText)
+        self.sweep_page.sweep_started.connect(self._on_sweep_started)
+        self.sweep_page.sweep_finished.connect(self._on_sweep_finished)
+        self.results_page.run_again.connect(self._on_run_again)
+
+    def _set_nav_enabled(self, row, enabled):
+        item = self._nav.item(row)
+        if enabled:
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
+        else:
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+
+    def _on_nav_changed(self, row):
+        self._stack.setCurrentIndex(row)
+
+    def _start_preview(self):
+        params = self.setup_page.get_params()
+        camera_choice = self.setup_page.camera_choice()
+        self._set_nav_enabled(1, True)
+        self._nav.setCurrentRow(1)
+        self.statusBar().showMessage("Previewing camera feed")
+        self.preview_page.start_preview(camera_choice, params["exposure"], params["gain"])
+
+    def _start_sweep_stage(self):
+        camera_choice = self.setup_page.camera_choice()
+        mode_choice = self.setup_page.mode_choice()
+        params = self.setup_page.get_params()
+        self.sweep_page.begin(camera_choice, mode_choice, params)
+        self._set_nav_enabled(2, True)
+        self._nav.setCurrentRow(2)
+        self.statusBar().showMessage("Ready to sweep")
+
+    def _on_sweep_started(self):
+        for row in range(4):
+            self._set_nav_enabled(row, False)
+        self.statusBar().showMessage("Running sweep — do not unplug any cables")
+
+    def _on_sweep_finished(self, results, output_dir):
+        self._set_nav_enabled(0, True)
+        self._set_nav_enabled(1, True)
+        self._set_nav_enabled(2, True)
+        if results:
+            self._set_nav_enabled(3, True)
+            self.results_page.show_results(results, output_dir)
+            self._nav.setCurrentRow(3)
+            self.statusBar().showMessage(f"Done — {len(results)} frequencies measured")
+        else:
+            self.statusBar().showMessage("Sweep finished with no results — check the log below")
+
+    def _on_run_again(self):
+        self._set_nav_enabled(1, False)
+        self._set_nav_enabled(2, False)
+        self._set_nav_enabled(3, False)
+        self._nav.setCurrentRow(0)
+        self.statusBar().showMessage("Idle")
+
+    def closeEvent(self, event):
+        if self.sweep_page.is_running():
+            # No confirmation dialog here on purpose: unlike the preview,
+            # there is no safe way to stop a running sweep (see
+            # SweepWorker's docstring), so closing is refused outright
+            # rather than offering a choice that can't be honored safely.
+            QMessageBox.warning(
+                self,
+                "Sweep running",
+                "The sweep is still running and cannot be safely interrupted. "
+                "Please wait for it to finish before closing.",
+            )
+            event.ignore()
+            return
+
+        if self.preview_page.is_running():
+            reply = QMessageBox.question(
+                self,
+                "Preview running",
+                "The camera preview is still running. Stop it and close?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.preview_page.stop_and_wait()
+
+        event.accept()
+
+
+# ==============================================================================
+# STYLESHEET
+# ==============================================================================
+# A single flat, modern light theme applied to the whole QApplication:
+# card-style QGroupBox sections, one accent color for primary actions, a
+# dark sidebar nav rail, and a terminal-style log console. Kept as one
+# embedded string (not a separate .qss file) so the app has no extra
+# non-Python asset to ship.
+
+_STYLESHEET = """
+QMainWindow, QWidget {
+    background-color: #f4f5f7;
+    color: #1f2430;
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+}
+
+QListWidget#NavRail {
+    background-color: #1b2030;
+    border: none;
+    padding: 12px 0px;
+    outline: 0;
+}
+QListWidget#NavRail::item {
+    color: #aeb3c2;
+    padding: 14px 22px;
+    border-left: 3px solid transparent;
+}
+QListWidget#NavRail::item:selected {
+    background-color: #262d42;
+    color: #ffffff;
+    border-left: 3px solid #5b8def;
+}
+QListWidget#NavRail::item:disabled {
+    color: #4d5266;
+}
+
+QGroupBox {
+    background-color: #ffffff;
+    border: 1px solid #e1e4ea;
+    border-radius: 10px;
+    margin-top: 16px;
+    padding: 18px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 14px;
+    padding: 0 6px;
+    color: #3d4356;
+}
+
+QLabel {
+    color: #1f2430;
+    background-color: transparent;
+}
+QLabel#FreqLabel { font-weight: 600; font-size: 14px; }
+QLabel#WarningLabel { color: #9a3b3b; font-size: 12px; }
+
+QPushButton {
+    background-color: #ffffff;
+    border: 1px solid #d7dae1;
+    border-radius: 7px;
+    padding: 9px 18px;
+    color: #1f2430;
+}
+QPushButton:hover { background-color: #eef0f4; border-color: #c3c8d4; }
+QPushButton:pressed { background-color: #e2e5ec; }
+QPushButton:disabled { color: #a7abb8; background-color: #f4f5f7; border-color: #e6e8ee; }
+
+QPushButton#PrimaryButton {
+    background-color: #5b8def;
+    border: 1px solid #4a7bdc;
+    color: #ffffff;
+    font-weight: 600;
+}
+QPushButton#PrimaryButton:hover { background-color: #4a7bdc; }
+QPushButton#PrimaryButton:pressed { background-color: #3f6bc4; }
+QPushButton#PrimaryButton:disabled {
+    background-color: #b7c8ea; border-color: #b7c8ea; color: #eef2fb;
+}
+
+QDoubleSpinBox, QSpinBox, QLineEdit {
+    background-color: #ffffff;
+    border: 1px solid #d7dae1;
+    border-radius: 6px;
+    padding: 6px 8px;
+    selection-background-color: #5b8def;
+}
+QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {
+    border: 1px solid #5b8def;
+}
+
+QRadioButton {
+    spacing: 8px;
+    padding: 4px 0px;
+    background-color: transparent;
+    outline: none;
+}
+
+QLabel#SummaryLabel {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    background-color: #f7f8fa;
+    border: 1px solid #e1e4ea;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+QWidget#CanvasCard {
+    background-color: #ffffff;
+    border: 1px solid #e1e4ea;
+    border-radius: 10px;
+}
+
+QProgressBar {
+    border: 1px solid #d7dae1;
+    border-radius: 7px;
+    background-color: #ffffff;
+    text-align: center;
+    height: 22px;
+    font-weight: 600;
+}
+QProgressBar::chunk {
+    background-color: #5b8def;
+    border-radius: 6px;
+}
+
+QPlainTextEdit#LogConsole {
+    background-color: #1b2030;
+    color: #cfd4e2;
+    border: 1px solid #11141c;
+    border-radius: 8px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    padding: 10px;
+}
+
+QStatusBar {
+    background-color: #ffffff;
+    border-top: 1px solid #e1e4ea;
+    color: #565b6b;
+}
+
+QLabel#FeedFrame {
+    background-color: #11141c;
+    border: 1px solid #e1e4ea;
+    border-radius: 10px;
+    color: #7d8394;
+    font-size: 13px;
+}
+"""
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(_STYLESHEET)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

@@ -81,7 +81,7 @@ import monitor
 # whose main() functions are monolithic and can't be embedded (see the
 # module docstring above). This dashboard instead talks directly to the
 # lower-level camera_control*.py modules — the same three files
-# run_experiment.py already dispatches to as _CAMERA_LIBRARY.
+# run_experiment.py already dispatches to as CAMERA_LIBRARY.
 
 _CAMERA_CONTROL_MODULES = {
     "1": "camera_control",

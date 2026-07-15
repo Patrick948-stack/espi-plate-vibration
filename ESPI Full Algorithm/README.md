@@ -409,6 +409,26 @@ python run_experiment.py
 
 The program will ask you which camera you are using, which subtraction mode you want, and what settings to use. It then opens a live preview so you can aim the camera, runs the frequency sweep, and shows you the results one image at a time when it is finished.
 
+### Graphical version (`run_experiment_gui.py`)
+
+Prefer clicking over typing in a terminal? `run_experiment_gui.py` is a PyQt6 dashboard covering the exact same four stages as `run_experiment.py` — Setup, Preview, Sweep, Results — as one window with a left-hand navigation rail, instead of typed terminal questions and separate popup windows.
+
+```
+python run_experiment_gui.py
+```
+
+**Setup** — camera, subtraction mode, and every sweep parameter (frequency range, frames per frequency, exposure, gain, gain_factor, output folder) on one page, arranged as four cards. Click "Continue to Preview" when ready.
+
+**Preview** — the live camera feed embedded directly in the window, using the exact exposure and gain you just set. Click "Lock in settings & continue" once the plate is in frame and focused.
+
+**Sweep** — a summary of everything about to run, a real progress bar ("Frequency i of N"), and a live log console showing the sweep's own output as it happens. Click "Start Sweep" to begin.
+
+**Results** — the same results grid `run_experiment.py`'s terminal viewer saves to disk, embedded in the window, plus a single-image view with Previous/Next buttons and arrow-key navigation. "Open output folder" jumps straight to your saved images, and "Run another sweep" returns to Setup with your previous settings still filled in.
+
+**One real limitation, on purpose**: there is no way to cancel a sweep once it starts, in either version. Interrupting the camera or signal generator mid-measurement can leave the hardware in a bad state, so the Sweep page's Start button and the entire navigation rail lock for the duration of the sweep, and the window refuses to close until it finishes — the same trade-off `run_experiment.py`'s terminal version already makes by not listening for a "cancel" keypress mid-sweep.
+
+It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, camera choice, or sweep parameter — and the entire sweep itself — comes straight from `run_experiment.py` and `complete_pipeline*.py`, so the two entry points can never give you a different result for the same settings.
+
 ## Running an experiment (quick reference for returning users)
 
 Once everything above is set up, the only commands you need each time you come back are:
@@ -495,6 +515,7 @@ Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`,
 | File | What it is | What it does |
 |---|---|---|
 | `run_experiment.py` | Script you run | Interactive entry point for all cameras and modes |
+| `run_experiment_gui.py` | Script you run | Same experiment as `run_experiment.py`, as a PyQt6 dashboard (Setup, Preview, Sweep, Results) with everything embedded in one window instead of typed terminal answers and separate popup windows |
 | `monitor.py` | Script you run | Interactive live preview. Pick a camera, set exposure, gain, gain_factor, and graph type, then watch Live Feed and Frame Subtraction, plus an optional graph |
 | `monitor_gui.py` | Script you run | Same live preview as `monitor.py`, as a PyQt6 dashboard with everything embedded in one window instead of typed terminal answers and separate popup windows |
 | `live_graphs.py` | Library | Live histogram or 3D surface plot of pixel intensity, `create_live_graph(graph_type, ax=None)` |
@@ -665,7 +686,8 @@ python -m pytest tests/ -v
 | `test_complete_pipeline.py` | Basler sweep logic |
 | `test_complete_pipeline_inclusive.py` | USB sweep logic |
 | `test_complete_pipeline_allied_vision.py` | Allied Vision sweep logic |
-| `test_run_experiment.py` | Interactive entry point, exposure conversion, preview feed, settings loop |
+| `test_run_experiment.py` | Interactive entry point, exposure conversion, preview feed, settings loop, `build_grid_figure()` |
+| `test_run_experiment_gui.py` | run_experiment_gui.py dashboard: page defaults, the preview and sweep worker threads' lifecycles and error paths, stdout-based progress parsing for both pipeline print formats, results paging/toggling, nav gating, close guards |
 | `test_monitor.py` | monitor.py entry point: camera choice, settings prompts, exposure conversion, error messages |
 | `test_monitor_gui.py` | monitor_gui.py dashboard: page defaults, spin box validation, live summary, the camera/frame-subtraction worker thread's lifecycle and error paths, graph embedding, nav gating, close confirmation |
 | `test_live_graphs.py` | live_graphs.py: histogram/log_histogram/3D correctness, redraw throttling, and the embedded `ax=` seam used by monitor_gui.py |

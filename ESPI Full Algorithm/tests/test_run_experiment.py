@@ -704,3 +704,45 @@ class TestShowResults:
         assert "Your results are safe" in out
         # The grid PNG must have been saved before the viewer was attempted.
         assert list(tmp_path.glob("sweep_results_*.png"))
+
+
+# ===========================================================================
+# build_grid_figure() — the display-free half show_results() and
+# run_experiment_gui.py's ResultsPage both build on
+# ===========================================================================
+
+class TestBuildGridFigure:
+    def test_returns_figure_and_saved_path(self, tmp_path):
+        results = {100.0: _tiny_image(), 200.0: _tiny_image()}
+        fig, path = run_experiment.build_grid_figure(results, str(tmp_path))
+        assert fig is not None
+        assert os.path.exists(path)
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    def test_does_not_display_anything(self, tmp_path):
+        # A pure-build function must never try to open a window — patching
+        # plt.show() to raise proves it's never called.
+        results = {100.0: _tiny_image()}
+        with patch("matplotlib.pyplot.show", side_effect=AssertionError("should not be called")):
+            fig, path = run_experiment.build_grid_figure(results, str(tmp_path))
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    def test_one_subplot_per_frequency(self, tmp_path):
+        results = {100.0: _tiny_image(), 200.0: _tiny_image(), 300.0: _tiny_image()}
+        fig, _ = run_experiment.build_grid_figure(results, str(tmp_path))
+        visible_axes = [ax for ax in fig.get_axes() if ax.get_visible()]
+        assert len(visible_axes) == len(results)
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    def test_show_results_uses_the_same_saved_file_build_grid_figure_would(self, tmp_path):
+        # show_results() must not duplicate build_grid_figure()'s drawing
+        # logic — calling it directly should produce the exact same kind
+        # of saved file show_results() reports.
+        results = {150.0: _tiny_image()}
+        with patch("matplotlib.pyplot.show"):
+            run_experiment.show_results(results, str(tmp_path))
+        saved = list(tmp_path.glob("sweep_results_*.png"))
+        assert len(saved) == 1
