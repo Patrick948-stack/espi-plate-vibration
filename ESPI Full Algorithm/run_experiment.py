@@ -578,8 +578,17 @@ def reconfigure_if_needed(camera_choice, params):
 # PIPELINE RUNNER
 # ==============================================================================
 
-def run_pipeline(camera_choice, mode_choice, params):
-    """Import the right pipeline and call the right function."""
+def run_pipeline(camera_choice, mode_choice, params, stop_check=None):
+    """
+    Import the right pipeline and call the right function.
+
+    stop_check : optional callable forwarded straight through to whichever
+                 sweep function is chosen. Checked once per frequency, before
+                 any hardware command for that frequency — see
+                 complete_pipeline.py's frequency_sweep() docstring for the
+                 full explanation. Left as None (the default) for every
+                 existing terminal caller, which never stops early.
+    """
 
     exposure    = params["exposure"]
     gain        = params["gain"]
@@ -594,6 +603,7 @@ def run_pipeline(camera_choice, mode_choice, params):
         gain        = gain,
         gain_factor = gain_factor,
         output_dir  = output_dir,
+        stop_check  = stop_check,
     )
 
     # ---- Basler ----

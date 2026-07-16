@@ -301,6 +301,70 @@ class TestReferenceFrequencySweepAVMocked:
 
 
 # ===========================================================================
+# stop_check — lets a caller (run_experiment_gui.py's SweepWorker) stop the
+# sweep safely between frequencies, without complete_pipeline_allied_vision.py
+# needing to know a GUI exists. Checked once per frequency, before any
+# signal generator or camera command for that frequency is issued.
+# ===========================================================================
+
+class TestStopCheckAV:
+
+    def test_none_runs_the_full_sweep(self, hw):
+        result = cp.frequency_sweep_allied_vision(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                                    stop_check=None)
+        assert len(result) == 3
+
+    def test_true_before_first_frequency_returns_none(self, hw):
+        # Both allied vision sweep functions return "results or None" — an
+        # empty results dict (nothing measured before the stop) becomes None.
+        result = cp.frequency_sweep_allied_vision(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                                    stop_check=lambda: True)
+        assert result is None
+
+    def test_true_after_first_frequency_returns_partial_results(self, hw):
+        seen = []
+
+        def stop_after_one():
+            seen.append(1)
+            return len(seen) > 1
+
+        result = cp.frequency_sweep_allied_vision(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                                    stop_check=stop_after_one)
+        assert set(result.keys()) == {100.0}
+
+    def test_set_frequency_never_called_after_stop(self, hw):
+        with patch.object(cp, "set_frequency") as mock_sf:
+            cp.frequency_sweep_allied_vision(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                              stop_check=lambda: True)
+        mock_sf.assert_not_called()
+
+    def test_cleanup_still_happens_when_stopped(self, hw):
+        with patch.object(cp, "_cleanup") as mock_cleanup:
+            cp.frequency_sweep_allied_vision(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                              stop_check=lambda: True)
+        mock_cleanup.assert_called_once()
+
+    def test_reference_sweep_true_before_first_frequency_returns_none(self, hw):
+        # hw doesn't stub grab_reference_frame() (only the class-scoped
+        # hw_ref fixture in TestReferenceFrequencySweepAVMocked does) — the
+        # reference sweep needs it for the one-time reference capture
+        # before the per-frequency loop even starts.
+        with patch.object(cp, "grab_reference_frame", return_value=FAKE_FRAME):
+            result = cp.reference_frequency_sweep_allied_vision(
+                100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]), stop_check=lambda: True
+            )
+        assert result is None
+
+    def test_reference_sweep_cleanup_still_happens_when_stopped(self, hw):
+        with patch.object(cp, "grab_reference_frame", return_value=FAKE_FRAME), \
+             patch.object(cp, "_cleanup") as mock_cleanup:
+            cp.reference_frequency_sweep_allied_vision(
+                100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]), stop_check=lambda: True
+            )
+        mock_cleanup.assert_called_once()
+
+
+# ===========================================================================
 # gain_factor (pair-subtraction mode) — must scale every difference image
 # before it is averaged and saved, saturating at 255 instead of wrapping
 # around (uint8 overflow).

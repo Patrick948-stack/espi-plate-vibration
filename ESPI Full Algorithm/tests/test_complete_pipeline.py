@@ -258,6 +258,64 @@ class TestReferenceFrequencySweepMocked:
 
 
 # ===========================================================================
+# stop_check — lets a caller (run_experiment_gui.py's SweepWorker) stop the
+# sweep safely between frequencies, without complete_pipeline.py needing to
+# know a GUI exists. Checked once per frequency, before any signal generator
+# or camera command for that frequency is issued.
+# ===========================================================================
+
+class TestStopCheck:
+
+    def test_none_runs_the_full_sweep(self, hw):
+        result = cp.frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                     stop_check=None)
+        assert len(result) == 3
+
+    def test_true_before_first_frequency_returns_no_results(self, hw):
+        result = cp.frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                     stop_check=lambda: True)
+        assert result == {}
+
+    def test_true_after_first_frequency_returns_partial_results(self, hw):
+        seen = []
+
+        def stop_after_one():
+            seen.append(1)
+            return len(seen) > 1
+
+        result = cp.frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                     stop_check=stop_after_one)
+        assert set(result.keys()) == {100.0}
+
+    def test_set_frequency_never_called_after_stop(self, hw):
+        with patch("complete_pipeline.set_frequency") as mock_sf:
+            cp.frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                stop_check=lambda: True)
+        mock_sf.assert_not_called()
+
+    def test_cleanup_still_happens_when_stopped(self, hw):
+        with patch("complete_pipeline.turn_off_output") as mock_off, \
+             patch("complete_pipeline.disconnect_camera") as mock_disc:
+            cp.frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                stop_check=lambda: True)
+        mock_off.assert_called_once()
+        mock_disc.assert_called_once()
+
+    def test_reference_sweep_true_before_first_frequency_returns_no_results(self, hw):
+        result = cp.reference_frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                               stop_check=lambda: True)
+        assert result == {}
+
+    def test_reference_sweep_cleanup_still_happens_when_stopped(self, hw):
+        with patch("complete_pipeline.turn_off_output") as mock_off, \
+             patch("complete_pipeline.disconnect_camera") as mock_disc:
+            cp.reference_frequency_sweep(100, 300, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                          stop_check=lambda: True)
+        mock_off.assert_called_once()
+        mock_disc.assert_called_once()
+
+
+# ===========================================================================
 # gain_factor — must scale every difference image before it is averaged and
 # saved, saturating at 255 instead of wrapping around (uint8 overflow).
 # ===========================================================================

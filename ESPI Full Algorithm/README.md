@@ -417,15 +417,21 @@ Prefer clicking over typing in a terminal? `run_experiment_gui.py` is a PyQt6 da
 python run_experiment_gui.py
 ```
 
+<p align="center">
+  <img src="screenshots/run_experiment_gui_setup.png" width="49%" alt="run_experiment_gui.py Setup page">
+  <img src="screenshots/run_experiment_gui_sweep.png" width="49%" alt="run_experiment_gui.py Sweep page with a running sweep and Stop Sweep visible">
+</p>
+<p align="center">
+  <img src="screenshots/run_experiment_gui_results.png" width="70%" alt="run_experiment_gui.py Results page showing the sweep results grid">
+</p>
+
 **Setup** — camera, subtraction mode, and every sweep parameter (frequency range, frames per frequency, exposure, gain, gain_factor, output folder) on one page, arranged as four cards. Click "Continue to Preview" when ready.
 
 **Preview** — the live camera feed embedded directly in the window, using the exact exposure and gain you just set. Click "Lock in settings & continue" once the plate is in frame and focused.
 
-**Sweep** — a summary of everything about to run, a real progress bar ("Frequency i of N"), and a live log console showing the sweep's own output as it happens. Click "Start Sweep" to begin.
+**Sweep** — a summary of everything about to run, a real progress bar ("Frequency i of N"), and a live log console showing the sweep's own output as it happens. Click "Start Sweep" to begin, and "Stop Sweep" to end it early — a confirmation dialog explains what happens: the sweep finishes measuring whatever frequency it is currently on, then stops safely, so it never interrupts the camera or signal generator mid-measurement. Whatever frequencies were already measured are still saved and shown on the Results page. Closing the window during a running sweep asks the same question.
 
 **Results** — the same results grid `run_experiment.py`'s terminal viewer saves to disk, embedded in the window, plus a single-image view with Previous/Next buttons and arrow-key navigation. "Open output folder" jumps straight to your saved images, and "Run another sweep" returns to Setup with your previous settings still filled in.
-
-**One real limitation, on purpose**: there is no way to cancel a sweep once it starts, in either version. Interrupting the camera or signal generator mid-measurement can leave the hardware in a bad state, so the Sweep page's Start button and the entire navigation rail lock for the duration of the sweep, and the window refuses to close until it finishes — the same trade-off `run_experiment.py`'s terminal version already makes by not listening for a "cancel" keypress mid-sweep.
 
 It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, camera choice, or sweep parameter — and the entire sweep itself — comes straight from `run_experiment.py` and `complete_pipeline*.py`, so the two entry points can never give you a different result for the same settings.
 
@@ -485,6 +491,11 @@ Prefer clicking over typing in a terminal? `monitor_gui.py` is a PyQt6 dashboard
 ```
 python monitor_gui.py
 ```
+
+<p align="center">
+  <img src="screenshots/monitor_gui_setup.png" width="49%" alt="monitor_gui.py Setup page">
+  <img src="screenshots/monitor_gui_live_monitor.png" width="49%" alt="monitor_gui.py Live Monitor page showing Live Feed and Frame Subtraction">
+</p>
 
 **Setup page** — the same three questions as `monitor.py` (camera + index, exposure/gain/gain_factor, graph type), collected as radio buttons and spin boxes instead of typed answers, with a live-updating summary. Click "Start Monitor" to switch to the Live Monitor page.
 

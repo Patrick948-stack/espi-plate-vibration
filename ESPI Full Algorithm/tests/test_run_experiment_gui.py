@@ -41,6 +41,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import cv2
 import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
@@ -49,6 +50,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 import camera_control_inclusive as cci
 import run_experiment
+import run_experiment_gui as reg
 from run_experiment_gui import (
     CameraPreviewWorker,
     EmittingStream,
@@ -443,7 +445,7 @@ class TestTotalSweepSteps:
 
 class TestSweepWorker:
     def test_basler_format_advances_progress(self, qtbot, monkeypatch):
-        def fake_run_pipeline(camera_choice, mode_choice, params):
+        def fake_run_pipeline(camera_choice, mode_choice, params, stop_check=None):
             print("\n--- Sweeping frequency: 100.0 Hz ---")
             print("\n--- Sweeping frequency: 200.0 Hz ---")
             return {100.0: np.zeros((5, 5)), 200.0: np.zeros((5, 5))}
@@ -461,7 +463,7 @@ class TestSweepWorker:
         assert progress_calls == [(1, 2, 100.0), (2, 2, 200.0)]
 
     def test_indexed_format_advances_progress(self, qtbot, monkeypatch):
-        def fake_run_pipeline(camera_choice, mode_choice, params):
+        def fake_run_pipeline(camera_choice, mode_choice, params, stop_check=None):
             print("[1/2]  100.0 Hz  some detail")
             print("[2/2]  200.0 Hz  some detail")
             return {100.0: np.zeros((5, 5)), 200.0: np.zeros((5, 5))}
@@ -479,7 +481,7 @@ class TestSweepWorker:
         assert progress_calls == [(1, 2, 100.0), (2, 2, 200.0)]
 
     def test_unrelated_print_lines_are_ignored(self, qtbot, monkeypatch):
-        def fake_run_pipeline(camera_choice, mode_choice, params):
+        def fake_run_pipeline(camera_choice, mode_choice, params, stop_check=None):
             print("Connecting to signal generator...")
             print("Signal generator identified: SDG,SDG1032X,MOCK,1.0")
             return {}
@@ -500,7 +502,7 @@ class TestSweepWorker:
         expected = {100.0: np.zeros((5, 5))}
         monkeypatch.setattr(
             run_experiment, "run_pipeline",
-            lambda camera_choice, mode_choice, params: expected,
+            lambda camera_choice, mode_choice, params, stop_check=None: expected,
         )
 
         stream = EmittingStream()
@@ -514,7 +516,7 @@ class TestSweepWorker:
     def test_run_pipeline_returning_none_carries_none(self, qtbot, monkeypatch):
         monkeypatch.setattr(
             run_experiment, "run_pipeline",
-            lambda camera_choice, mode_choice, params: None,
+            lambda camera_choice, mode_choice, params, stop_check=None: None,
         )
 
         stream = EmittingStream()
@@ -525,8 +527,38 @@ class TestSweepWorker:
 
         assert blocker.args[0] is None
 
+    def test_stop_flips_the_flag_stop_check_reads(self, qtbot):
+        stream = EmittingStream()
+        worker = SweepWorker("1", "1", _sweep_params(), stream)
+        assert worker._is_stop_requested() is False
+        worker.stop()
+        assert worker._is_stop_requested() is True
+
+    def test_stop_check_reaches_run_pipeline(self, qtbot, monkeypatch):
+        received = {}
+
+        def fake_run_pipeline(camera_choice, mode_choice, params, stop_check=None):
+            received["stop_check"] = stop_check
+            return {}
+
+        monkeypatch.setattr(run_experiment, "run_pipeline", fake_run_pipeline)
+
+        stream = EmittingStream()
+        worker = SweepWorker("1", "1", _sweep_params(), stream)
+        with qtbot.waitSignal(worker.finished_sweep, timeout=2000):
+            worker.start()
+
+        # "is worker._is_stop_requested" would be a false negative here:
+        # accessing a bound method twice yields two distinct-but-equal
+        # objects, not the same one. Checking the callable's live behavior
+        # instead — it must reflect this exact worker's own flag — is both
+        # correct and more meaningful than an identity check would be.
+        assert received["stop_check"]() is False
+        worker._stop_requested = True
+        assert received["stop_check"]() is True
+
     def test_unexpected_exception_emits_error_and_still_finishes(self, qtbot, monkeypatch):
-        def _boom(camera_choice, mode_choice, params):
+        def _boom(camera_choice, mode_choice, params, stop_check=None):
             raise RuntimeError("signal generator disconnected")
 
         monkeypatch.setattr(run_experiment, "run_pipeline", _boom)
@@ -542,6 +574,63 @@ class TestSweepWorker:
         assert "signal generator disconnected" in error_blocker.args[0]
         assert finished_blocker.args[0] is None
 
+    def test_cv2_windows_are_suppressed_during_the_sweep(self, qtbot, monkeypatch):
+        # Regression test: complete_pipeline_inclusive.py (and the Basler
+        # and Allied Vision pipelines) call cv2.imshow()/cv2.waitKey()
+        # unconditionally during every frequency's settling period, which
+        # crashes with "Unknown C++ exception from OpenCV code" when
+        # called from a background thread (SweepWorker's thread) instead
+        # of the main thread, especially on macOS. Simulates that exact
+        # call pattern via a fake run_pipeline() and asserts it no longer
+        # raises, and that cv2.imshow/cv2.waitKey are their real selves
+        # again once the sweep finishes.
+        original_imshow = cv2.imshow
+        original_waitkey = cv2.waitKey
+        seen_calls = []
+
+        def fake_run_pipeline(camera_choice, mode_choice, params, stop_check=None):
+            cv2.imshow("ESPI Sweep — Live Feed", np.zeros((5, 5), dtype=np.uint8))
+            seen_calls.append(cv2.waitKey(1))
+            return {}
+
+        monkeypatch.setattr(run_experiment, "run_pipeline", fake_run_pipeline)
+
+        stream = EmittingStream()
+        worker = SweepWorker("2", "1", _sweep_params(), stream)
+        error_blocker = qtbot.waitSignal(worker.error, timeout=2000, raising=False)
+        finished_blocker = qtbot.waitSignal(worker.finished_sweep, timeout=2000)
+        worker.start()
+        finished_blocker.wait()
+
+        assert not error_blocker.signal_triggered  # fake pipeline must not have raised
+        assert seen_calls == [-1]  # the stubbed cv2.waitKey's own sentinel return value
+        assert cv2.imshow is original_imshow
+        assert cv2.waitKey is original_waitkey
+
+
+class TestSuppressCv2Windows:
+    def test_imshow_and_waitkey_are_stubbed_inside_the_context(self, qtbot):
+        with reg._suppress_cv2_windows():
+            assert cv2.imshow("title", np.zeros((5, 5))) is None
+            assert cv2.waitKey(1) == -1
+
+    def test_originals_are_restored_after_the_context(self, qtbot):
+        original_imshow = cv2.imshow
+        original_waitkey = cv2.waitKey
+        with reg._suppress_cv2_windows():
+            pass
+        assert cv2.imshow is original_imshow
+        assert cv2.waitKey is original_waitkey
+
+    def test_originals_are_restored_even_if_the_body_raises(self, qtbot):
+        original_imshow = cv2.imshow
+        original_waitkey = cv2.waitKey
+        with pytest.raises(RuntimeError):
+            with reg._suppress_cv2_windows():
+                raise RuntimeError("boom")
+        assert cv2.imshow is original_imshow
+        assert cv2.waitKey is original_waitkey
+
 
 class TestSweepPage:
     def test_begin_sets_progress_bar_and_label(self, qtbot):
@@ -556,7 +645,7 @@ class TestSweepPage:
     def test_start_sweep_disables_button_and_emits_started(self, qtbot, monkeypatch):
         monkeypatch.setattr(
             run_experiment, "run_pipeline",
-            lambda camera_choice, mode_choice, params: {},
+            lambda camera_choice, mode_choice, params, stop_check=None: {},
         )
         page = SweepPage()
         qtbot.addWidget(page)
@@ -567,11 +656,115 @@ class TestSweepPage:
 
         assert page.start_button.isEnabled() is False
 
+    def test_stop_button_hidden_until_a_sweep_starts(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.show()
+        qtbot.waitExposed(page)
+        page.begin("1", "1", _sweep_params())
+        assert page.stop_button.isVisible() is False
+
+    def test_start_sweep_shows_the_stop_button(self, qtbot, monkeypatch):
+        monkeypatch.setattr(
+            run_experiment, "run_pipeline",
+            lambda camera_choice, mode_choice, params, stop_check=None: {},
+        )
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.show()
+        qtbot.waitExposed(page)
+        page.begin("1", "1", _sweep_params())
+
+        # _start_sweep() shows the button and only then starts the worker
+        # thread, so this is deterministic regardless of how fast the
+        # (instant, faked) pipeline finishes afterward.
+        page.start_button.click()
+        assert page.stop_button.isVisible() is True
+
+        with qtbot.waitSignal(page.sweep_finished, timeout=2000):
+            pass
+        assert page.stop_button.isVisible() is False
+
+    def test_confirm_stop_calls_worker_stop_when_user_confirms(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+        fake_worker = MagicMock()
+        page._worker = fake_worker
+
+        with patch(
+            "run_experiment_gui.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            page._confirm_stop()
+
+        fake_worker.stop.assert_called_once()
+        assert page._user_stopped is True
+        assert page.stop_button.isEnabled() is False
+
+    def test_confirm_stop_does_nothing_when_user_declines(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+        fake_worker = MagicMock()
+        page._worker = fake_worker
+
+        with patch(
+            "run_experiment_gui.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            page._confirm_stop()
+
+        fake_worker.stop.assert_not_called()
+        assert page._user_stopped is False
+        assert page.stop_button.isEnabled() is True
+
+    def test_stop_and_wait_stops_and_waits_for_the_worker(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        fake_worker = MagicMock()
+        page._worker = fake_worker
+
+        page.stop_and_wait()
+
+        fake_worker.stop.assert_called_once()
+        fake_worker.wait.assert_called_once()
+
+    def test_on_finished_phrasing_distinguishes_stopped_from_complete(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+
+        page._user_stopped = True
+        page._on_finished({100.0: np.zeros((5, 5))})
+        assert "stopped" in page.freq_label.text().lower()
+
+    def test_on_finished_phrasing_for_natural_completion(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+
+        page._on_finished({100.0: np.zeros((5, 5))})
+        assert "complete" in page.freq_label.text().lower()
+
+    def test_begin_resets_user_stopped_and_hides_stop_button(self, qtbot):
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.show()
+        qtbot.waitExposed(page)
+        page._user_stopped = True
+        page.stop_button.setVisible(True)
+
+        page.begin("1", "1", _sweep_params())
+
+        assert page._user_stopped is False
+        assert page.stop_button.isVisible() is False
+
     def test_sweep_finished_bubbles_results_and_output_dir(self, qtbot, monkeypatch):
         expected_results = {100.0: np.zeros((5, 5))}
         monkeypatch.setattr(
             run_experiment, "run_pipeline",
-            lambda camera_choice, mode_choice, params: expected_results,
+            lambda camera_choice, mode_choice, params, stop_check=None: expected_results,
         )
         page = SweepPage()
         qtbot.addWidget(page)
@@ -711,7 +904,7 @@ class TestMainWindow:
         fake_results = {100.0: np.zeros((5, 5))}
         monkeypatch.setattr(
             run_experiment, "run_pipeline",
-            lambda camera_choice, mode_choice, params: fake_results,
+            lambda camera_choice, mode_choice, params, stop_check=None: fake_results,
         )
 
         window = MainWindow()
@@ -752,32 +945,56 @@ class TestMainWindow:
         window.closeEvent(event)
         event.accept.assert_called_once()
 
-    def test_close_event_refuses_to_close_during_a_running_sweep(self, qtbot):
-        # A running sweep can't be safely stopped, so closing must be
-        # refused outright — no confirmation dialog offering a choice
-        # that can't actually be honored. A fake worker that merely
-        # reports isRunning() == True is enough here; the actual stop
-        # mechanics are SweepWorker's own concern, already covered by
-        # TestSweepWorker.
+    def test_close_event_declines_to_close_during_a_running_sweep(self, qtbot):
+        # A fake worker that merely reports isRunning() == True is enough
+        # here; the actual stop mechanics are SweepWorker's own concern,
+        # already covered by TestSweepWorker.
         window = MainWindow()
         qtbot.addWidget(window)
-        window.sweep_page._worker = MagicMock(isRunning=lambda: True)
+        fake_worker = MagicMock(isRunning=lambda: True)
+        window.sweep_page._worker = fake_worker
 
         event = MagicMock()
-        with patch("run_experiment_gui.QMessageBox.warning") as mock_warning:
+        with patch(
+            "run_experiment_gui.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
             window.closeEvent(event)
 
-        mock_warning.assert_called_once()
         event.ignore.assert_called_once()
         event.accept.assert_not_called()
+        fake_worker.stop.assert_not_called()
 
         # qtbot.addWidget() auto-closes this window at teardown, which
-        # would call closeEvent() again with QMessageBox.warning no
-        # longer patched — a real, unpatched QMessageBox.warning() blocks
+        # would call closeEvent() again with QMessageBox.question no
+        # longer patched — a real, unpatched QMessageBox.question() blocks
         # forever waiting for a click that can never come in offscreen
         # mode. Clearing the fake "still running" state here avoids that
         # hang, the same way other tests in this class end by calling
         # stop_and_wait() to leave things clean for teardown.
+        window.sweep_page._worker = None
+
+    def test_close_event_stops_sweep_when_user_confirms(self, qtbot):
+        window = MainWindow()
+        qtbot.addWidget(window)
+        fake_worker = MagicMock(isRunning=lambda: True)
+        window.sweep_page._worker = fake_worker
+
+        event = MagicMock()
+        with patch(
+            "run_experiment_gui.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            window.closeEvent(event)
+
+        fake_worker.stop.assert_called_once()
+        fake_worker.wait.assert_called_once()
+        event.accept.assert_called_once()
+
+        # Same teardown-hang concern as above: this fake worker still
+        # reports isRunning() == True forever (stop_and_wait() doesn't
+        # clear sweep_page._worker itself — that only happens via a real
+        # SweepWorker's finished_sweep signal), so clear it explicitly.
         window.sweep_page._worker = None
 
     def test_close_event_stops_preview_when_user_confirms(self, qtbot, monkeypatch, gray_100x100):

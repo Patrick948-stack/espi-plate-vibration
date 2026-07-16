@@ -48,11 +48,12 @@ import cv2
 import numpy as np
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QDoubleSpinBox,
+    QGraphicsDropShadowEffect,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -209,9 +210,11 @@ class SetupPage(QWidget):
 
         # ---- Live summary + start button ----
         self._summary_label = QLabel()
+        self._summary_label.setObjectName("SummaryLabel")
         layout.addWidget(self._summary_label)
 
         self.start_button = QPushButton("Start Monitor")
+        self.start_button.setObjectName("PrimaryButton")
         layout.addWidget(self.start_button)
         layout.addStretch()
         self.setLayout(layout)
@@ -397,20 +400,26 @@ class LiveMonitorPage(QWidget):
 
         feeds_layout = QHBoxLayout()
         self.live_feed_label = QLabel("Live Feed")
+        self.live_feed_label.setObjectName("FeedFrame")
         self.live_feed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.live_feed_label.setMinimumSize(320, 240)
-        self.live_feed_label.setStyleSheet("border: 1px solid palette(mid);")
         self.diff_label = QLabel("Frame Subtraction")
+        self.diff_label.setObjectName("FeedFrame")
         self.diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.diff_label.setMinimumSize(320, 240)
-        self.diff_label.setStyleSheet("border: 1px solid palette(mid);")
         feeds_layout.addWidget(self.live_feed_label)
         feeds_layout.addWidget(self.diff_label)
         layout.addLayout(feeds_layout)
 
+        self._graph_card = QWidget()
+        self._graph_card.setObjectName("CanvasCard")
+        graph_card_layout = QVBoxLayout()
+        graph_card_layout.setContentsMargins(12, 12, 12, 12)
         self._graph_canvas = FigureCanvasQTAgg(Figure(figsize=(6, 3)))
-        self._graph_canvas.setVisible(False)
-        layout.addWidget(self._graph_canvas)
+        graph_card_layout.addWidget(self._graph_canvas)
+        self._graph_card.setLayout(graph_card_layout)
+        self._graph_card.setVisible(False)
+        layout.addWidget(self._graph_card)
 
         self.stop_button = QPushButton("Stop Monitor")
         self.stop_button.setEnabled(False)
@@ -426,10 +435,10 @@ class LiveMonitorPage(QWidget):
             projection = "3d" if graph_type == "3d" else None
             ax = self._graph_canvas.figure.add_subplot(111, projection=projection)
             self._live_graph = live_graphs.create_live_graph(graph_type, ax=ax)
-            self._graph_canvas.setVisible(True)
+            self._graph_card.setVisible(True)
         else:
             self._live_graph = None
-            self._graph_canvas.setVisible(False)
+            self._graph_card.setVisible(False)
 
         self._worker = MonitorWorker(camera_choice, camera_index, settings)
         self._worker.frame_ready.connect(self._on_frame)
@@ -493,6 +502,7 @@ class MainWindow(QMainWindow):
         self.resize(900, 700)
 
         self._nav = QListWidget()
+        self._nav.setObjectName("NavRail")
         self._nav.addItems(["Setup", "Live Monitor"])
         self._nav.setFixedWidth(160)
         self._nav.setCurrentRow(0)
@@ -511,10 +521,20 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         central_layout = QHBoxLayout()
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
         central_layout.addWidget(self._nav)
         central_layout.addWidget(self._stack)
         central.setLayout(central_layout)
         self.setCentralWidget(central)
+
+        # Elevation: every card-style surface gets a real drop shadow (see
+        # _apply_card_shadow()'s docstring in run_experiment_gui.py for why
+        # this can't just live in the QSS string below).
+        for card in self.findChildren(QGroupBox):
+            _apply_card_shadow(card)
+        for card in self.findChildren(QWidget, "CanvasCard"):
+            _apply_card_shadow(card)
 
         self.statusBar().showMessage("Idle")
 
@@ -561,8 +581,158 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+# ==============================================================================
+# STYLESHEET
+# ==============================================================================
+# The same strictly monochrome dark theme as run_experiment_gui.py (no color
+# accents — off-blacks and grays only), for visual consistency between the
+# two dashboards in this project. See that file's _STYLESHEET for the full
+# rationale behind each choice.
+
+_BASE_BG = "#1e1e1e"
+_SURFACE_BG = "#292929"
+_BORDER = "#383838"
+_TEXT_SECONDARY = "#8a8a8a"
+_TEXT_PRIMARY = "#e0e0e0"
+
+_STYLESHEET = f"""
+QMainWindow, QWidget {{
+    background-color: {_BASE_BG};
+    color: {_TEXT_PRIMARY};
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+}}
+
+QListWidget#NavRail {{
+    background-color: #171717;
+    border: none;
+    border-right: 1px solid {_BORDER};
+    padding: 12px 0px;
+    outline: 0;
+}}
+QListWidget#NavRail::item {{
+    color: {_TEXT_SECONDARY};
+    padding: 14px 22px;
+    border-left: 3px solid transparent;
+}}
+QListWidget#NavRail::item:selected {{
+    background-color: {_SURFACE_BG};
+    color: {_TEXT_PRIMARY};
+    border-left: 3px solid {_TEXT_PRIMARY};
+}}
+QListWidget#NavRail::item:disabled {{
+    color: #4a4a4a;
+}}
+
+QGroupBox {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 12px;
+    margin-top: 18px;
+    padding: 20px;
+    font-weight: 600;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 14px;
+    padding: 0 6px;
+    color: {_TEXT_SECONDARY};
+}}
+
+QLabel {{
+    color: {_TEXT_PRIMARY};
+    background-color: transparent;
+}}
+QLabel#SummaryLabel {{
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    background-color: #232323;
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 12px;
+}}
+QLabel#FeedFrame {{
+    background-color: #141414;
+    border: 1px solid {_BORDER};
+    border-radius: 12px;
+    color: {_TEXT_SECONDARY};
+    font-size: 13px;
+}}
+
+QPushButton {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 9px 18px;
+    color: {_TEXT_PRIMARY};
+}}
+QPushButton:hover {{ background-color: #333333; border-color: #4a4a4a; }}
+QPushButton:pressed {{ background-color: #202020; }}
+QPushButton:disabled {{ color: #5a5a5a; background-color: #232323; border-color: #2e2e2e; }}
+
+QPushButton#PrimaryButton {{
+    background-color: {_TEXT_PRIMARY};
+    border: 1px solid {_TEXT_PRIMARY};
+    color: #181818;
+    font-weight: 600;
+}}
+QPushButton#PrimaryButton:hover {{ background-color: #cfcfcf; border-color: #cfcfcf; }}
+QPushButton#PrimaryButton:pressed {{ background-color: #b0b0b0; border-color: #b0b0b0; }}
+QPushButton#PrimaryButton:disabled {{
+    background-color: #4a4a4a; border-color: #4a4a4a; color: #7a7a7a;
+}}
+
+QDoubleSpinBox, QSpinBox, QLineEdit {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: {_TEXT_PRIMARY};
+    selection-background-color: #4a4a4a;
+    selection-color: {_TEXT_PRIMARY};
+}}
+QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{
+    border: 1px solid {_TEXT_PRIMARY};
+}}
+
+QRadioButton {{
+    spacing: 8px;
+    padding: 4px 0px;
+    background-color: transparent;
+    outline: none;
+}}
+
+QWidget#CanvasCard {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 12px;
+}}
+
+QStatusBar {{
+    background-color: {_BASE_BG};
+    border-top: 1px solid {_BORDER};
+    color: {_TEXT_SECONDARY};
+}}
+"""
+
+
+def _apply_card_shadow(widget, blur_radius=28, y_offset=6, alpha=140):
+    """
+    QSS has no box-shadow — this is the actual mechanism Qt offers for the
+    same "elevated card floating above the background" effect, applied
+    directly to a widget (a QGroupBox, or the live monitor page's
+    CanvasCard) rather than expressed in the stylesheet string above.
+    """
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur_radius)
+    effect.setOffset(0, y_offset)
+    effect.setColor(QColor(0, 0, 0, alpha))
+    widget.setGraphicsEffect(effect)
+
+
 def main():
     app = QApplication(sys.argv)
+    app.setStyleSheet(_STYLESHEET)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

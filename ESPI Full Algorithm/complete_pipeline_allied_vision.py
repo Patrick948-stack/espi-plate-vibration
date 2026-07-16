@@ -301,6 +301,7 @@ def frequency_sweep_allied_vision(
     channel:         int   = 1,
     skip_live_feed:  bool  = False,
     gain_factor:     float = 1,
+    stop_check=None,
 ) -> dict | None:
     """
     Run a full ESPI pair-subtraction sweep using an Allied Vision camera.
@@ -342,9 +343,17 @@ def frequency_sweep_allied_vision(
                         instead of wrapping around). Baked into the saved
                         "espi_av_raw" file itself, the same as every other
                         camera in this project. Defaults to 1 (no amplification).
+        stop_check    : optional callable, checked once at the start of every
+                        frequency before any signal generator or camera command
+                        for that frequency is issued. If it returns True, the
+                        sweep stops there — clean-up still runs normally, and
+                        whatever frequencies were already measured are still
+                        returned. Left as None (the default), the sweep always
+                        runs every frequency to completion.
 
     Returns:
-        dict of { frequency_hz: averaged_image } if the sweep ran.
+        dict of { frequency_hz: averaged_image } if the sweep ran. May contain
+        fewer entries than requested if stop_check ended the sweep early.
         None if a device could not be connected or a parameter was invalid.
     """
     if not _validate_sweep_params(start_freq, end_freq, step,
@@ -405,6 +414,13 @@ def frequency_sweep_allied_vision(
             elapsed = time.time() - sweep_start
             print(f"[{idx + 1}/{len(frequencies)}]  {freq:.1f} Hz  "
                   f"(elapsed: {elapsed:.0f}s)")
+
+            # Checked before any hardware command for this frequency is
+            # issued, so stopping here never interrupts an in-progress
+            # settle or frame grab.
+            if stop_check is not None and stop_check():
+                print("  [STOPPED] Sweep stopped by user request.")
+                break
 
             # Move the signal generator to this frequency.
             result = set_frequency(instr, freq, channel=channel,
@@ -499,6 +515,7 @@ def reference_frequency_sweep_allied_vision(
     channel:         int   = 1,
     skip_live_feed:  bool  = False,
     gain_factor:     float = 1,
+    stop_check=None,
 ) -> dict | None:
     """
     Run an ESPI reference-subtraction sweep using an Allied Vision camera.
@@ -510,10 +527,11 @@ def reference_frequency_sweep_allied_vision(
     consecutive frames look almost identical and their difference is mostly noise.
     Comparing against a truly stationary baseline gives a cleaner result.
 
-    Args: same as frequency_sweep_allied_vision() above.
+    Args: same as frequency_sweep_allied_vision() above, including stop_check.
 
     Returns:
-        dict of { frequency_hz: averaged_image } if the sweep ran.
+        dict of { frequency_hz: averaged_image } if the sweep ran. May contain
+        fewer entries than requested if stop_check ended the sweep early.
         None if a device could not be connected or a parameter was invalid.
     """
     if not _validate_sweep_params(start_freq, end_freq, step,
@@ -585,6 +603,13 @@ def reference_frequency_sweep_allied_vision(
             elapsed = time.time() - sweep_start
             print(f"[{idx + 1}/{len(frequencies)}]  {freq:.1f} Hz  "
                   f"(elapsed: {elapsed:.0f}s)")
+
+            # Checked before any hardware command for this frequency is
+            # issued, so stopping here never interrupts an in-progress
+            # settle or frame grab.
+            if stop_check is not None and stop_check():
+                print("  [STOPPED] Sweep stopped by user request.")
+                break
 
             result = set_frequency(instr, freq, channel=channel,
                                    waveform=active_waveform)

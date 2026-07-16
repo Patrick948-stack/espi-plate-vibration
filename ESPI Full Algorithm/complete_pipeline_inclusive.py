@@ -110,6 +110,7 @@ def frequency_sweep_inclusive(
     channel        = 1,
     skip_live_feed = False,
     gain_factor    = 1,
+    stop_check     = None,
 ):
     """
     Run a full ESPI frequency sweep using any OpenCV-compatible camera.
@@ -176,10 +177,19 @@ def frequency_sweep_inclusive(
                                 Baked into the saved "espi_raw" file itself, the
                                 same way it is for every other camera in this
                                 project. Defaults to 1 (no amplification).
+        stop_check    (callable, optional) : Called once at the start of every
+                                frequency, before any signal generator or camera
+                                command for that frequency is issued. If it
+                                returns True, the sweep stops there — clean-up
+                                still runs normally, and whatever frequencies
+                                were already measured are still returned. Left
+                                as None (the default), the sweep always runs
+                                every frequency to completion.
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } for every frequency
-               that produced a valid result.  May be empty if nothing worked.
+               that produced a valid result.  May be empty if nothing worked,
+               or missing later frequencies if stop_check ended the sweep early.
         None : if the signal generator or camera could not be connected, or if
                the initial signal generator configuration failed.
     """
@@ -390,6 +400,13 @@ def frequency_sweep_inclusive(
             print(f"[{idx + 1}/{len(frequencies)}]  {freq:.1f} Hz  "
                   f"(elapsed: {elapsed:.0f}s)")
 
+            # Checked before any hardware command for this frequency is
+            # issued, so stopping here never interrupts an in-progress
+            # settle or frame grab.
+            if stop_check is not None and stop_check():
+                print("  [STOPPED] Sweep stopped by user request.")
+                break
+
             # ------------------------------------------------------------------
             # 8a. Tell the signal generator to switch to this frequency.
             #     We pass the waveform type so the generator uses the right
@@ -574,6 +591,7 @@ def reference_frequency_sweep_inclusive(
     channel        = 1,
     skip_live_feed = False,
     gain_factor    = 1,
+    stop_check     = None,
 ):
     """
     Reference-based ESPI frequency sweep using any OpenCV-compatible camera.
@@ -626,10 +644,14 @@ def reference_frequency_sweep_inclusive(
                                 Baked into the saved "espi_raw" file itself, the
                                 same as every other pipeline in this project.
                                 Defaults to 1 (no amplification).
+        stop_check    (callable, optional) : See frequency_sweep_inclusive()'s
+                                docstring — same safe, between-frequencies stop
+                                mechanism.
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } for each successful
-               frequency.  May be empty if nothing worked.
+               frequency.  May be empty if nothing worked, or missing later
+               frequencies if stop_check ended the sweep early.
         None : if a device could not be connected or configured.
     """
 
@@ -794,6 +816,13 @@ def reference_frequency_sweep_inclusive(
             elapsed = time.time() - sweep_start
             print(f"[{idx + 1}/{len(frequencies)}]  {freq:.1f} Hz  "
                   f"(elapsed: {elapsed:.0f}s)")
+
+            # Checked before any hardware command for this frequency is
+            # issued, so stopping here never interrupts an in-progress
+            # settle or frame grab.
+            if stop_check is not None and stop_check():
+                print("  [STOPPED] Sweep stopped by user request.")
+                break
 
             # 9a. Update signal generator frequency.
             result = set_frequency(instr, freq, channel=channel, waveform=active_waveform)

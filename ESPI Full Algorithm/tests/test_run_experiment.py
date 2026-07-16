@@ -205,6 +205,69 @@ class TestRunPipelineExposureConversion:
 
 
 # ===========================================================================
+# run_pipeline() — stop_check propagation
+# ===========================================================================
+# run_experiment_gui.py's SweepWorker passes its own stop_check through
+# run_pipeline() so the Stop Sweep button can end a running sweep safely —
+# these tests confirm it actually reaches whichever sweep function is
+# chosen, for all three cameras and both subtraction modes.
+
+class TestRunPipelineStopCheck:
+
+    def setup_method(self):
+        self._basler_mod = _mock_pipeline_module("complete_pipeline")
+        self._cv_mod     = _mock_pipeline_module("complete_pipeline_inclusive")
+        self._av_mod     = _mock_pipeline_module("complete_pipeline_allied_vision")
+
+    def teardown_method(self):
+        for name in ("complete_pipeline",
+                     "complete_pipeline_inclusive",
+                     "complete_pipeline_allied_vision"):
+            sys.modules.pop(name, None)
+
+    def test_default_is_none(self):
+        run_experiment.run_pipeline("1", "1", _default_params())
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["stop_check"] is None
+
+    def test_basler_pair_mode_forwards_stop_check(self):
+        marker = lambda: False
+        run_experiment.run_pipeline("1", "1", _default_params(), stop_check=marker)
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["stop_check"] is marker
+
+    def test_basler_reference_mode_forwards_stop_check(self):
+        marker = lambda: False
+        run_experiment.run_pipeline("1", "2", _default_params(), stop_check=marker)
+        kwargs = self._basler_mod.reference_frequency_sweep.call_args[1]
+        assert kwargs["stop_check"] is marker
+
+    def test_opencv_pair_mode_forwards_stop_check(self):
+        marker = lambda: False
+        run_experiment.run_pipeline("2", "1", _default_params(), stop_check=marker)
+        kwargs = self._cv_mod.frequency_sweep_inclusive.call_args[1]
+        assert kwargs["stop_check"] is marker
+
+    def test_opencv_reference_mode_forwards_stop_check(self):
+        marker = lambda: False
+        run_experiment.run_pipeline("2", "2", _default_params(), stop_check=marker)
+        kwargs = self._cv_mod.reference_frequency_sweep_inclusive.call_args[1]
+        assert kwargs["stop_check"] is marker
+
+    def test_allied_pair_mode_forwards_stop_check(self):
+        marker = lambda: False
+        run_experiment.run_pipeline("3", "1", _default_params(), stop_check=marker)
+        kwargs = self._av_mod.frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["stop_check"] is marker
+
+    def test_allied_reference_mode_forwards_stop_check(self):
+        marker = lambda: False
+        run_experiment.run_pipeline("3", "2", _default_params(), stop_check=marker)
+        kwargs = self._av_mod.reference_frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["stop_check"] is marker
+
+
+# ===========================================================================
 # run_pipeline() — gain_factor propagation
 # ===========================================================================
 

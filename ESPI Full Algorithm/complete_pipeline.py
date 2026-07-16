@@ -76,7 +76,7 @@ def _settle_with_live_feed(camera, seconds, freq):
 
 
 def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
-                     gain_factor=1):
+                     gain_factor=1, stop_check=None):
     """
     Run a full ESPI frequency sweep and save one averaged difference image per frequency.
 
@@ -119,10 +119,20 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
                               plain multiplication of a uint8 array would. Defaults
                               to 1 (no amplification) so the saved data matches the
                               raw camera difference unless you explicitly ask for more.
+        stop_check  (callable, optional) : Called once at the start of every
+                              frequency, before any signal generator or camera
+                              command for that frequency is issued. If it returns
+                              True, the sweep stops there — the signal generator
+                              and camera are still disconnected normally, and
+                              whatever frequencies were already measured are still
+                              returned. Left as None (the default), the sweep
+                              always runs every frequency to completion.
 
     Returns:
         dict : Maps each frequency (float, Hz) to its averaged difference image
                (numpy array, uint8).  Example: { 100.0: array(...), 200.0: array(...) }
+               May contain fewer entries than requested if stop_check ended the
+               sweep early.
         None : If the signal generator or camera could not be connected.
     """
 
@@ -220,6 +230,13 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
     for freq in frequencies:
 
         print(f"\n--- Sweeping frequency: {freq} Hz ---")
+
+        # Checked before any hardware command for this frequency is issued, so
+        # stopping here never interrupts an in-progress settle or frame grab —
+        # see stop_check's docstring above for why this is the safe place to check.
+        if stop_check is not None and stop_check():
+            print("  [STOPPED] Sweep stopped by user request.")
+            break
 
         # ----------------------------------------------------------------------
         # 5a. Update the signal generator to the current frequency.
@@ -322,7 +339,7 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
 
 
 def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
-                               gain_factor=1):
+                               gain_factor=1, stop_check=None):
     """
     Reference-based ESPI frequency sweep.
 
@@ -366,9 +383,13 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
                               docstring for why cv2.convertScaleAbs is used
                               instead of plain multiplication. Defaults to 1
                               (no amplification).
+        stop_check  (callable, optional) : See frequency_sweep()'s docstring —
+                              same safe, between-frequencies stop mechanism.
 
     Returns:
-        dict : { frequency_hz: averaged_difference_image } or None on error.
+        dict : { frequency_hz: averaged_difference_image } or None on error. May
+               contain fewer entries than requested if stop_check ended the sweep
+               early.
     """
 
     # ==========================================================================
@@ -452,6 +473,12 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
     for freq in frequencies:
 
         print(f"\n--- Sweeping frequency: {freq} Hz ---")
+
+        # Checked before any hardware command for this frequency is issued —
+        # see frequency_sweep()'s stop_check docstring for why this is safe.
+        if stop_check is not None and stop_check():
+            print("  [STOPPED] Sweep stopped by user request.")
+            break
 
         set_frequency(instr, freq, channel=1, waveform=sg_settings["waveform"] or "sine")
 

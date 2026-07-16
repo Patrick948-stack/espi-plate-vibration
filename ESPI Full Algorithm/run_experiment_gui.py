@@ -63,12 +63,13 @@ import cv2
 import numpy as np
 
 from PyQt6.QtCore import QObject, Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QImage, QKeySequence, QPixmap, QShortcut
+from PyQt6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QDoubleSpinBox,
     QFileDialog,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -276,9 +277,6 @@ class SetupPage(QWidget):
         output_row = QHBoxLayout()
         self.output_dir_edit = QLineEdit("output")
         self.browse_button = QPushButton("Browse…")
-        self.browse_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-        )
         self.browse_button.clicked.connect(self._browse_output_dir)
         output_row.addWidget(self.output_dir_edit)
         output_row.addWidget(self.browse_button)
@@ -488,6 +486,44 @@ class PreviewPage(QWidget):
 # SWEEP WORKER + PAGE
 # ==============================================================================
 
+@contextlib.contextmanager
+def _suppress_cv2_windows():
+    """
+    complete_pipeline*.py's sweep loops call cv2.imshow()/cv2.waitKey()
+    unconditionally on every frequency step — once during each
+    frequency's settling period (a live "watch the plate settle" feed)
+    and again to show that frequency's just-computed result. This is
+    intentional, useful terminal-mode behavior and skip_live_feed does
+    NOT gate it (skip_live_feed only skips the earlier, one-time "aim the
+    camera" step) — so it is not a bug in complete_pipeline*.py, only a
+    genuine incompatibility with running the sweep on a background
+    thread here.
+
+    Calling HighGUI window functions off the main thread is unsafe —
+    on macOS in particular it reliably crashes with an opaque "Unknown
+    C++ exception from OpenCV code" instead of a clear error, which is
+    exactly what happens if SweepWorker runs a sweep without this. Since
+    the whole point of this dashboard is to embed everything and never
+    pop up a separate window, and since complete_pipeline*.py's tested
+    sweep logic is deliberately left untouched everywhere else in this
+    project, these two functions are stubbed out for the duration of the
+    sweep instead of being changed at the source — the same "compose,
+    don't modify" approach already used for progress via stdout
+    redirection below. cv2.waitKey's stub returns -1 (its own "no key
+    was pressed" sentinel) since nothing in the sweep loop checks that
+    return value for anything but a keypress that will now never come.
+    """
+    original_imshow = cv2.imshow
+    original_waitkey = cv2.waitKey
+    cv2.imshow = lambda *args, **kwargs: None
+    cv2.waitKey = lambda *args, **kwargs: -1
+    try:
+        yield
+    finally:
+        cv2.imshow = original_imshow
+        cv2.waitKey = original_waitkey
+
+
 class SweepWorker(QThread):
     """
     Runs run_pipeline() on a background thread with stdout redirected into
@@ -495,21 +531,24 @@ class SweepWorker(QThread):
     progress bar and fill the log console live — without run_pipeline() or
     any complete_pipeline*.py file needing to know a GUI exists.
 
-    KNOWN LIMITATION: there is no cancel button. run_pipeline()'s sweep
-    loop has no interruption checks of its own, and QThread.terminate() is
-    unsafe here — it could stop mid frame-grab or mid signal-generator
-    command and leave hardware connections open. A real Cancel button
-    would need a checked flag added inside complete_pipeline*.py's loops,
-    which is out of scope: it touches tested sweep logic this project
-    deliberately leaves alone (the same trade-off monitor_gui.py's
-    MonitorWorker avoided needing, since that loop already checks a stop
-    flag every frame the terminal version's cv2.waitKey('q') already did).
+    STOPPING: stop() sets a cooperative flag that run_pipeline() (via its
+    stop_check parameter) checks once per frequency, before any signal
+    generator or camera command for that frequency is issued — see
+    complete_pipeline.py's frequency_sweep() docstring for the full
+    explanation of why that specific point is safe. This is the same shape
+    as monitor_gui.py's MonitorWorker checking a stop flag every frame, just
+    checked once per frequency here instead of once per frame, since a
+    frequency step (settle + several frame grabs) can't safely be
+    interrupted partway through the way a single frame grab can.
+    QThread.terminate() is still never used — it could stop mid frame-grab
+    or mid signal-generator command and leave hardware connections open.
 
     CAVEAT: contextlib.redirect_stdout replaces the process-wide
     sys.stdout for as long as this runs, not just this thread's — safe
     here because nothing else in this single-purpose app prints
     concurrently while a sweep is running (the whole nav rail, including
     the Preview page's own camera thread, is locked out during a sweep).
+    The same is true of _suppress_cv2_windows()'s process-wide cv2 patch.
     """
 
     progress = pyqtSignal(int, int, float)  # (current_index, total_steps, freq_hz)
@@ -534,6 +573,18 @@ class SweepWorker(QThread):
         self._basler_index = 0
         self._total_steps = _total_sweep_steps(params)
         self._stream.text_written.connect(self._handle_line)
+        self._stop_requested = False
+
+    def stop(self):
+        """
+        Cooperative stop: just sets a flag. The sweep itself (via
+        stop_check below) decides when it is safe to actually notice it —
+        between frequencies, never mid-measurement.
+        """
+        self._stop_requested = True
+
+    def _is_stop_requested(self):
+        return self._stop_requested
 
     def _handle_line(self, line):
         match = self._INDEXED_RE.match(line)
@@ -548,9 +599,10 @@ class SweepWorker(QThread):
     def run(self):
         results = None
         try:
-            with contextlib.redirect_stdout(self._stream):
+            with _suppress_cv2_windows(), contextlib.redirect_stdout(self._stream):
                 results = run_experiment.run_pipeline(
-                    self._camera_choice, self._mode_choice, self._params
+                    self._camera_choice, self._mode_choice, self._params,
+                    stop_check=self._is_stop_requested,
                 )
         except Exception as e:
             self.error.emit(f"The experiment stopped unexpectedly: {e}")
@@ -577,6 +629,7 @@ class SweepPage(QWidget):
         self._camera_choice = None
         self._mode_choice = None
         self._params = None
+        self._user_stopped = False
 
         outer = QVBoxLayout()
 
@@ -610,10 +663,15 @@ class SweepPage(QWidget):
         self.start_button.clicked.connect(self._start_sweep)
         progress_layout.addWidget(self.start_button)
 
+        self.stop_button = QPushButton("Stop Sweep")
+        self.stop_button.clicked.connect(self._confirm_stop)
+        self.stop_button.setVisible(False)
+        progress_layout.addWidget(self.stop_button)
+
         warning = QLabel(
-            "The sweep cannot be safely cancelled once it starts — interrupting "
-            "hardware mid-measurement can leave it in a bad state. "
-            "Do not unplug any cables while it is running."
+            "Stopping finishes measuring the current frequency first, then "
+            "stops safely — it never interrupts hardware mid-measurement. "
+            "Do not unplug any cables while the sweep is running."
         )
         warning.setWordWrap(True)
         warning.setObjectName("WarningLabel")
@@ -630,12 +688,14 @@ class SweepPage(QWidget):
         self._camera_choice = camera_choice
         self._mode_choice = mode_choice
         self._params = params
+        self._user_stopped = False
 
         total = _total_sweep_steps(params)
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(0)
         self.freq_label.setText(f"Ready to start the sweep. (0 / {total} frequencies)")
         self.start_button.setEnabled(True)
+        self.stop_button.setVisible(False)
 
         self.summary_label.setText(
             f"Camera        :  {run_experiment.CAMERA_NAMES[camera_choice]}\n"
@@ -652,8 +712,16 @@ class SweepPage(QWidget):
     def is_running(self):
         return self._worker is not None and self._worker.isRunning()
 
+    def stop_and_wait(self):
+        """Used by MainWindow.closeEvent() once the user confirms stopping."""
+        if self._worker is not None:
+            self._worker.stop()
+            self._worker.wait()
+
     def _start_sweep(self):
         self.start_button.setEnabled(False)
+        self.stop_button.setVisible(True)
+        self.stop_button.setEnabled(True)
         self.sweep_started.emit()
 
         stream = EmittingStream()
@@ -665,6 +733,24 @@ class SweepPage(QWidget):
         self._worker.finished_sweep.connect(self._on_finished)
         self._worker.start()
 
+    def _confirm_stop(self):
+        reply = QMessageBox.question(
+            self,
+            "Stop sweep",
+            "Stop the sweep? It will finish measuring the current frequency, "
+            "then stop safely. Frequencies not yet measured will be skipped, "
+            "but everything collected so far will still be saved and shown.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._user_stopped = True
+        self.stop_button.setEnabled(False)
+        self.freq_label.setText(self.freq_label.text() + "  (stopping after this frequency…)")
+        if self._worker is not None:
+            self._worker.stop()
+
     def _on_progress(self, current, total, freq):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
@@ -675,7 +761,10 @@ class SweepPage(QWidget):
 
     def _on_finished(self, results):
         self._worker = None
-        if results:
+        self.stop_button.setVisible(False)
+        if results and self._user_stopped:
+            self.freq_label.setText(f"Sweep stopped — {len(results)} frequencies measured.")
+        elif results:
             self.freq_label.setText(f"Sweep complete — {len(results)} frequencies measured.")
         else:
             self.freq_label.setText("Sweep finished with no results — check the log below.")
@@ -737,9 +826,6 @@ class ResultsPage(QWidget):
         self.toggle_view_button = QPushButton("Switch to single-image view")
         self.toggle_view_button.clicked.connect(self._toggle_view)
         self.open_folder_button = QPushButton("Open output folder")
-        self.open_folder_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-        )
         self.open_folder_button.clicked.connect(self._open_folder)
         self.run_again_button = QPushButton("Run another sweep")
         self.run_again_button.setObjectName("PrimaryButton")
@@ -893,6 +979,16 @@ class MainWindow(QMainWindow):
         self.sweep_page.sweep_finished.connect(self._on_sweep_finished)
         self.results_page.run_again.connect(self._on_run_again)
 
+        # Elevation: every card-style surface gets a real drop shadow (see
+        # _apply_card_shadow()'s docstring for why this can't just live in
+        # the QSS string above). The two ResultsPage canvas cards keep
+        # this same shadow-carrying container instance even after
+        # show_results() swaps the FigureCanvasQTAgg inside them.
+        for card in self.findChildren(QGroupBox):
+            _apply_card_shadow(card)
+        for card in self.findChildren(QWidget, "CanvasCard"):
+            _apply_card_shadow(card)
+
     def _set_nav_enabled(self, row, enabled):
         item = self._nav.item(row)
         if enabled:
@@ -946,18 +1042,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.sweep_page.is_running():
-            # No confirmation dialog here on purpose: unlike the preview,
-            # there is no safe way to stop a running sweep (see
-            # SweepWorker's docstring), so closing is refused outright
-            # rather than offering a choice that can't be honored safely.
-            QMessageBox.warning(
+            # Same confirm-then-stop-and-wait pattern as the preview below,
+            # now that SweepWorker has a safe stop mechanism (see its
+            # docstring) — stopping still waits for the current frequency
+            # to finish measuring before the thread actually exits.
+            reply = QMessageBox.question(
                 self,
                 "Sweep running",
-                "The sweep is still running and cannot be safely interrupted. "
-                "Please wait for it to finish before closing.",
+                "The sweep is still running. Stop it and close? It will finish "
+                "measuring the current frequency first, then stop safely.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            event.ignore()
-            return
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.sweep_page.stop_and_wait()
 
         if self.preview_page.is_running():
             reply = QMessageBox.question(
@@ -977,155 +1076,192 @@ class MainWindow(QMainWindow):
 # ==============================================================================
 # STYLESHEET
 # ==============================================================================
-# A single flat, modern light theme applied to the whole QApplication:
-# card-style QGroupBox sections, one accent color for primary actions, a
-# dark sidebar nav rail, and a terminal-style log console. Kept as one
-# embedded string (not a separate .qss file) so the app has no extra
-# non-Python asset to ship.
+# A dark, strictly monochrome theme (no color accents at all — off-blacks
+# and grays only) applied to the whole QApplication. "Elevated" surfaces
+# (QGroupBox cards, the results canvases, the nav rail's selected row) use
+# a lighter gray than the base background plus a real drop shadow (added
+# separately below via QGraphicsDropShadowEffect, since QSS itself has no
+# box-shadow) so cards read as floating panels rather than flat rectangles.
+# Primary actions and the progress bar use a near-white fill instead of a
+# color accent — the only way to signal "emphasis" without introducing a
+# hue. Kept as one embedded string (not a separate .qss file) so the app
+# has no extra non-Python asset to ship.
 
-_STYLESHEET = """
-QMainWindow, QWidget {
-    background-color: #f4f5f7;
-    color: #1f2430;
+_BASE_BG = "#1e1e1e"
+_SURFACE_BG = "#292929"
+_BORDER = "#383838"
+_TEXT_SECONDARY = "#8a8a8a"
+_TEXT_PRIMARY = "#e0e0e0"
+
+_STYLESHEET = f"""
+QMainWindow, QWidget {{
+    background-color: {_BASE_BG};
+    color: {_TEXT_PRIMARY};
     font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
-}
+}}
 
-QListWidget#NavRail {
-    background-color: #1b2030;
+QListWidget#NavRail {{
+    background-color: #171717;
     border: none;
+    border-right: 1px solid {_BORDER};
     padding: 12px 0px;
     outline: 0;
-}
-QListWidget#NavRail::item {
-    color: #aeb3c2;
+}}
+QListWidget#NavRail::item {{
+    color: {_TEXT_SECONDARY};
     padding: 14px 22px;
     border-left: 3px solid transparent;
-}
-QListWidget#NavRail::item:selected {
-    background-color: #262d42;
-    color: #ffffff;
-    border-left: 3px solid #5b8def;
-}
-QListWidget#NavRail::item:disabled {
-    color: #4d5266;
-}
+}}
+QListWidget#NavRail::item:selected {{
+    background-color: {_SURFACE_BG};
+    color: {_TEXT_PRIMARY};
+    border-left: 3px solid {_TEXT_PRIMARY};
+}}
+QListWidget#NavRail::item:disabled {{
+    color: #4a4a4a;
+}}
 
-QGroupBox {
-    background-color: #ffffff;
-    border: 1px solid #e1e4ea;
-    border-radius: 10px;
-    margin-top: 16px;
-    padding: 18px;
+QGroupBox {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 12px;
+    margin-top: 18px;
+    padding: 20px;
     font-weight: 600;
-}
-QGroupBox::title {
+}}
+QGroupBox::title {{
     subcontrol-origin: margin;
     left: 14px;
     padding: 0 6px;
-    color: #3d4356;
-}
+    color: {_TEXT_SECONDARY};
+}}
 
-QLabel {
-    color: #1f2430;
+QLabel {{
+    color: {_TEXT_PRIMARY};
     background-color: transparent;
-}
-QLabel#FreqLabel { font-weight: 600; font-size: 14px; }
-QLabel#WarningLabel { color: #9a3b3b; font-size: 12px; }
-
-QPushButton {
-    background-color: #ffffff;
-    border: 1px solid #d7dae1;
-    border-radius: 7px;
-    padding: 9px 18px;
-    color: #1f2430;
-}
-QPushButton:hover { background-color: #eef0f4; border-color: #c3c8d4; }
-QPushButton:pressed { background-color: #e2e5ec; }
-QPushButton:disabled { color: #a7abb8; background-color: #f4f5f7; border-color: #e6e8ee; }
-
-QPushButton#PrimaryButton {
-    background-color: #5b8def;
-    border: 1px solid #4a7bdc;
-    color: #ffffff;
+}}
+QLabel#FreqLabel {{ font-weight: 600; font-size: 14px; }}
+QLabel#WarningLabel {{
+    color: {_TEXT_PRIMARY};
+    font-size: 12px;
     font-weight: 600;
-}
-QPushButton#PrimaryButton:hover { background-color: #4a7bdc; }
-QPushButton#PrimaryButton:pressed { background-color: #3f6bc4; }
-QPushButton#PrimaryButton:disabled {
-    background-color: #b7c8ea; border-color: #b7c8ea; color: #eef2fb;
-}
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 10px;
+}}
 
-QDoubleSpinBox, QSpinBox, QLineEdit {
-    background-color: #ffffff;
-    border: 1px solid #d7dae1;
+QPushButton {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 9px 18px;
+    color: {_TEXT_PRIMARY};
+}}
+QPushButton:hover {{ background-color: #333333; border-color: #4a4a4a; }}
+QPushButton:pressed {{ background-color: #202020; }}
+QPushButton:disabled {{ color: #5a5a5a; background-color: #232323; border-color: #2e2e2e; }}
+
+QPushButton#PrimaryButton {{
+    background-color: {_TEXT_PRIMARY};
+    border: 1px solid {_TEXT_PRIMARY};
+    color: #181818;
+    font-weight: 600;
+}}
+QPushButton#PrimaryButton:hover {{ background-color: #cfcfcf; border-color: #cfcfcf; }}
+QPushButton#PrimaryButton:pressed {{ background-color: #b0b0b0; border-color: #b0b0b0; }}
+QPushButton#PrimaryButton:disabled {{
+    background-color: #4a4a4a; border-color: #4a4a4a; color: #7a7a7a;
+}}
+
+QDoubleSpinBox, QSpinBox, QLineEdit {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
     border-radius: 6px;
     padding: 6px 8px;
-    selection-background-color: #5b8def;
-}
-QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {
-    border: 1px solid #5b8def;
-}
+    color: {_TEXT_PRIMARY};
+    selection-background-color: #4a4a4a;
+    selection-color: {_TEXT_PRIMARY};
+}}
+QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{
+    border: 1px solid {_TEXT_PRIMARY};
+}}
 
-QRadioButton {
+QRadioButton {{
     spacing: 8px;
     padding: 4px 0px;
     background-color: transparent;
     outline: none;
-}
+}}
 
-QLabel#SummaryLabel {
+QLabel#SummaryLabel {{
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 12px;
-    background-color: #f7f8fa;
-    border: 1px solid #e1e4ea;
-    border-radius: 6px;
-    padding: 10px;
-}
+    background-color: #232323;
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 12px;
+}}
 
-QWidget#CanvasCard {
-    background-color: #ffffff;
-    border: 1px solid #e1e4ea;
-    border-radius: 10px;
-}
+QWidget#CanvasCard {{
+    background-color: {_SURFACE_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 12px;
+}}
 
-QProgressBar {
-    border: 1px solid #d7dae1;
-    border-radius: 7px;
-    background-color: #ffffff;
+QProgressBar {{
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    background-color: #232323;
     text-align: center;
     height: 22px;
     font-weight: 600;
-}
-QProgressBar::chunk {
-    background-color: #5b8def;
-    border-radius: 6px;
-}
+    color: {_TEXT_PRIMARY};
+}}
+QProgressBar::chunk {{
+    background-color: {_TEXT_PRIMARY};
+    border-radius: 7px;
+}}
 
-QPlainTextEdit#LogConsole {
-    background-color: #1b2030;
-    color: #cfd4e2;
-    border: 1px solid #11141c;
-    border-radius: 8px;
+QPlainTextEdit#LogConsole {{
+    background-color: #141414;
+    color: #cfcfcf;
+    border: 1px solid {_BORDER};
+    border-radius: 10px;
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 12px;
-    padding: 10px;
-}
+    padding: 12px;
+}}
 
-QStatusBar {
-    background-color: #ffffff;
-    border-top: 1px solid #e1e4ea;
-    color: #565b6b;
-}
+QStatusBar {{
+    background-color: {_BASE_BG};
+    border-top: 1px solid {_BORDER};
+    color: {_TEXT_SECONDARY};
+}}
 
-QLabel#FeedFrame {
-    background-color: #11141c;
-    border: 1px solid #e1e4ea;
-    border-radius: 10px;
-    color: #7d8394;
+QLabel#FeedFrame {{
+    background-color: #141414;
+    border: 1px solid {_BORDER};
+    border-radius: 12px;
+    color: {_TEXT_SECONDARY};
     font-size: 13px;
-}
+}}
 """
+
+
+def _apply_card_shadow(widget, blur_radius=28, y_offset=6, alpha=140):
+    """
+    QSS has no box-shadow — this is the actual mechanism Qt offers for the
+    same "elevated card floating above the background" effect, applied
+    directly to a widget (a QGroupBox, or a results-page CanvasCard)
+    rather than expressed in the stylesheet string above.
+    """
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur_radius)
+    effect.setOffset(0, y_offset)
+    effect.setColor(QColor(0, 0, 0, alpha))
+    widget.setGraphicsEffect(effect)
 
 
 def main():

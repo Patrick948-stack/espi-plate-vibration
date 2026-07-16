@@ -1,15 +1,15 @@
 # ESPI Plate Vibration — Whitman College
 
-**A Python project for studying how violin and viola plates vibrate, built at Professor Hoffman's lab at Whitman College.**
+**A Python project for studying how musical instrument soundboards and plates vibrate, built at Professor Hoffman's lab at Whitman College.**
 
 This is an active research project. We are still adding things and fixing things as we go.
 
 
 ## What is this project actually about?
 
-When you play a violin, the wooden top plate vibrates. Depending on the frequency of the note, different parts of the plate move — some parts swing back and forth a lot, others barely move at all. The spots that don't move are called nodes, and the full pattern is called a vibrational mode shape.
+When you play a musical instrument, a wooden plate vibrates — the top plate of a guitar, the soundboard of a piano, or any similar resonating surface. Depending on the frequency of the note, different parts of the plate move — some parts swing back and forth a lot, others barely move at all. The spots that don't move are called nodes, and the full pattern is called a vibrational mode shape.
 
-What's interesting is that vibrating plates actually behave very similarly to quantum systems. The same wave equations that describe how an electron moves in a box also describe how a plate vibrates. So studying a violin plate is genuinely useful for understanding physics beyond just acoustics.
+What's interesting is that vibrating plates actually behave very similarly to quantum systems. The same wave equations that describe how an electron moves in a box also describe how a plate vibrates. So studying an instrument's plate is genuinely useful for understanding physics beyond just acoustics.
 
 The technique we use to see these patterns is called ESPI — Electronic Speckle Pattern Interferometry. Here is the short version of how it works:
 
