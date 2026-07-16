@@ -49,6 +49,17 @@ Then it opens a live camera preview so you can aim and focus. After that, you ca
 
 After the sweep, the program opens an image viewer that shows your results one frequency at a time. Use the left and right arrow keys to move between images, and press Escape to close the viewer. A grid image with all frequencies is also saved to your output folder automatically.
 
+Prefer clicking over typing in a terminal? `run_experiment_gui.py` runs the exact same experiment as a PyQt6 dashboard — Setup, Preview, Sweep, and Results all in one window, with a real progress bar and a Stop button for the sweep. `monitor_gui.py` is the equivalent dashboard for just watching the live camera feed and frame subtraction, without running a full frequency sweep. Both are documented in detail, screenshots included, in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md).
+
+<p align="center">
+  <img src="ESPI%20Full%20Algorithm/screenshots/run_experiment_gui_setup.png" width="49%" alt="run_experiment_gui.py Setup page">
+  <img src="ESPI%20Full%20Algorithm/screenshots/run_experiment_gui_sweep.png" width="49%" alt="run_experiment_gui.py Sweep page with a running sweep and Stop Sweep visible">
+</p>
+<p align="center">
+  <img src="ESPI%20Full%20Algorithm/screenshots/monitor_gui_setup.png" width="49%" alt="monitor_gui.py Setup page">
+  <img src="ESPI%20Full%20Algorithm/screenshots/monitor_gui_live_monitor.png" width="49%" alt="monitor_gui.py Live Monitor page showing Live Feed and Frame Subtraction">
+</p>
+
 
 ## Two subtraction modes
 
