@@ -60,6 +60,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 import os
+import tempfile
 import traceback
 from datetime import datetime
 from matplotlib import pyplot as plt
@@ -821,7 +822,17 @@ def build_filename(frequency_hz: float, exposure_us: float,
 
 
 def _resolve_output_dir(output_dir: str | None) -> str | None:
-    """Return a safe output directory for image saves."""
+    """Return a safe output directory for image saves.
+
+    Relative paths are resolved against the current working directory.
+    Absolute paths are allowed when they are inside the user's home directory,
+    the current working directory, or the OS's own temp directory (this last
+    one is what lets pytest's tmp_path fixture — which always lives under
+    tempfile.gettempdir(), e.g. /tmp on Linux or /private/var/.../T on macOS —
+    pass this check; without it, every test that saves to a real temp
+    directory would be rejected the same way a genuinely unsafe path like
+    "/" or "C:\\Windows" should be).
+    """
     if output_dir is None:
         return os.path.join(os.path.expanduser("~"), "Desktop")
 
@@ -829,18 +840,26 @@ def _resolve_output_dir(output_dir: str | None) -> str | None:
     if not os.path.isabs(expanded):
         return os.path.abspath(expanded)
 
-    abs_dir = os.path.abspath(expanded)
-    home_dir = os.path.abspath(os.path.expanduser("~"))
-    cwd_dir = os.path.abspath(os.getcwd())
+    # realpath (not abspath) matters here: on macOS, tempfile.gettempdir()
+    # returns a path through /var, which is itself a symlink to /private/var,
+    # while pytest's tmp_path fixture reports the already-resolved
+    # /private/var/... form. abspath() does not follow symlinks, so comparing
+    # un-resolved paths would make this check reject pytest's own tmp_path
+    # even after adding temp_dir as an allowed root.
+    abs_dir = os.path.realpath(expanded)
+    home_dir = os.path.realpath(os.path.expanduser("~"))
+    cwd_dir = os.path.realpath(os.getcwd())
+    temp_dir = os.path.realpath(tempfile.gettempdir())
 
     try:
         under_home = os.path.commonpath([home_dir, abs_dir]) == home_dir
         under_cwd = os.path.commonpath([cwd_dir, abs_dir]) == cwd_dir
+        under_temp = os.path.commonpath([temp_dir, abs_dir]) == temp_dir
     except ValueError:
         print(f"[save_image] Refusing to use output directory on a different drive: {abs_dir}")
         return None
 
-    if not under_home and not under_cwd:
+    if not under_home and not under_cwd and not under_temp:
         print(f"[save_image] Refusing to create output directory outside home/current working directory: {abs_dir}")
         return None
 
