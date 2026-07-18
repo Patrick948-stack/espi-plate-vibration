@@ -8,6 +8,32 @@ from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
+# Neutralize cv2's on-screen window functions for every test
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _mock_cv2_gui(monkeypatch):
+    """
+    Replace cv2.imshow / cv2.waitKey / cv2.destroyAllWindows with harmless
+    fakes for every test, automatically.
+
+    The real versions need a GUI backend (GTK on Linux, Cocoa on macOS) to
+    even exist. CI installs opencv-python-headless, which has no GUI
+    backend at all, so calling any of them raises
+    cv2.error: "The function is not implemented." A test that forgets to
+    fake one of these three (as several here did) passes locally, where a
+    GUI-capable OpenCV is installed, and only fails once it reaches CI.
+
+    A test that wants to check what was shown or which key was "pressed"
+    can still patch these itself inside its own `with patch(...)` block;
+    that inner patch simply overrides this one for its own scope.
+    """
+    monkeypatch.setattr("cv2.imshow", MagicMock())
+    monkeypatch.setattr("cv2.waitKey", MagicMock(return_value=-1))
+    monkeypatch.setattr("cv2.destroyAllWindows", MagicMock())
+
+
+# ---------------------------------------------------------------------------
 # Shared image fixtures
 # ---------------------------------------------------------------------------
 
