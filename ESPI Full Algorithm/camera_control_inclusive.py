@@ -432,6 +432,42 @@ def grab_single_frame(camera):
     return frame
 
 
+def grab_single_frame_color(camera):
+    """
+    Grab exactly one frame, but skip the greyscale reduction grab_single_frame()
+    performs, so callers that need the real color data can have it.
+
+    grab_single_frame() always converts a color frame down to a 2D greyscale
+    array, since that is the contract monitor.py, capture_and_display*.py,
+    and run_experiment.py all rely on. monitor_gui.py's single-channel R/G/B
+    extraction needs the original 3-channel BGR frame before that reduction
+    happens, or every extraction method returns the same already-flattened
+    value no matter which color channel or backend was picked. This function
+    exists so that code path can get the frame it actually needs, without
+    changing what grab_single_frame() returns for anyone else.
+
+    Returns a (height, width, 3) BGR array for a color camera, a (height,
+    width) array for a camera that is already greyscale, or None if the grab
+    failed.
+
+    Example:
+        frame = grab_single_frame_color(camera)
+        if frame is not None:
+            print(frame.shape)   # e.g. (480, 640, 3) for a color camera
+    """
+    ok, frame = camera.read()
+
+    if not ok or frame is None:
+        print("Grab failed, camera did not return a frame.")
+        return None
+
+    # Apply software ROI crop if one has been set. No greyscale reduction
+    # here, unlike grab_single_frame().
+    frame = _apply_roi(frame, camera)
+
+    return frame
+
+
 def grab_single_frame_with_retry(camera, max_retries: int = 3):
     """
     Like grab_single_frame(), but tries again if the first attempt fails.

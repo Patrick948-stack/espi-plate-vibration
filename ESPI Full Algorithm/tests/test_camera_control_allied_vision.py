@@ -511,6 +511,63 @@ class TestGrabSingleFrame:
         assert result.shape == (60, 50)
 
 
+class TestGrabSingleFrameColor:
+    """
+    grab_single_frame() always reduces a color frame to greyscale via
+    to_gray() before returning it. monitor_gui.py's single-channel R/G/B
+    extraction needs the real (H, W, 3) BGR data before that reduction
+    happens, for a color capable Allied Vision camera (model suffix 'c'),
+    which grab_single_frame_color() exists to preserve.
+    """
+
+    def test_returns_bgr_array_unmodified_for_color_camera(self):
+        bgr_img = np.zeros((50, 50, 3), dtype=np.uint8)
+        bgr_img[:, :, 2] = 200  # red channel
+        mock_frame = _make_frame(bgr_img)
+        handle = _make_handle()
+        handle.cam.get_frame.return_value = mock_frame
+        result = cc_av.grab_single_frame_color(handle)
+        assert result is not None
+        assert result.ndim == 3
+        assert result.shape[2] == 3
+        assert np.all(result[:, :, 2] == 200)
+
+    def test_squeezes_single_channel_mono_dimension(self):
+        img = np.zeros((50, 50, 1), dtype=np.uint8)
+        mock_frame = _make_frame(img)
+        handle = _make_handle()
+        handle.cam.get_frame.return_value = mock_frame
+        result = cc_av.grab_single_frame_color(handle)
+        assert result.ndim == 2
+
+    def test_normalises_non_uint8_to_uint8(self):
+        img = np.full((10, 10), 4000, dtype=np.uint16)
+        mock_frame = _make_frame(img)
+        handle = _make_handle()
+        handle.cam.get_frame.return_value = mock_frame
+        result = cc_av.grab_single_frame_color(handle)
+        assert result is not None
+        assert result.dtype == np.uint8
+
+    def test_returns_none_on_incomplete_frame(self):
+        img = np.zeros((10, 10), dtype=np.uint8)
+        mock_frame = _make_frame(img, status="Incomplete")
+        handle = _make_handle()
+        handle.cam.get_frame.return_value = mock_frame
+        result = cc_av.grab_single_frame_color(handle)
+        assert result is None
+
+    def test_does_not_change_grab_single_frame_own_behavior(self):
+        """Regression: adding this function must not touch grab_single_frame's contract."""
+        bgr_img = np.zeros((50, 50, 3), dtype=np.uint8)
+        bgr_img[:, :, 2] = 200
+        mock_frame = _make_frame(bgr_img)
+        handle = _make_handle()
+        handle.cam.get_frame.return_value = mock_frame
+        result = cc_av.grab_single_frame(handle)
+        assert result.ndim == 2
+
+
 class TestGrabSingleFrameWithRetry:
     def test_returns_on_first_success(self):
         img = np.zeros((10, 10), dtype=np.uint8)

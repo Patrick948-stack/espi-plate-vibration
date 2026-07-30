@@ -547,6 +547,59 @@ def grab_single_frame(camera: _AVHandle,
         return None
 
 
+def grab_single_frame_color(camera: _AVHandle,
+                            timeout_ms: int = 2000) -> np.ndarray | None:
+    """
+    Grab exactly one frame, but skip the to_gray() reduction grab_single_frame()
+    performs, so callers that need the real color data can have it.
+
+    grab_single_frame() always reduces a color frame down to a 2D greyscale
+    array, since that is the contract the rest of this project relies on.
+    monitor_gui.py's single-channel R/G/B extraction needs the original
+    (H, W, 3) BGR frame before that reduction happens, or every extraction
+    method returns the same already-flattened value no matter which color
+    channel was picked. A mono camera (model suffix 'm') has no color to
+    preserve either way, so its (H, W, 1) frame is still squeezed down to a
+    plain (H, W) array here, matching to_gray()'s own handling of that case.
+
+    Args:
+        camera     : the handle from connect_camera()
+        timeout_ms : how long to wait for a frame before giving up (milliseconds).
+
+    Returns a (height, width, 3) BGR array for a color camera, a (height,
+    width) array for a mono camera, or None if the grab failed.
+
+    Example:
+        frame = grab_single_frame_color(camera)
+        if frame is not None:
+            print(frame.shape)   # e.g. (1944, 2592, 3) for a color camera
+    """
+    try:
+        frame = camera.cam.get_frame(timeout_ms=timeout_ms)
+
+        if frame.get_status() != FrameStatus.Complete:
+            print(f"[grab_single_frame_color] Incomplete frame, status: {frame.get_status()}")
+            return None
+
+        img = frame.as_numpy_ndarray()
+
+        if img.ndim == 3 and img.shape[2] == 1:
+            # Mono camera wraps its greyscale data in a redundant third
+            # dimension. There is no color here to preserve either way.
+            img = img[:, :, 0]
+
+        # Normalise to uint8 if the camera is in a 12-bit or 16-bit mode.
+        # ESPI processing assumes 8-bit (0-255), so we rescale here.
+        if img.dtype != np.uint8:
+            img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+        return _apply_roi(img, camera)
+
+    except Exception as e:
+        print(f"[grab_single_frame_color] Error: {e}")
+        return None
+
+
 def grab_single_frame_with_retry(camera: _AVHandle,
                                   max_retries: int = 3) -> np.ndarray | None:
     """

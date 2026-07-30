@@ -481,6 +481,23 @@ class TestGrabSingleFrame:
         assert frame is None
 
 
+class TestGrabSingleFrameColor:
+    """
+    Basler cameras in this project are always Mono8/Mono12 (no color
+    channels exist at the hardware level), so grab_single_frame_color()
+    exists here only for interface consistency with
+    camera_control_inclusive.py and camera_control_allied_vision.py, and
+    simply delegates to the existing grab_single_frame().
+    """
+
+    def test_delegates_to_grab_single_frame(self, monkeypatch):
+        expected = np.zeros((100, 100), dtype=np.uint8)
+        monkeypatch.setattr(cc, "grab_single_frame", lambda camera: expected)
+        cam = make_mock_basler_camera()
+        result = cc.grab_single_frame_color(cam)
+        assert result is expected
+
+
 class TestGrabNFrames:
     def test_returns_list_of_correct_length(self):
         cam = make_mock_basler_camera()

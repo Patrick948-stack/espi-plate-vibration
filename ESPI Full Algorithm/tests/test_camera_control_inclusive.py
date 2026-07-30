@@ -336,6 +336,58 @@ class TestGrabSingleFrame:
         assert result.ndim == 2
 
 
+class TestGrabSingleFrameColor:
+    """
+    grab_single_frame() always reduces a color frame to greyscale before
+    returning it, which is correct for every caller that expects a ready to
+    use 2D array (monitor.py, capture_and_display*.py, run_experiment.py).
+    monitor_gui.py's single-channel R/G/B extraction needs the real color
+    data before that reduction happens, which grab_single_frame_color()
+    exists to preserve.
+    """
+
+    def test_returns_bgr_array_unmodified_for_color_camera(self):
+        bgr_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        bgr_frame[:, :, 2] = 200  # red channel
+        mock_cap = make_mock_cv2_camera(frame=bgr_frame)
+        result = cc.grab_single_frame_color(mock_cap)
+        assert result is not None
+        assert result.ndim == 3
+        assert result.shape[2] == 3
+        assert np.all(result[:, :, 2] == 200)
+        assert np.all(result[:, :, 0] == 0)
+        assert np.all(result[:, :, 1] == 0)
+
+    def test_returns_none_when_read_fails(self):
+        mock_cap = make_mock_cv2_camera(read_ok=False)
+        result = cc.grab_single_frame_color(mock_cap)
+        assert result is None
+
+    def test_applies_roi_crop(self):
+        frame = np.zeros((200, 200, 3), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera(width=200, height=200, frame=frame)
+        cc._roi_store[id(mock_cap)] = (10, 20, 50, 60)
+        result = cc.grab_single_frame_color(mock_cap)
+        cc._roi_store.pop(id(mock_cap), None)
+        assert result is not None
+        assert result.shape[:2] == (60, 50)
+
+    def test_already_gray_frame_unchanged(self):
+        gray_frame = np.zeros((100, 100), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera()
+        mock_cap.read.return_value = (True, gray_frame)
+        result = cc.grab_single_frame_color(mock_cap)
+        assert result.ndim == 2
+
+    def test_does_not_change_grab_single_frame_own_behavior(self):
+        """Regression: adding this function must not touch grab_single_frame's contract."""
+        bgr_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        bgr_frame[:, :, 2] = 200
+        mock_cap = make_mock_cv2_camera(frame=bgr_frame)
+        result = cc.grab_single_frame(mock_cap)
+        assert result.ndim == 2
+
+
 class TestGrabSingleFrameWithRetry:
     def test_returns_frame_on_first_success(self):
         bgr = np.zeros((50, 50, 3), dtype=np.uint8)

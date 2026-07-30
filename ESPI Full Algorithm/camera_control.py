@@ -459,6 +459,22 @@ def grab_single_frame(camera):
         return None
 
 
+def grab_single_frame_color(camera):
+    """
+    Present for interface consistency with camera_control_inclusive.py and
+    camera_control_allied_vision.py, which use this name for a frame that
+    skips their internal greyscale reduction so monitor_gui.py's
+    single-channel R/G/B extraction can see real color data.
+
+    grab_single_frame() above already returns grabResult.Array untouched,
+    with no forced greyscale conversion, so there is no reduction to skip
+    here. Basler cameras in this project are always configured as Mono8 or
+    Mono12 and have no color channels to preserve in the first place, so
+    this simply delegates to grab_single_frame().
+    """
+    return grab_single_frame(camera)
+
+
 def grab_n_frames(camera, n: int):
     """
     Grab n frames in a row and return them as a list of numpy arrays.
