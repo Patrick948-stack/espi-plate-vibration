@@ -509,13 +509,21 @@ class CameraPreviewWorker(QThread):
         except Exception as e:
             self.error.emit(f"The preview stopped unexpectedly: {e}")
         finally:
+            print(f"[PREVIEW_CLEANUP_START] camera is None: {camera is None}")
             if camera is not None:
                 try:
+                    print(f"[PREVIEW_CLEANUP] Calling disconnect_camera...")
                     cam_lib.disconnect_camera(camera)
+                    print(f"[PREVIEW_CLEANUP] disconnect_camera succeeded")
                 except AttributeError as e:
+                    print(f"[PREVIEW_CLEANUP] AttributeError during disconnect: {e}")
                     self.error.emit(f"[ERROR] Failed to disconnect camera: {e}")
                 except Exception as e:
+                    print(f"[PREVIEW_CLEANUP] Exception during disconnect: {type(e).__name__}: {e}")
                     self.error.emit(f"[ERROR] Unexpected error during disconnect: {e}")
+            else:
+                print(f"[PREVIEW_CLEANUP] camera is None - not disconnecting")
+            print(f"[PREVIEW_CLEANUP] Emitting finished_cleanly signal")
             self.finished_cleanly.emit()
 
 
@@ -1022,23 +1030,10 @@ class SweepPage(QWidget):
         self.stop_button.setEnabled(True)
         self.sweep_started.emit()
 
-        # Check if live monitoring should be shown
-        settings = load_settings()
-        self._show_live_monitoring = settings.get("show_live_feed_during_sweep", False)
-        self._monitoring_group.setVisible(self._show_live_monitoring)
-        
-        # Start monitoring worker if enabled
-        if self._show_live_monitoring:
-            grayscale_method = settings.get("grayscale_method", "standard")
-            self._monitoring_worker = LiveMonitoringWorker(
-                self._camera_choice,
-                self._params["exposure"],
-                self._params["gain"],
-                grayscale_method
-            )
-            self._monitoring_worker.frame_update.connect(self._on_monitor_frames)
-            self._monitoring_worker.error.connect(self._on_monitor_error)
-            self._monitoring_worker.start()
+        # Note: Live monitoring disabled for now because it requires a separate camera connection,
+        # which conflicts with SweepWorker holding the camera exclusively.
+        # TODO: Future enhancement - support dual-camera setups or display-only monitoring
+        self._monitoring_group.setVisible(False)
 
         stream = EmittingStream()
         stream.text_written.connect(self.log_line)
@@ -1382,6 +1377,9 @@ class MainWindow(QMainWindow):
 
     def _on_nav_changed(self, row):
         self._stack.setCurrentIndex(row)
+        # Reload settings when returning to Setup page
+        if row == 0:
+            self.setup_page.reload_settings()
 
     def _start_preview(self):
         params = self.setup_page.get_params()
