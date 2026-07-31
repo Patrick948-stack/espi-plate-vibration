@@ -422,11 +422,12 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         print("ERROR: Signal generator not found. Check the USB cable and try again.")
         return None
 
-    camera = connect_camera()
-    if camera is None:
+    result = connect_camera()
+    if result is None or (isinstance(result, tuple) and result[0] is None):
         print("ERROR: Camera not found. Check the USB cable and try again.")
         close_connection(instr)
         return None
+    camera, format_info = result
 
     # ==========================================================================
     # STEP 2 — CONFIGURE CAMERA

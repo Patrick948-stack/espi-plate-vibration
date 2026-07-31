@@ -485,10 +485,11 @@ def _show_preview_feed(camera_choice, exposure_s=None, gain=None):
     print("    Press 'e' to close the feed and continue.")
     print()
 
-    camera = connect_camera()
-    if camera is None:
+    result = connect_camera()
+    if result is None or (isinstance(result, tuple) and result[0] is None):
         print("  [WARNING] Could not open camera — skipping preview.")
         return
+    camera, format_info = result
 
     if exposure_s is not None or gain is not None:
         try:
