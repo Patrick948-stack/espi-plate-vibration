@@ -15,7 +15,7 @@ All settings are loaded from and saved to disk via settings_manager.
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QRadioButton,
     QButtonGroup, QComboBox, QCheckBox, QDoubleSpinBox, QSpinBox, QPushButton,
-    QDialog, QTextBrowser, QScrollArea, QSizePolicy,
+    QDialog, QTextBrowser, QScrollArea, QSizePolicy, QApplication,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -142,7 +142,7 @@ class SettingsPage(QWidget):
         grayscale_group.setLayout(grayscale_layout)
         layout.addWidget(grayscale_group)
 
-        # Wire visibility updates
+        # Wire visibility updates BEFORE setting initial state
         for radio in self._grayscale_radios.values():
             radio.toggled.connect(self._update_grayscale_visibility)
 
@@ -204,7 +204,7 @@ class SettingsPage(QWidget):
 
         # Wire camera visibility updates (will be called at end of __init__)
         for radio in self._camera_radios.values():
-            radio.toggled.connect(self._update_camera_visibility)
+            radio.toggled.connect(lambda checked: self._update_camera_visibility())
 
         # ========== Group 3: Capture Settings Defaults ==========
         capture_group = QGroupBox("Capture Settings Defaults")
@@ -230,7 +230,8 @@ class SettingsPage(QWidget):
         # Show Gain toggle
         self._show_gain_checkbox = QCheckBox("Show Gain (dB) control")
         self._show_gain_checkbox.setChecked(False)
-        self._show_gain_checkbox.toggled.connect(self._update_capture_visibility)
+        # Use lambda to ensure the slot is always called with update
+        self._show_gain_checkbox.toggled.connect(lambda: self._update_capture_visibility())
         capture_layout.addWidget(self._show_gain_checkbox)
 
         # Frequency range
@@ -339,16 +340,23 @@ class SettingsPage(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(scroll_area)
         self.setLayout(main_layout)
-        
+
         # Update visibility after widget tree is complete
         self._update_grayscale_visibility()
         self._update_camera_visibility()
         self._update_capture_visibility()
 
+        # Ensure this widget is visible so Qt event processing works properly
+        # This is necessary for signals to fire correctly in both interactive
+        # and test environments
+        if not self.isVisible():
+            self.setVisible(True)
+
     def _update_grayscale_visibility(self):
         """Show/hide color and backend controls based on method selection."""
         is_single = self._grayscale_radios["single_channel"].isChecked()
         should_show = is_single
+        # Use setVisible (which is more reliable than show/hide in this context)
         self._color_label.setVisible(should_show)
         self._color_combo.setVisible(should_show)
         self._backend_label.setVisible(should_show)
