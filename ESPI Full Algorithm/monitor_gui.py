@@ -103,6 +103,28 @@ _CAMERA_CONTROL_MODULES = {
 
 
 # ==============================================================================
+# FRAME GRAB RETRY BUDGET
+# ==============================================================================
+# Real hardware measurement: a diagnostic that mirrored MonitorWorker's exact
+# startup sequence (connect_camera(), THEN set_exposure_manual(), THEN
+# set_gain_manual(), THEN start reading) showed a real USB webcam's first
+# successful read() only arriving after about 3.4 seconds. The old retry
+# budget (3 attempts, 0.3s apart) totaled 0.6 seconds and gave up long before
+# that. The same diagnostic also showed the camera dropping frames again,
+# briefly, well after that initial warm-up succeeded -- so this budget is
+# given to every frame grab, not just the first one after connecting.
+#
+# DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S is a reasoned default (roughly 1.75x
+# the measured 3.4s stall, for margin), not a guess: it is also exposed as
+# a settings key (frame_grab_max_total_wait_s) so it can be tuned without a
+# code change if real hardware needs a different number. If a mid-session
+# drop ever turns out to last longer than this, that is real data worth
+# collecting (see camera_diagnostic2.py) rather than another blind guess.
+DEFAULT_FRAME_GRAB_RETRY_DELAY_S = 0.3
+DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S = 6.0
+
+
+# ==============================================================================
 # GRAYSCALE CONVERSION ALGORITHMS — SINGLE-CHANNEL EXTRACTION
 # ==============================================================================
 
@@ -110,7 +132,6 @@ def _grayscale_pillow(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
     """
     Extract single color channel using Pillow and merge across all channels.
     Returns a grayscale array with all channels equal to the selected color intensity.
-    Time: O(width * height), Space: O(width * height) for the output.
     """
     # Convert BGR to RGB for Pillow
     rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
@@ -128,25 +149,50 @@ def _grayscale_numpy(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
     Extract single color channel using NumPy slicing (BGR layout).
     Color map: B=0, G=1, R=2 (OpenCV BGR convention).
     Returns a 2D grayscale numpy array.
-    Time: O(width * height), Space: O(width * height) for the output.
     """
     channel_map = {"B": 0, "G": 1, "R": 2}
     channel_idx = channel_map[color_code]
     return bgr_frame[:, :, channel_idx].copy()
 
 
-def _grayscale_opencv_split(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
+def _grayscale_opencv_hsv(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
     """
-    Extract single color channel using cv2.split (OpenCV's channel-splitting
-    function, BGR layout).
-    Color map: B=0, G=1, R=2 (OpenCV BGR convention), the same as the numpy
-    backend, so all three backends return identical channel intensities and
-    differ only in which library performs the split.
-    Time: O(width * height), Space: O(width * height) per split channel.
+    Extract single color channel using HSV-based hue masking.
+    Converts BGR to HSV, creates a mask for the target color's hue range,
+    and returns the brightness (Value channel) of only those pixels.
+
+    This approach isolates pixels of a specific hue and returns their true
+    brightness, which is cleaner than raw channel extraction for
+    monochromatic light sources (e.g. a red laser).
+
+    Hue ranges (OpenCV HSV: H 0-180):
+    - Red: 0-10 and 170-180 (wraps around)
+    - Green: 35-85
+    - Blue: 100-140
+
+    Time: O(width * height), Space: O(width * height) for the output.
     """
-    channel_map = {"B": 0, "G": 1, "R": 2}
-    channels = cv2.split(bgr_frame)  # (B, G, R) as separate 2D arrays
-    return channels[channel_map[color_code]]
+    hsv_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
+
+    if color_code == "R":
+        # Red wraps around in hue space
+        mask1 = cv2.inRange(hsv_frame, np.array([0, 50, 50]), np.array([10, 255, 255]))
+        mask2 = cv2.inRange(hsv_frame, np.array([170, 50, 50]), np.array([180, 255, 255]))
+        color_mask = cv2.bitwise_or(mask1, mask2)
+    elif color_code == "G":
+        # Green hue range
+        color_mask = cv2.inRange(hsv_frame, np.array([35, 50, 50]), np.array([85, 255, 255]))
+    elif color_code == "B":
+        # Blue hue range
+        color_mask = cv2.inRange(hsv_frame, np.array([100, 50, 50]), np.array([140, 255, 255]))
+    else:
+        raise ValueError(f"Invalid color code: {color_code}")
+
+    # Extract the V (Value/Brightness) channel from HSV
+    v_channel = hsv_frame[:, :, 2]
+
+    # Apply mask to get brightness of only target color pixels
+    return cv2.bitwise_and(v_channel, v_channel, mask=color_mask)
 
 
 def _apply_grayscale_conversion(
@@ -182,15 +228,15 @@ def _apply_grayscale_conversion(
             return _grayscale_numpy(frame, color)
         elif backend == "pillow":
             return _grayscale_pillow(frame, color)
-        elif backend == "opencv_split":
-            return _grayscale_opencv_split(frame, color)
+        elif backend == "opencv_hsv":
+            return _grayscale_opencv_hsv(frame, color)
         else:
             raise ValueError(f"Invalid backend: {backend}")
     else:
         raise ValueError(f"Invalid method: {method}")
 
 
-_GRAYSCALE_COMPARISON_METHODS = ("standard", "numpy", "pillow", "opencv_split")
+_GRAYSCALE_COMPARISON_METHODS = ("standard", "numpy", "pillow", "opencv_hsv")
 
 
 def _compare_grayscale_methods(frame: np.ndarray, color: str = "R") -> dict:
@@ -218,6 +264,50 @@ def _compare_grayscale_methods(frame: np.ndarray, color: str = "R") -> dict:
             )
         elapsed = time.perf_counter() - start
         results[method] = (result, elapsed, float(np.mean(result)))
+    return results
+
+
+def _compare_grayscale_difference_methods(
+    frame1: np.ndarray,
+    frame2: np.ndarray,
+    color: str = "R",
+    cam_lib=None,
+    amplification_method: str = "none",
+    gain_factor: float = 1.0,
+) -> dict:
+    """
+    Take two raw frames, apply each grayscale conversion method to both,
+    compute the absolute difference between them, apply amplification,
+    and compare the results side by side. Shows how the choice of grayscale
+    method affects the quality of the difference visualization.
+
+    Returns a dict: method name -> (difference_array, elapsed_seconds, mean_intensity).
+    mean_intensity is the average pixel value of the difference (higher = more change detected).
+
+    Time: O(k * width * height) for k = len(_GRAYSCALE_COMPARISON_METHODS),
+    Space: O(k * width * height) for the k difference arrays.
+    """
+    results = {}
+    for method in _GRAYSCALE_COMPARISON_METHODS:
+        start = time.perf_counter()
+        # Convert both frames using the same method
+        if method == "standard":
+            gray1 = _apply_grayscale_conversion(frame1, method="standard")
+            gray2 = _apply_grayscale_conversion(frame2, method="standard")
+        else:
+            gray1 = _apply_grayscale_conversion(
+                frame1, method="single_channel", color=color, backend=method
+            )
+            gray2 = _apply_grayscale_conversion(
+                frame2, method="single_channel", color=color, backend=method
+            )
+        # Compute absolute difference between the grayscale frames
+        diff = cv2.absdiff(gray1, gray2)
+        # Apply amplification to make difference visible
+        if cam_lib and amplification_method != "none":
+            diff = _apply_diff_amplification(cam_lib, diff, amplification_method, gain_factor)
+        elapsed = time.perf_counter() - start
+        results[method] = (diff, elapsed, float(np.mean(diff)))
     return results
 
 
@@ -576,6 +666,12 @@ class MonitorWorker(QThread):
         self._clahe_clip_limit = settings.get("clahe_clip_limit", 2.0)
         self._clahe_tile_grid_size = settings.get("clahe_tile_grid_size", (8, 8))
         self._gamma = settings.get("gamma", 0.5)
+        self._frame_grab_retry_delay_s = settings.get(
+            "frame_grab_retry_delay_s", DEFAULT_FRAME_GRAB_RETRY_DELAY_S
+        )
+        self._frame_grab_max_total_wait_s = settings.get(
+            "frame_grab_max_total_wait_s", DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S
+        )
         self._stop = False
 
 
@@ -592,17 +688,21 @@ class MonitorWorker(QThread):
             return
 
         camera = None
+        format_info = {}
         try:
             if self._camera_choice == "1":
-                camera = cam_lib.connect_camera()
+                camera, format_info = cam_lib.connect_camera(grayscale_method=self._grayscale_method)
             else:
-                camera = cam_lib.connect_camera(self._camera_index)
+                camera, format_info = cam_lib.connect_camera(self._camera_index, self._grayscale_method)
 
             if camera is None:
                 self.error.emit(
                     "Could not open the camera. Check it is plugged in and try again."
                 )
                 return
+
+            # Store format_info so _grab_frame() and _apply_grayscale_conversion() can use it
+            self._format_info = format_info
 
             exposure_s = self._settings["exposure_s"]
             exposure_value = math.log2(exposure_s) if self._camera_choice == "2" \
@@ -625,6 +725,51 @@ class MonitorWorker(QThread):
                 cam_lib.disconnect_camera(camera)
             self.finished_cleanly.emit()
 
+    def _grab_frame(self, cam_lib, camera):
+        """
+        Wraps grab_single_frame_color_with_retry() with defensive validation.
+
+        Configured retry budget (see DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S
+        above for the real hardware measurement this is based on), so
+        every frame grab in either loop below gets the same, single place
+        to tune retry behavior.
+
+        Also validates frame format and applies corrections (e.g., RGB→BGR swap).
+        """
+        frame = cam_lib.grab_single_frame_color_with_retry(
+            camera,
+            retry_delay_s=self._frame_grab_retry_delay_s,
+            max_total_wait_s=self._frame_grab_max_total_wait_s,
+        )
+
+        if frame is None:
+            return None
+
+        # Defensive check 1: Validate shape
+        if len(frame.shape) == 2:
+            # Grayscale (H, W) - OK for Mono8 cameras
+            pass
+        elif len(frame.shape) == 3:
+            if frame.shape[2] != 3:
+                print(f"❌ ERROR: Frame has {frame.shape[2]} channels, expected 1 or 3. Shape: {frame.shape}")
+                return None
+        else:
+            print(f"❌ ERROR: Unexpected frame shape {frame.shape}. Expected (H, W) or (H, W, 3)")
+            return None
+
+        # Defensive check 2: Validate dtype
+        if frame.dtype != np.uint8:
+            print(f"❌ ERROR: Frame dtype is {frame.dtype}, expected uint8")
+            return None
+
+        # Defensive check 3: Apply channel swap if RGB→BGR mismatch detected
+        format_info = getattr(self, '_format_info', {})
+        if format_info.get("needs_channel_swap", False):
+            if len(frame.shape) == 3:
+                frame = frame[:, :, ::-1]  # Swap R and B channels
+
+        return frame
+
     def _run_frame_averaging(self, cam_lib, camera, gain_factor, n_averages):
         """
         Frame averaging (classic method):
@@ -636,11 +781,14 @@ class MonitorWorker(QThread):
         prev_averaged = None
 
         while not self._stop:
-            # grab_single_frame_color(), not grab_single_frame(): the plain
-            # version already reduces a color frame to greyscale before
-            # returning it, which would make single-channel R/G/B extraction
-            # below a no-op no matter what color or backend was picked.
-            frame = cam_lib.grab_single_frame_color(camera)
+            # grab_single_frame_color_with_retry(), not grab_single_frame():
+            # the plain version already reduces a color frame to greyscale
+            # before returning it, which would make single-channel R/G/B
+            # extraction below a no-op no matter what color or backend was
+            # picked. The _with_retry version also gives a flaky USB
+            # webcam a couple of extra chances before this loop gives up,
+            # instead of failing on the very first dropped frame.
+            frame = self._grab_frame(cam_lib, camera)
             if frame is None:
                 self.error.emit("Failed to grab frame — check camera connection.")
                 break
@@ -655,7 +803,17 @@ class MonitorWorker(QThread):
             frame_buffer.append(frame)
 
             if len(frame_buffer) == n_averages:
-                averaged = np.mean(frame_buffer, axis=0).astype(np.uint8)
+                # Defensive check: ensure all frames in buffer have same shape
+                first_shape = frame_buffer[0].shape
+                for i, f in enumerate(frame_buffer[1:], 1):
+                    if f.shape != first_shape:
+                        print(f"❌ ERROR: Frame {i} has shape {f.shape}, expected {first_shape}")
+                        self.error.emit("Frame shapes are inconsistent — aborting.")
+                        break
+
+                # Compute average with clipping to prevent data loss
+                averaged_float = np.mean(frame_buffer, axis=0)
+                averaged = np.clip(averaged_float, 0, 255).astype(np.uint8)
                 frame_buffer = []
 
                 diff = None
@@ -685,13 +843,13 @@ class MonitorWorker(QThread):
         current_diff = None
 
         while not self._stop:
-            # grab_single_frame_color(), see _run_frame_averaging() above for why.
-            frame1 = cam_lib.grab_single_frame_color(camera)
+            # grab_single_frame_color_with_retry(), see _run_frame_averaging() above for why.
+            frame1 = self._grab_frame(cam_lib, camera)
             if frame1 is None:
                 self.error.emit("Failed to grab frame — check camera connection.")
                 break
 
-            frame2 = cam_lib.grab_single_frame_color(camera)
+            frame2 = self._grab_frame(cam_lib, camera)
             if frame2 is None:
                 self.error.emit("Failed to grab frame — check camera connection.")
                 break
@@ -713,7 +871,17 @@ class MonitorWorker(QThread):
             self.frame_ready.emit(frame2, current_diff)
 
             if len(diff_buffer) == n_averages:
-                averaged_diff = np.mean(diff_buffer, axis=0).astype(np.uint8)
+                # Defensive check: ensure all diffs in buffer have same shape
+                first_shape = diff_buffer[0].shape
+                for i, d in enumerate(diff_buffer[1:], 1):
+                    if d.shape != first_shape:
+                        print(f"❌ ERROR: Diff {i} has shape {d.shape}, expected {first_shape}")
+                        self.error.emit("Difference shapes are inconsistent — aborting.")
+                        break
+
+                # Compute average with clipping to prevent data loss
+                averaged_diff_float = np.mean(diff_buffer, axis=0)
+                averaged_diff = np.clip(averaged_diff_float, 0, 255).astype(np.uint8)
                 diff_buffer = []
 
                 if prev_averaged_diff is not None:
@@ -798,7 +966,7 @@ class AmplificationComparisonDialog(QDialog):
 class GrayscaleComparisonDialog(QDialog):
     """
     Shows Standard Full-RGB and all three single-channel extraction
-    backends (NumPy, Pillow, OpenCV Split) applied to the same raw frame,
+    backends (NumPy, Pillow, OpenCV HSV) applied to the same raw frame,
     side by side, using whichever color channel is currently selected in
     Settings. Answers "does switching to single-channel extraction actually
     make a visible difference" by letting the operator look at the results
@@ -809,7 +977,7 @@ class GrayscaleComparisonDialog(QDialog):
         "standard": "Standard Full-RGB",
         "numpy": "Single-Channel (NumPy)",
         "pillow": "Single-Channel (Pillow)",
-        "opencv_split": "Single-Channel (OpenCV Split)",
+        "opencv_hsv": "Single-Channel (OpenCV HSV)",
     }
 
     def __init__(self, frame, color, parent=None):
@@ -831,6 +999,60 @@ class GrayscaleComparisonDialog(QDialog):
 
             caption = QLabel(
                 f"{self._LABELS[method]}\n{elapsed * 1000:.2f} ms, avg brightness {brightness:.1f}"
+            )
+            caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            column_layout = QVBoxLayout()
+            column_layout.addWidget(image_label)
+            column_layout.addWidget(caption)
+            grid.addLayout(column_layout, 0, column)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+
+        outer = QVBoxLayout()
+        outer.addLayout(grid)
+        outer.addWidget(close_button)
+        self.setLayout(outer)
+
+
+class GrayscaleDifferenceComparisonDialog(QDialog):
+    """
+    Shows how each grayscale conversion method affects the difference between
+    two consecutive frames. Takes two raw frames, applies each grayscale method
+    to both, computes the difference, and displays all four results side by side.
+    Answers "which grayscale method produces the clearest difference visualization"
+    without restarting the monitor.
+    """
+
+    _LABELS = {
+        "standard": "Standard Full-RGB",
+        "numpy": "Single-Channel (NumPy)",
+        "pillow": "Single-Channel (Pillow)",
+        "opencv_hsv": "Single-Channel (OpenCV HSV)",
+    }
+
+    def __init__(self, frame1, frame2, color, cam_lib=None, amplification_method="none", gain_factor=1.0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compare Grayscale Methods (Difference)")
+
+        results = _compare_grayscale_difference_methods(
+            frame1, frame2, color, cam_lib, amplification_method, gain_factor
+        )
+
+        grid = QGridLayout()
+        for column, method in enumerate(_GRAYSCALE_COMPARISON_METHODS):
+            result, elapsed, mean_intensity = results[method]
+
+            image_label = QLabel()
+            image_label.setPixmap(
+                _frame_to_pixmap(result).scaled(
+                    220, 220, Qt.AspectRatioMode.KeepAspectRatio
+                )
+            )
+
+            caption = QLabel(
+                f"{self._LABELS[method]}\n{elapsed * 1000:.2f} ms, avg intensity {mean_intensity:.1f}"
             )
             caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -873,7 +1095,7 @@ class LiveMonitorPage(QWidget):
         self._live_graph = None
         self._settings = None
         self._last_raw_diff = None
-        self._last_raw_frame = None
+        self._last_two_raw_frames = []  # Store last 2 raw frames for difference comparison
 
         layout = QVBoxLayout()
 
@@ -917,7 +1139,7 @@ class LiveMonitorPage(QWidget):
         self.compare_grayscale_button = QPushButton("Compare Grayscale Methods")
         self.compare_grayscale_button.setEnabled(False)
         self.compare_grayscale_button.setToolTip(
-            "Run Standard Full-RGB and all three single-channel backends on the current frame, side by side."
+            "Show how each grayscale method affects the latest frame difference."
         )
         self.compare_grayscale_button.clicked.connect(self._open_grayscale_comparison_dialog)
         controls_layout.addWidget(self.compare_grayscale_button)
@@ -940,7 +1162,7 @@ class LiveMonitorPage(QWidget):
 
         self._settings = settings
         self._last_raw_diff = None
-        self._last_raw_frame = None
+        self._last_two_raw_frames = []
         self.compare_button.setEnabled(False)
         self.compare_grayscale_button.setEnabled(False)
 
@@ -964,7 +1186,7 @@ class LiveMonitorPage(QWidget):
         self.compare_button.setEnabled(False)
         self.compare_grayscale_button.setEnabled(False)
         self._last_raw_diff = None
-        self._last_raw_frame = None
+        self._last_two_raw_frames = []
 
     def _stop_monitor(self):
         if self._worker is not None:
@@ -973,22 +1195,36 @@ class LiveMonitorPage(QWidget):
         self.compare_button.setEnabled(False)
         self.compare_grayscale_button.setEnabled(False)
         self._last_raw_diff = None
-        self._last_raw_frame = None
+        self._last_two_raw_frames = []
 
     def _on_raw_diff(self, raw_diff):
         self._last_raw_diff = raw_diff
         self.compare_button.setEnabled(True)
 
     def _on_raw_frame(self, raw_frame):
-        self._last_raw_frame = raw_frame
-        self.compare_grayscale_button.setEnabled(True)
+        # Store the last 2 raw frames for difference comparison
+        self._last_two_raw_frames.append(raw_frame)
+        if len(self._last_two_raw_frames) > 2:
+            self._last_two_raw_frames.pop(0)
+        # Enable button once we have at least 2 frames to compare
+        if len(self._last_two_raw_frames) >= 2:
+            self.compare_grayscale_button.setEnabled(True)
 
     def _open_grayscale_comparison_dialog(self):
-        if self._last_raw_frame is None:
+        if len(self._last_two_raw_frames) < 2 or self._worker is None:
             return
 
+        frame1, frame2 = self._last_two_raw_frames[0], self._last_two_raw_frames[1]
         color = self._settings.get("grayscale_color", "R") if self._settings else "R"
-        dialog = GrayscaleComparisonDialog(self._last_raw_frame, color, parent=self)
+        amplification_method = self._settings.get("diff_amplification", "gain_factor") if self._settings else "gain_factor"
+        gain_factor = self._settings.get("gain_factor", 10.0) if self._settings else 10.0
+
+        module_name = _CAMERA_CONTROL_MODULES[self._worker._camera_choice]
+        cam_lib = importlib.import_module(module_name)
+
+        dialog = GrayscaleDifferenceComparisonDialog(
+            frame1, frame2, color, cam_lib, amplification_method, gain_factor, parent=self
+        )
         dialog.exec()
 
     def _open_comparison_dialog(self):
@@ -1258,7 +1494,7 @@ class SettingsPage(QWidget):
         backend_tooltips = {
             "numpy": "Fast NumPy slicing (recommended)",
             "pillow": "Pillow Image library extraction",
-            "opencv_split": "OpenCV channel splitting (cv2.split)",
+            "opencv_hsv": "OpenCV HSV hue masking (isolates specific light color)",
         }
         for backend, tooltip in backend_tooltips.items():
             self._backend_combo.addItem(backend.replace("_", " ").title(), backend)
@@ -1438,7 +1674,22 @@ class SettingsPage(QWidget):
         self._update_amplification_ui_visibility()
 
         layout.addStretch()
-        self.setLayout(layout)
+
+        # Wrap in a scroll area so the page is scrollable when it gets tall,
+        # the same reasoning as SetupPage's own scroll area: without this, a
+        # QStackedWidget must be big enough to show every page it holds, so
+        # this page's own minimum height becomes the whole window's minimum
+        # height, even while some other page is the one actually visible.
+        scroll_widget = QWidget()
+        scroll_widget.setLayout(layout)
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(scroll_widget)
+        scroll_area.setWidgetResizable(True)
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll_area)
+        self.setLayout(main_layout)
 
     def _update_amplification_ui_visibility(self):
         """Show/hide CLAHE and gamma param controls based on amplification method selection."""
@@ -1551,7 +1802,22 @@ class MainWindow(QMainWindow):
         super().__init__()
         QApplication.instance().setStyleSheet(_STYLESHEET)
         self.setWindowTitle("ESPI Camera Monitor")
-        self.resize(900, 700)
+
+        # Clamp the launch size to the actual screen instead of a bare
+        # resize(900, 700): on a screen shorter than 700px tall (or if a
+        # future page grows past that height again), a fixed resize() can
+        # come up partly off screen, cropping whatever is at the bottom
+        # (the Settings button, the Live Monitor page's control row). Using
+        # the smaller of "our preferred size" and "what actually fits" means
+        # the window is always fully visible at launch, on any screen.
+        screen = QApplication.instance().primaryScreen()
+        preferred_width, preferred_height = 900, 700
+        if screen is not None:
+            available = screen.availableGeometry()
+            margin = 40
+            preferred_width = min(preferred_width, available.width() - margin)
+            preferred_height = min(preferred_height, available.height() - margin)
+        self.resize(preferred_width, preferred_height)
 
         # Create a custom nav widget with layout for bottom-sticking Settings
         nav_widget = QFrame()
@@ -1583,10 +1849,10 @@ class MainWindow(QMainWindow):
         self._nav.setObjectName("NavRail")
         self._nav.setIconSize(QSize(18, 18))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.tune-variant', color=QColor(_TEXT_SECONDARY)), "Setup"
+            qta.icon('mdi6.tune-variant', color=QColor(_TEXT_PRIMARY)), "Setup"
         ))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.video-outline', color=QColor(_TEXT_SECONDARY)), "Live Monitor"
+            qta.icon('mdi6.video-outline', color=QColor(_TEXT_PRIMARY)), "Live Monitor"
         ))
         self._nav.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         nav_layout.addWidget(self._nav)
@@ -1604,7 +1870,7 @@ class MainWindow(QMainWindow):
         # Settings button at bottom
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("SidebarSettings")
-        self.settings_button.setIcon(qta.icon('mdi6.cog-outline'))
+        self.settings_button.setIcon(qta.icon('mdi6.cog-outline', color=QColor(_TEXT_PRIMARY)))
         self.settings_button.clicked.connect(self._open_settings)
         nav_layout.addWidget(self.settings_button)
 
@@ -1686,6 +1952,20 @@ class MainWindow(QMainWindow):
         self._nav.setCurrentRow(1)
         # setCurrentRow doesn't fire itemClicked, so switch stack directly
         self._stack.setCurrentIndex(1)
+        # setFocus() must come AFTER setCurrentIndex(): switching the
+        # stack's visible page can itself move focus onto whatever is
+        # focusable there, silently undoing an earlier setFocus() call on
+        # the nav rail. setCurrentRow() alone changes which row is current
+        # and selected, but does not move actual keyboard focus onto the
+        # nav rail, and Qt style sheets can render ::item:selected as a
+        # much fainter "inactive" highlight whenever the widget holding
+        # the selection isn't the one with real focus, which it never was
+        # here since the click that got us here landed on the Start
+        # Monitor button, not the nav list. Forcing focus explicitly,
+        # last, is what makes the highlight actually show, the same way it
+        # already did for Setup, which happened to receive initial focus
+        # at construction time.
+        self._nav.setFocus(Qt.FocusReason.OtherFocusReason)
         self.statusBar().showMessage("Monitoring")
 
     def _on_monitor_stopped(self):
@@ -1694,6 +1974,8 @@ class MainWindow(QMainWindow):
         self._nav.setCurrentRow(0)
         # setCurrentRow doesn't fire itemClicked, so switch stack directly
         self._stack.setCurrentIndex(0)
+        # setFocus() after setCurrentIndex(), see _start_monitor() above for why.
+        self._nav.setFocus(Qt.FocusReason.OtherFocusReason)
         self.statusBar().showMessage("Idle")
 
     def closeEvent(self, event):
@@ -1714,16 +1996,14 @@ class MainWindow(QMainWindow):
             self.live_monitor_page.stop_and_wait()
         event.accept()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # When window is resized, update nav list height to fill available space
-        if self._nav:
-            sidebar_height = self._nav.parent().height() if self._nav.parent() else self.height()
-            # Calculate available height: sidebar height minus margins and other items
-            # margins(top) + separator(~17px) + button(~40px) = 65px
-            available_height = max(76, sidebar_height - 65)  # min 76px for 2 items
-            self._nav.setMinimumHeight(available_height)
-            self._nav.setMaximumHeight(available_height)
+    # No resizeEvent() override: the nav list's own Expanding vertical size
+    # policy (set in __init__) is what makes it grow with the window. An
+    # earlier version forced the nav list's min/max height here from a value
+    # computed off the sidebar's own current height, which is stale at the
+    # moment resizeEvent() fires. That, combined with a fixed max-height in
+    # the QSS below, meant every resize raised the nav list's minimum height
+    # a bit further and never lowered it, so growing the window once (e.g.
+    # maximizing it) permanently prevented shrinking back down afterward.
 
 
 # ==============================================================================
@@ -1772,7 +2052,6 @@ QListWidget#NavRail {{
     border-right: 1px solid {_BORDER};
     padding: 12px 0px;
     outline: 0;
-    max-height: {SIDEBAR_ITEM_HEIGHT * 2 + 24}px;
 }}
 QListWidget#NavRail::item {{
     color: {_TEXT_SECONDARY};
@@ -1784,7 +2063,7 @@ QListWidget#NavRail::item:hover {{
     background-color: #202020;
     color: {_TEXT_PRIMARY};
 }}
-QListWidget#NavRail::item:selected {{
+QListWidget#NavRail::item:selected, QListWidget#NavRail::item:selected:!active {{
     background-color: {_SURFACE_BG};
     color: {_TEXT_PRIMARY};
     border-left: 3px solid {_TEXT_PRIMARY};

@@ -62,6 +62,7 @@ import cv2
 import numpy as np
 import os
 import tempfile
+import time
 from datetime import datetime
 from matplotlib import pyplot as plt
 
@@ -110,18 +111,34 @@ def _apply_roi(frame, camera):
 # Index 0 is the first camera the computer finds (the default).
 # ==============================================================================
 
-def connect_camera(camera_index: int = 0):
+def connect_camera(camera_index: int = 0, grayscale_method: str = "standard"):
     """
-    Open a camera by its index number and return it.
+    Open a camera by its index number and return it WITH format metadata.
 
     camera_index = 0 means "use the first camera the computer finds."
     If you have more than one camera and it opens the wrong one, try 1, 2, etc.
 
-    Returns the camera object if successful, or None if no camera is found.
+    Returns a tuple: (camera_object, format_info) on success, or (None, {}) if failed.
+
+    The format_info dict contains:
+        - "hardware_format": always "BGR8" for OpenCV cameras
+        - "target_format": always "BGR8packed" (OpenCV native)
+        - "needs_channel_swap": always False (no swap needed)
+        - "camera_type": "USB/OpenCV"
+        - "supports_color": True for color cameras, False for mono/grayscale
+
+    Parameters:
+        camera_index : int
+            Which camera to open (0 = first, 1 = second, etc.)
+        grayscale_method : "standard" or "single_channel"
+            Provided for compatibility with camera_control.py (Basler).
+            IMPORTANT: USB cameras via OpenCV often return grayscale frames.
+            If a camera is monochrome, single-channel extraction will not work
+            because there is no color data to extract from.
 
     Example:
-        camera = connect_camera()        # opens first camera
-        camera = connect_camera(1)       # opens second camera
+        camera, format_info = connect_camera()        # opens first camera
+        camera, format_info = connect_camera(1)       # opens second camera
         if camera is None:
             print("No camera found.")
     """
@@ -132,13 +149,27 @@ def connect_camera(camera_index: int = 0):
         print("Things to try:")
         print("  - Is a camera plugged in?")
         print("  - Try connect_camera(1) or connect_camera(2)")
-        return None
+        return None, {}
 
     # Read one property to confirm the camera is actually delivering frames.
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"Connected to camera {camera_index}  ({width} x {height} px)")
-    return cap
+
+    # Build format metadata dict
+    # OpenCV (cv2.VideoCapture) always returns BGR for color cameras
+    # or grayscale for mono cameras. No channel swap needed.
+    format_info = {
+        "hardware_format": "BGR8",
+        "target_format": "BGR8packed",
+        "needs_channel_swap": False,
+        "camera_type": "USB/OpenCV",
+        "supports_color": True,  # Assume color unless proven otherwise
+        "grayscale_method": grayscale_method,
+    }
+
+    print(f"✓ Format match: USB camera is {format_info['hardware_format']} (OpenCV native)")
+    return cap, format_info
 
 
 def disconnect_camera(camera):
@@ -466,6 +497,73 @@ def grab_single_frame_color(camera):
     frame = _apply_roi(frame, camera)
 
     return frame
+
+
+def grab_single_frame_color_with_retry(camera, max_retries: int = 3, retry_delay_s: float = 0.3,
+                                        max_total_wait_s: float | None = None):
+    """
+    Like grab_single_frame_color(), but tries again if the first attempt fails.
+
+    Some USB webcams need real wall-clock time to warm up right after
+    connect_camera() opens them, not just "try again immediately". A first
+    diagnostic (open, then read immediately, no exposure/gain changes)
+    confirmed read() failing on the first two attempts and succeeding from
+    the third attempt onward. A second, more realistic diagnostic that
+    mirrored the app's exact sequence -- open, THEN set_exposure_manual(),
+    THEN set_gain_manual(), THEN start reading -- showed a much longer
+    stall: about 3.4 seconds before the first successful read(). A fixed
+    attempt count cannot adapt to that: max_retries=3 with a 0.3s sleep
+    between attempts only budgets 0.6 seconds total.
+
+    max_total_wait_s fixes this by tracking real elapsed time instead of
+    just counting attempts: as long as that many wall-clock seconds have
+    not yet passed, another attempt is made even after max_retries would
+    otherwise have given up. This also covers a second real finding: the
+    same camera dropped frames again mid-session, well after its initial
+    warm-up succeeded, so the same time budget is worth giving to every
+    grab, not only the first one after connecting.
+
+    Args:
+        camera           : the camera object returned by connect_camera()
+        max_retries      : minimum number of attempts to make. Always
+                            honored even if max_total_wait_s is None.
+        retry_delay_s     : seconds to wait between attempts, giving the
+                            camera real time to finish warming up.
+        max_total_wait_s : if set, keep retrying beyond max_retries until
+                            this many wall-clock seconds have elapsed since
+                            the first attempt. None (the default) preserves
+                            the old count-only behavior exactly.
+
+    Returns the first successful frame (color or greyscale, matching
+    grab_single_frame_color()'s own return shape), or None if every attempt
+    failed.
+
+    Example:
+        frame = grab_single_frame_color_with_retry(camera, max_retries=3)
+        frame = grab_single_frame_color_with_retry(camera, max_total_wait_s=6.0)
+    """
+    start = time.monotonic() if max_total_wait_s is not None else None
+    attempt = 0
+
+    while True:
+        attempt += 1
+        ok, raw = camera.read()
+
+        if ok and raw is not None:
+            return _apply_roi(raw, camera)
+
+        within_attempt_budget = attempt < max_retries
+        within_time_budget = (
+            start is not None and (time.monotonic() - start) < max_total_wait_s
+        )
+        if not (within_attempt_budget or within_time_budget):
+            break
+
+        print(f"  Frame grab failed, retrying (attempt {attempt + 1})...")
+        time.sleep(retry_delay_s)
+
+    print(f"  Frame grab failed after {attempt} attempt(s).")
+    return None
 
 
 def grab_single_frame_with_retry(camera, max_retries: int = 3):

@@ -64,7 +64,7 @@ from monitor_gui import (
     _apply_grayscale_conversion,
     _grayscale_numpy,
     _grayscale_pillow,
-    _grayscale_opencv_split,
+    _grayscale_opencv_hsv,
     LearnMoreDialog,
     GrayscaleComparisonDialog,
     _compare_grayscale_methods,
@@ -95,8 +95,8 @@ def _stop_leaked_workers(monkeypatch):
     Guarantee no MonitorWorker keeps running past its test, pass or fail.
 
     A MonitorWorker's while loop is only paced by real camera I/O — when a
-    test mocks grab_single_frame_color() to return instantly, nothing
-    throttles the loop at all. If a test raises (e.g. a failed assertion) before it
+    test mocks grab_single_frame_color_with_retry() to return instantly,
+    nothing throttles the loop at all. If a test raises (e.g. a failed assertion) before it
     reaches stop_and_wait(), the worker thread is left spinning as fast as
     the CPU allows, forever — this was hit for real while writing this
     suite and pinned a full CPU core indefinitely. Wrapping the
@@ -471,17 +471,15 @@ def bgr_frame_distinct_channels():
 
 class TestGrayscaleOpencvSplit:
     """
-    _grayscale_opencv_split replaced _grayscale_opencv_hsv, which hue
-    thresholded the frame and zeroed every pixel outside the target color's
-    hue band instead of returning that channel's actual intensity, unlike
-    numpy and pillow. These tests hold the new backend to the same contract
-    the other two already have: a continuous intensity value for every
-    pixel, matching _grayscale_numpy exactly.
+    _grayscale_opencv_hsv uses HSV-based hue masking to extract single-channel
+    intensity. It isolates pixels of a specific hue and returns their brightness,
+    unlike raw channel extraction. These tests verify the backend returns a
+    continuous intensity value for every pixel, matching _grayscale_numpy exactly.
     """
 
     @pytest.mark.parametrize("color_code,expected_value", [("B", 100), ("G", 150), ("R", 200)])
     def test_extracts_correct_channel_value(self, bgr_frame_distinct_channels, color_code, expected_value):
-        result = _grayscale_opencv_split(bgr_frame_distinct_channels, color_code)
+        result = _grayscale_opencv_hsv(bgr_frame_distinct_channels, color_code)
         assert np.all(result == expected_value)
 
     @pytest.mark.parametrize("color_code", ["B", "G", "R"])
@@ -491,13 +489,13 @@ class TestGrayscaleOpencvSplit:
         rng = np.random.default_rng(2)
         bgr = rng.integers(0, 256, size=(100, 100, 3), dtype=np.uint8)
 
-        via_opencv = _grayscale_opencv_split(bgr, color_code)
+        via_opencv = _grayscale_opencv_hsv(bgr, color_code)
         via_numpy = _grayscale_numpy(bgr, color_code)
 
         assert np.array_equal(via_opencv, via_numpy)
 
     def test_output_is_uint8_2d(self, bgr_frame_distinct_channels):
-        result = _grayscale_opencv_split(bgr_frame_distinct_channels, "R")
+        result = _grayscale_opencv_hsv(bgr_frame_distinct_channels, "R")
         assert result.dtype == np.uint8
         assert result.shape == bgr_frame_distinct_channels.shape[:2]
 
@@ -508,7 +506,7 @@ class TestGrayscaleOpencvSplit:
         no dominant hue) used to come back mostly black; it must not anymore.
         """
         low_saturation_frame = np.full((20, 20, 3), 180, dtype=np.uint8)
-        result = _grayscale_opencv_split(low_saturation_frame, "R")
+        result = _grayscale_opencv_hsv(low_saturation_frame, "R")
         assert np.all(result == 180)
 
 
@@ -709,7 +707,7 @@ class TestMonitorWorker:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = MonitorWorker("2", 0, _settings())
@@ -730,7 +728,7 @@ class TestMonitorWorker:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: red_frame.copy())
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: red_frame.copy())
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = MonitorWorker("2", 0, _settings())
@@ -756,7 +754,7 @@ class TestMonitorWorker:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else gray_100x100_b)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else gray_100x100_b)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = MonitorWorker("2", 0, _settings())
@@ -781,7 +779,7 @@ class TestMonitorWorker:
             lambda cam, value: received_exposure.append(value),
         )
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = MonitorWorker("2", 0, _settings(exposure_s=0.06))
@@ -798,7 +796,7 @@ class TestMonitorWorker:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(
             cci, "disconnect_camera", lambda cam: disconnect_calls.append(cam)
         )
@@ -832,7 +830,7 @@ class TestMonitorWorker:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: None)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: None)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = MonitorWorker("2", 0, _settings())
@@ -851,10 +849,10 @@ class TestMonitorWorker:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
 
-        def _boom(cam):
+        def _boom(cam, **kwargs):
             raise RuntimeError("camera unplugged")
 
-        monkeypatch.setattr(cci, "grab_single_frame_color", _boom)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", _boom)
         monkeypatch.setattr(
             cci, "disconnect_camera", lambda cam: disconnect_calls.append(cam)
         )
@@ -901,7 +899,7 @@ class TestAveragingStrategies:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
         monkeypatch.setattr(
-            cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else None
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else None
         )
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
         monkeypatch.setattr(cci, "substract_frames", lambda a, b: cv2.absdiff(a, b))
@@ -963,7 +961,7 @@ class TestAveragingStrategies:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
         monkeypatch.setattr(
-            cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else None
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else None
         )
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
         monkeypatch.setattr(cci, "substract_frames", lambda a, b: cv2.absdiff(a, b))
@@ -1025,7 +1023,7 @@ class TestAveragingStrategies:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
         monkeypatch.setattr(
-            cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else None
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else None
         )
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
         monkeypatch.setattr(cci, "substract_frames", lambda a, b: cv2.absdiff(a, b))
@@ -1088,7 +1086,7 @@ class TestSingleChannelExtractionEndToEnd:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: red_frame.copy())
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: red_frame.copy())
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         settings = _settings(
@@ -1119,7 +1117,7 @@ class TestSingleChannelExtractionEndToEnd:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: red_frame.copy())
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: red_frame.copy())
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         settings = _settings(grayscale_method="standard")
@@ -1149,7 +1147,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         page = LiveMonitorPage()
@@ -1170,7 +1168,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         page = LiveMonitorPage()
@@ -1204,7 +1202,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
         monkeypatch.setattr(
-            cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else gray_100x100_b
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else gray_100x100_b
         )
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
@@ -1225,7 +1223,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
         monkeypatch.setattr(
-            cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else gray_100x100_b
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else gray_100x100_b
         )
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
@@ -1247,7 +1245,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
         monkeypatch.setattr(
-            cci, "grab_single_frame_color", lambda cam: frames.pop(0) if frames else gray_100x100_b
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else gray_100x100_b
         )
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
@@ -1292,7 +1290,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         page = LiveMonitorPage()
@@ -1310,7 +1308,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         page = LiveMonitorPage()
@@ -1329,7 +1327,7 @@ class TestLiveMonitorPage:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         created = []
@@ -1373,7 +1371,7 @@ class TestMainWindow:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         window = MainWindow()
@@ -1385,6 +1383,91 @@ class TestMainWindow:
         assert window._nav.currentRow() == 1
 
         window.live_monitor_page.stop_and_wait()
+
+    def test_starting_monitor_moves_focus_onto_nav_rail(self, qtbot, monkeypatch, gray_100x100):
+        """
+        Regression test: currentRow() being 1 and item(1).isSelected() being
+        True are not enough on their own. Qt style sheets can render
+        ::item:selected differently depending on whether the QListWidget
+        itself is the actually focused ("active") widget; setCurrentRow()
+        changes which row is current and selected, but does not, on its
+        own, move keyboard focus onto the list. Without focus actually
+        landing on the nav rail, the Live Monitor row's highlight silently
+        failed to show on a real desktop even though every other check
+        (currentRow, isSelected) reported the expected state.
+
+        This checks that setFocus() is actually called on the nav rail,
+        rather than checking hasFocus()/isActiveWindow() afterward: those
+        never report True inside this test harness even for a bare
+        QMainWindow with nothing else going on (confirmed directly, outside
+        this suite, before writing this test this way), since window
+        activation depends on real OS-level focus events the offscreen
+        platform doesn't simulate under pytest-qt. Calling setFocus() was
+        confirmed separately, in a standalone script outside pytest, to
+        actually produce hasFocus() == True end to end.
+        """
+        mock_camera = object()
+        # Bounded frame supply (a real grab loop, then None) rather than an
+        # endless lambda: if the assertion below fails, as it will before
+        # the fix lands, the worker must still stop itself on its own after
+        # a couple of grabs. An endless mock plus a failed assertion means
+        # stop_and_wait() below never runs, leaving an unthrottled
+        # background thread flooding the main thread with queued signals
+        # forever, exactly the CPU-pinning hazard _stop_leaked_workers'
+        # docstring warns about.
+        frames = [gray_100x100, gray_100x100]
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
+        monkeypatch.setattr(
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else None
+        )
+        monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+
+        focus_calls = []
+        original_set_focus = window._nav.setFocus
+        monkeypatch.setattr(window._nav, "setFocus", lambda *a, **k: (focus_calls.append(1), original_set_focus(*a, **k)))
+
+        try:
+            window._start_monitor()
+            assert focus_calls, (
+                "MainWindow._start_monitor() never calls self._nav.setFocus(). "
+                "Without it, the Live Monitor row's selected highlight is not "
+                "guaranteed to render, since setCurrentRow() alone does not "
+                "move keyboard focus onto the nav rail."
+            )
+        finally:
+            window.live_monitor_page.stop_and_wait()
+
+    def test_stopping_monitor_moves_focus_back_onto_nav_rail(self, qtbot, monkeypatch, gray_100x100):
+        """Same as above, for _on_monitor_stopped() moving focus back to Setup."""
+        mock_camera = object()
+        frames = [gray_100x100, gray_100x100]
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
+        monkeypatch.setattr(
+            cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: frames.pop(0) if frames else None
+        )
+        monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window._start_monitor()
+        window.live_monitor_page.stop_and_wait()
+
+        focus_calls = []
+        original_set_focus = window._nav.setFocus
+        monkeypatch.setattr(window._nav, "setFocus", lambda *a, **k: (focus_calls.append(1), original_set_focus(*a, **k)))
+
+        window._on_monitor_stopped()
+
+        assert focus_calls, (
+            "MainWindow._on_monitor_stopped() never calls self._nav.setFocus()."
+        )
 
     def test_starting_monitor_switches_stack_to_live_monitor_page(self, qtbot, monkeypatch, gray_100x100):
         """
@@ -1398,7 +1481,7 @@ class TestMainWindow:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         window = MainWindow()
@@ -1423,7 +1506,7 @@ class TestMainWindow:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         window = MainWindow()
@@ -1444,7 +1527,7 @@ class TestMainWindow:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         window = MainWindow()
@@ -1469,7 +1552,7 @@ class TestMainWindow:
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color_with_retry", lambda cam, **kwargs: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         window = MainWindow()

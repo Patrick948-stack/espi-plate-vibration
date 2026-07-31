@@ -328,16 +328,22 @@ class TestConnectCamera:
         with patch("camera_control.pylon") as mock_pylon:
             mock_pylon.TlFactory.GetInstance().CreateFirstDevice.side_effect = \
                 genicam.GenericException("No camera")
-            result = cc.connect_camera()
-        assert result is None
+            camera, format_info = cc.connect_camera()
+        assert camera is None
+        assert isinstance(format_info, dict)
 
     def test_returns_camera_object_on_success(self):
         cam = make_mock_basler_camera()
         with patch("camera_control.pylon") as mock_pylon:
             mock_pylon.TlFactory.GetInstance().CreateFirstDevice.return_value = MagicMock()
             mock_pylon.InstantCamera.return_value = cam
-            result = cc.connect_camera()
-        assert result is cam
+            camera, format_info = cc.connect_camera()
+        assert camera is cam
+        assert isinstance(format_info, dict)
+        assert "hardware_format" in format_info
+        assert "target_format" in format_info
+        assert "needs_channel_swap" in format_info
+        assert "camera_type" in format_info
 
     def test_calls_camera_open(self):
         cam = make_mock_basler_camera()
@@ -495,6 +501,23 @@ class TestGrabSingleFrameColor:
         monkeypatch.setattr(cc, "grab_single_frame", lambda camera: expected)
         cam = make_mock_basler_camera()
         result = cc.grab_single_frame_color(cam)
+        assert result is expected
+
+
+class TestGrabSingleFrameColorWithRetry:
+    """
+    Present for interface consistency with camera_control_inclusive.py and
+    camera_control_allied_vision.py, which both need real retry logic for
+    USB/GigE cameras that occasionally drop the first frame. Basler cameras
+    connect over a dedicated GenICam link, not shared USB bandwidth, so
+    this simply delegates to grab_single_frame_color().
+    """
+
+    def test_delegates_to_grab_single_frame_color(self, monkeypatch):
+        expected = np.zeros((100, 100), dtype=np.uint8)
+        monkeypatch.setattr(cc, "grab_single_frame_color", lambda camera: expected)
+        cam = make_mock_basler_camera()
+        result = cc.grab_single_frame_color_with_retry(cam, max_retries=3)
         assert result is expected
 
 

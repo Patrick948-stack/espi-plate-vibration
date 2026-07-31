@@ -250,8 +250,9 @@ class TestLogFrameMetadata:
 class TestConnectCamera:
     def test_returns_none_when_vimba_not_available(self):
         with patch.object(cc_av, "_VIMBA_AVAILABLE", False):
-            result = cc_av.connect_camera()
-        assert result is None
+            camera, format_info = cc_av.connect_camera()
+        assert camera is None
+        assert isinstance(format_info, dict)
 
     def test_returns_none_when_no_cameras_found(self):
         mock_vimba = MagicMock()
@@ -260,9 +261,10 @@ class TestConnectCamera:
         with patch.object(cc_av, "_VIMBA_AVAILABLE", True), \
              patch.object(cc_av, "Vimba") as MockVimba:
             MockVimba.get_instance.return_value = mock_vimba
-            result = cc_av.connect_camera(0)
+            camera, format_info = cc_av.connect_camera(0)
 
-        assert result is None
+        assert camera is None
+        assert isinstance(format_info, dict)
 
     def test_returns_none_when_index_out_of_range(self):
         cam = _make_av_cam()
@@ -272,21 +274,28 @@ class TestConnectCamera:
         with patch.object(cc_av, "_VIMBA_AVAILABLE", True), \
              patch.object(cc_av, "Vimba") as MockVimba:
             MockVimba.get_instance.return_value = mock_vimba
-            result = cc_av.connect_camera(5)  # only 1 camera present
+            camera, format_info = cc_av.connect_camera(5)  # only 1 camera present
 
-        assert result is None
+        assert camera is None
+        assert isinstance(format_info, dict)
 
     def test_returns_avhandle_on_success(self):
         cam = _make_av_cam()
+        cam.get_pixel_format.return_value = cc_av.PixelFormat.Mono8
         mock_vimba = MagicMock()
         mock_vimba.get_all_cameras.return_value = [cam]
 
         with patch.object(cc_av, "_VIMBA_AVAILABLE", True), \
              patch.object(cc_av, "Vimba") as MockVimba:
             MockVimba.get_instance.return_value = mock_vimba
-            result = cc_av.connect_camera(0)
+            camera, format_info = cc_av.connect_camera(0)
 
-        assert isinstance(result, cc_av._AVHandle)
+        assert isinstance(camera, cc_av._AVHandle)
+        assert isinstance(format_info, dict)
+        assert "hardware_format" in format_info
+        assert "target_format" in format_info
+        assert "needs_channel_swap" in format_info
+        assert "camera_type" in format_info
 
     def test_forces_pixel_format_to_mono8(self):
         # The camera remembers its own pixel format across reconnects, in its
@@ -294,6 +303,7 @@ class TestConnectCamera:
         # other format by an earlier session would silently stay that way,
         # and every downstream function assumes 0-255 Mono8 data.
         cam = _make_av_cam()
+        cam.get_pixel_format.return_value = cc_av.PixelFormat.Mono8
         mock_vimba = MagicMock()
         mock_vimba.get_all_cameras.return_value = [cam]
 
@@ -302,7 +312,8 @@ class TestConnectCamera:
             MockVimba.get_instance.return_value = mock_vimba
             cc_av.connect_camera(0)
 
-        cam.set_pixel_format.assert_called_once_with(cc_av.PixelFormat.Mono8)
+        assert cam.set_pixel_format.called
+        cam.set_pixel_format.assert_called_with(cc_av.PixelFormat.Mono8)
 
 
 class TestSetPixelFormat:
@@ -315,11 +326,13 @@ class TestSetPixelFormat:
 
     def test_converts_string_to_pixelformat_member(self):
         cam = _make_av_cam()
+        cam.get_pixel_format.return_value = cc_av.PixelFormat.Mono8
         handle = _make_handle(cam)
 
         cc_av.set_pixel_format(handle, "Mono8")
 
-        cam.set_pixel_format.assert_called_once_with(cc_av.PixelFormat.Mono8)
+        assert cam.set_pixel_format.called
+        cam.set_pixel_format.assert_called_with(cc_av.PixelFormat.Mono8)
 
     def test_camera_rejecting_format_is_caught_and_printed(self, capsys):
         # Simulates the real SDK call failing (e.g. a camera model that
@@ -332,7 +345,7 @@ class TestSetPixelFormat:
         cc_av.set_pixel_format(handle, "Mono8")
 
         out = capsys.readouterr().out
-        assert "Could not set format" in out
+        assert "CRITICAL" in out or "Exception" in out
 
 
 class TestDisconnectCamera:
@@ -566,6 +579,95 @@ class TestGrabSingleFrameColor:
         handle.cam.get_frame.return_value = mock_frame
         result = cc_av.grab_single_frame(handle)
         assert result.ndim == 2
+
+
+class TestGrabSingleFrameColorWithRetry:
+    """Color-preserving counterpart to grab_single_frame_with_retry(), for the same reason grab_single_frame_color() exists."""
+
+    def test_returns_bgr_frame_on_first_success(self):
+        bgr_img = np.zeros((50, 50, 3), dtype=np.uint8)
+        bgr_img[:, :, 2] = 200
+        mock_frame = _make_frame(bgr_img)
+        handle = _make_handle()
+        handle.cam.get_frame.return_value = mock_frame
+        result = cc_av.grab_single_frame_color_with_retry(handle)
+        assert result is not None
+        assert result.ndim == 3
+        assert np.all(result[:, :, 2] == 200)
+
+    def test_retries_on_failure_then_succeeds(self, monkeypatch):
+        monkeypatch.setattr(cc_av.time, "sleep", lambda seconds: None)
+        img = np.zeros((10, 10, 3), dtype=np.uint8)
+        good_frame = _make_frame(img)
+        bad_frame = _make_frame(img, status="Incomplete")
+        handle = _make_handle()
+        handle.cam.get_frame.side_effect = [bad_frame, good_frame]
+        result = cc_av.grab_single_frame_color_with_retry(handle, max_retries=3)
+        assert result is not None
+
+    def test_returns_none_after_all_retries_fail(self, monkeypatch):
+        monkeypatch.setattr(cc_av.time, "sleep", lambda seconds: None)
+        handle = _make_handle()
+        handle.cam.get_frame.side_effect = RuntimeError("always fails")
+        result = cc_av.grab_single_frame_color_with_retry(handle, max_retries=3)
+        assert result is None
+
+    def test_waits_between_retry_attempts(self, monkeypatch):
+        """
+        Same reasoning as camera_control_inclusive.py's version of this
+        test: a real camera was confirmed to need actual wall-clock warm-up
+        time between attempts, not just an immediate retry, so this checks
+        an actual sleep happens between failed attempts.
+        """
+        sleep_calls = []
+        monkeypatch.setattr(cc_av.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+        img = np.zeros((10, 10, 3), dtype=np.uint8)
+        good_frame = _make_frame(img)
+        bad_frame = _make_frame(img, status="Incomplete")
+        handle = _make_handle()
+        handle.cam.get_frame.side_effect = [bad_frame, bad_frame, good_frame]
+
+        result = cc_av.grab_single_frame_color_with_retry(handle, max_retries=3)
+
+        assert result is not None
+        assert len(sleep_calls) == 2
+        assert all(seconds > 0 for seconds in sleep_calls)
+
+    def test_max_total_wait_s_extends_retries_past_max_retries(self, monkeypatch):
+        """
+        Mirrors camera_control_inclusive.py's version of this test: passing
+        max_total_wait_s should keep retrying by elapsed time even after
+        max_retries attempts would otherwise have given up.
+        """
+        fake_now = [0.0]
+        monkeypatch.setattr(cc_av.time, "monotonic", lambda: fake_now[0])
+
+        def fake_sleep(seconds):
+            fake_now[0] += seconds
+
+        monkeypatch.setattr(cc_av.time, "sleep", fake_sleep)
+
+        img = np.zeros((10, 10, 3), dtype=np.uint8)
+        good_frame = _make_frame(img)
+        bad_frame = _make_frame(img, status="Incomplete")
+        handle = _make_handle()
+        # Four failures in a row -- more than max_retries=3 alone would
+        # tolerate -- then a success once max_total_wait_s says to keep going.
+        handle.cam.get_frame.side_effect = [bad_frame, bad_frame, bad_frame, bad_frame, good_frame]
+
+        result = cc_av.grab_single_frame_color_with_retry(
+            handle, max_retries=3, retry_delay_s=0.3, max_total_wait_s=6.0
+        )
+
+        assert result is not None
+
+    def test_max_total_wait_s_defaults_to_none_and_does_not_change_old_behavior(self, monkeypatch):
+        monkeypatch.setattr(cc_av.time, "sleep", lambda seconds: None)
+        handle = _make_handle()
+        handle.cam.get_frame.side_effect = RuntimeError("always fails")
+        result = cc_av.grab_single_frame_color_with_retry(handle, max_retries=3)
+        assert result is None
 
 
 class TestGrabSingleFrameWithRetry:

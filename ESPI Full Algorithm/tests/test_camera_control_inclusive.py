@@ -238,14 +238,20 @@ class TestConnectCamera:
         mock_cap = MagicMock()
         mock_cap.isOpened.return_value = False
         with patch("camera_control_inclusive.cv2.VideoCapture", return_value=mock_cap):
-            result = cc.connect_camera(0)
-        assert result is None
+            camera, format_info = cc.connect_camera(0)
+        assert camera is None
+        assert isinstance(format_info, dict)
 
     def test_returns_camera_on_success(self):
         mock_cap = make_mock_cv2_camera()
         with patch("camera_control_inclusive.cv2.VideoCapture", return_value=mock_cap):
-            result = cc.connect_camera(0)
-        assert result is mock_cap
+            camera, format_info = cc.connect_camera(0)
+        assert camera is mock_cap
+        assert isinstance(format_info, dict)
+        assert "hardware_format" in format_info
+        assert "target_format" in format_info
+        assert "needs_channel_swap" in format_info
+        assert "camera_type" in format_info
 
     def test_passes_correct_index_to_videocapture(self):
         mock_cap = make_mock_cv2_camera()
@@ -386,6 +392,207 @@ class TestGrabSingleFrameColor:
         mock_cap = make_mock_cv2_camera(frame=bgr_frame)
         result = cc.grab_single_frame(mock_cap)
         assert result.ndim == 2
+
+
+class TestGrabSingleFrameColorWithRetry:
+    """
+    MonitorWorker was calling grab_single_frame_color() directly, with no
+    retry at all, unlike grab_n_frames() and other callers in this project
+    that use grab_single_frame_with_retry() for exactly this reason: some
+    USB webcams need a moment to warm up right after connect_camera()
+    opens them, and a single unretried read() can fail even on a camera
+    that is perfectly fine a moment later. This mirrors
+    grab_single_frame_with_retry() but preserves color, the same
+    relationship grab_single_frame_color() has to grab_single_frame().
+    """
+
+    def test_returns_bgr_frame_on_first_success(self):
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        bgr[:, :, 2] = 200
+        mock_cap = make_mock_cv2_camera(frame=bgr)
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+        assert result is not None
+        assert result.ndim == 3
+        assert np.all(result[:, :, 2] == 200)
+
+    def test_retries_on_failure_then_succeeds(self):
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera()
+        mock_cap.read.side_effect = [(False, None), (True, bgr)]
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+        assert result is not None
+        assert result.ndim == 3
+
+    def test_returns_none_after_all_retries_fail(self):
+        mock_cap = make_mock_cv2_camera(read_ok=False)
+        mock_cap.read.side_effect = [(False, None)] * 3
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+        assert result is None
+
+    def test_already_gray_frame_unchanged(self):
+        gray_frame = np.zeros((100, 100), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera()
+        mock_cap.read.return_value = (True, gray_frame)
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+        assert result.ndim == 2
+
+    def test_waits_between_retry_attempts(self, monkeypatch):
+        """
+        Regression test for a real webcam confirmed to need actual
+        wall-clock warm-up time, not just "try again immediately": a
+        standalone diagnostic (10 attempts, 0.3s apart, no other code
+        involved) showed isOpened=True with the first two read() calls
+        failing and every call from the third attempt onward succeeding.
+        Retrying three times back to back with no delay at all (the first
+        version of this function) finishes in well under a millisecond
+        total, nowhere near the real time the camera needed, so it still
+        failed for that camera even with retries. A sleep between attempts
+        is what actually gives the hardware the time it needs.
+        """
+        sleep_calls = []
+        monkeypatch.setattr(cc.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera()
+        mock_cap.read.side_effect = [(False, None), (False, None), (True, bgr)]
+
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+
+        assert result is not None
+        assert len(sleep_calls) == 2, (
+            "Expected one sleep() call between each of the two failed "
+            "attempts and the next one, so the camera gets real wall-clock "
+            "time to warm up."
+        )
+        assert all(seconds > 0 for seconds in sleep_calls)
+
+    def test_does_not_sleep_after_the_final_failed_attempt(self, monkeypatch):
+        """No point delaying after the very last attempt, there's nothing left to retry."""
+        sleep_calls = []
+        monkeypatch.setattr(cc.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+        mock_cap = make_mock_cv2_camera(read_ok=False)
+        mock_cap.read.side_effect = [(False, None)] * 3
+
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+
+        assert result is None
+        assert len(sleep_calls) == 2  # between attempt 1->2 and 2->3, not after 3
+
+    def test_attempt_count_alone_cannot_bridge_the_measured_warmup_stall(self, monkeypatch):
+        """
+        Regression test for the real bug: a second diagnostic that mirrored
+        the app's exact startup sequence (open, THEN set_exposure_manual(),
+        THEN set_gain_manual(), THEN start reading) showed the camera's
+        first successful read() only arriving after about 3.4 seconds.
+
+        With only a fixed attempt count and a 0.3s sleep between attempts,
+        the old default (max_retries=3) has a total budget of just two
+        sleeps -- 0.6 seconds -- nowhere near 3.4 seconds. This test uses a
+        fake clock (monkeypatched time.monotonic/time.sleep) to simulate
+        that exact stall and proves the old, count-only call still gives up
+        long before a real camera like this one would have recovered.
+        """
+        fake_now = [0.0]
+        monkeypatch.setattr(cc.time, "monotonic", lambda: fake_now[0])
+
+        def fake_sleep(seconds):
+            fake_now[0] += seconds
+
+        monkeypatch.setattr(cc.time, "sleep", fake_sleep)
+
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera()
+
+        def fake_read():
+            if fake_now[0] < 3.4:
+                return (False, None)
+            return (True, bgr)
+
+        mock_cap.read.side_effect = fake_read
+
+        # Old-style call: count only, no time budget -- this is exactly
+        # what MonitorWorker's no-kwargs call site used to fall back on.
+        result = cc.grab_single_frame_color_with_retry(
+            mock_cap, max_retries=3, retry_delay_s=0.3
+        )
+
+        assert result is None, (
+            "3 attempts with a 0.3s sleep between them (0.6s total) cannot "
+            "reach the 3.4s mark where the real camera started succeeding."
+        )
+
+    def test_max_total_wait_s_bridges_the_measured_warmup_stall(self, monkeypatch):
+        """
+        Same simulated stall as the test above, but passing max_total_wait_s
+        the way the fixed MonitorWorker now does: retrying keeps going by
+        elapsed wall-clock time, not just attempt count, so it survives
+        the full 3.4 second stall and returns the frame that arrives after it.
+        """
+        fake_now = [0.0]
+        monkeypatch.setattr(cc.time, "monotonic", lambda: fake_now[0])
+
+        def fake_sleep(seconds):
+            fake_now[0] += seconds
+
+        monkeypatch.setattr(cc.time, "sleep", fake_sleep)
+
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        mock_cap = make_mock_cv2_camera()
+
+        def fake_read():
+            if fake_now[0] < 3.4:
+                return (False, None)
+            return (True, bgr)
+
+        mock_cap.read.side_effect = fake_read
+
+        result = cc.grab_single_frame_color_with_retry(
+            mock_cap, retry_delay_s=0.3, max_total_wait_s=6.0
+        )
+
+        assert result is not None
+        assert result.ndim == 3
+
+    def test_max_total_wait_s_still_gives_up_once_the_budget_is_exhausted(self, monkeypatch):
+        """A genuinely disconnected camera must still return None eventually, not retry forever."""
+        fake_now = [0.0]
+        monkeypatch.setattr(cc.time, "monotonic", lambda: fake_now[0])
+
+        def fake_sleep(seconds):
+            fake_now[0] += seconds
+
+        monkeypatch.setattr(cc.time, "sleep", fake_sleep)
+
+        mock_cap = make_mock_cv2_camera(read_ok=False)
+        mock_cap.read.side_effect = lambda: (False, None)
+
+        result = cc.grab_single_frame_color_with_retry(
+            mock_cap, retry_delay_s=0.3, max_total_wait_s=6.0
+        )
+
+        assert result is None
+        # Total sleeping should stop once the 6.0s budget is used up, not
+        # run away indefinitely.
+        assert fake_now[0] < 6.5
+
+    def test_max_total_wait_s_defaults_to_none_and_does_not_change_old_behavior(self, monkeypatch):
+        """
+        Callers that never pass max_total_wait_s (every pre-existing test in
+        this file, and any code not yet updated) must see the exact old
+        count-only behavior -- this is what keeps this change backward
+        compatible.
+        """
+        sleep_calls = []
+        monkeypatch.setattr(cc.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+        mock_cap = make_mock_cv2_camera(read_ok=False)
+        mock_cap.read.side_effect = [(False, None)] * 3
+
+        result = cc.grab_single_frame_color_with_retry(mock_cap, max_retries=3)
+
+        assert result is None
+        assert len(sleep_calls) == 2
 
 
 class TestGrabSingleFrameWithRetry:

@@ -61,6 +61,7 @@ import cv2
 import numpy as np
 import os
 import tempfile
+import time
 import traceback
 from datetime import datetime
 from matplotlib import pyplot as plt
@@ -134,23 +135,38 @@ _roi_store = {}
 # SECTION 1 — CAMERA CONNECTION
 # ==============================================================================
 
-def connect_camera(camera_index: int = 0) -> _AVHandle | None:
+def connect_camera(camera_index: int = 0, grayscale_method: str = "standard"):
     """
-    Open an Allied Vision camera by index and return a handle.
+    Open an Allied Vision camera by index and return a handle WITH format metadata.
 
     camera_index = 0 means the first camera the SDK detects.
     If you have more than one plugged in, try 1, 2, etc.
 
-    Returns an _AVHandle on success, or None if the camera could not be found.
+    Returns a tuple: (camera_handle, format_info) on success, or (None, {}) if failed.
+
+    The format_info dict contains:
+        - "hardware_format": actual format reported by camera (RGB8, Mono8, etc.)
+        - "target_format": format we want for display (BGR8packed)
+        - "needs_channel_swap": True if RGB→BGR swap needed (RGB8 output)
+        - "camera_type": "Allied Vision"
+        - "supports_color": True if format is RGB/Color, False if Mono
+
+    Parameters:
+        camera_index : int
+            Which camera to open (0 = first, 1 = second, etc.)
+        grayscale_method : "standard" or "single_channel"
+            Determines which pixel format to set on the camera.
+            - "standard": set to Mono8
+            - "single_channel": set to RGB8 (camera does demosaicing)
 
     Example:
-        camera = connect_camera()
+        camera, format_info = connect_camera(grayscale_method="single_channel")
         if camera is None:
             print("No camera found — check the cable.")
     """
     if not _VIMBA_AVAILABLE:
         print("[connect_camera] Cannot connect: vmbpy is not installed.")
-        return None
+        return None, {}
 
     try:
         vimba = Vimba.get_instance()
@@ -161,13 +177,13 @@ def connect_camera(camera_index: int = 0) -> _AVHandle | None:
             print("[connect_camera] No Allied Vision cameras detected.")
             print("  Check the USB or GigE cable and Vimba SDK installation.")
             vimba.__exit__(None, None, None)
-            return None
+            return None, {}
 
         if camera_index >= len(cameras):
             print(f"[connect_camera] Camera index {camera_index} is out of range "
                   f"— only {len(cameras)} camera(s) detected.")
             vimba.__exit__(None, None, None)
-            return None
+            return None, {}
 
         cam = cameras[camera_index]
         cam.__enter__()            # open the specific camera
@@ -179,19 +195,74 @@ def connect_camera(camera_index: int = 0) -> _AVHandle | None:
 
         handle = _AVHandle(vimba, cam)
 
-        # Allied Vision cameras remember their pixel format in their own
-        # onboard memory across power cycles and reconnects. Without this,
-        # whatever format the camera was last left in (by Vimba Viewer, an
-        # older script, anything) silently carries over, and every image
-        # this project saves or displays assumes the 0-255 Mono8 format.
-        set_pixel_format(handle, "Mono8")
+        # PIXEL FORMAT RESET — CRITICAL FOR ALLIED VISION RELIABILITY
+        # Allied Vision cameras (and all industrial cameras) remember their pixel
+        # format in onboard memory across power cycles and reconnects. This memory
+        # persists even after disconnect/reconnect, so a camera left in an
+        # unexpected format by a previous run (Vimba Viewer, older script, etc.)
+        # silently carries over. This was the source of mysterious errors in prior
+        # development: connecting without explicitly setting format would sometimes
+        # fail with cryptic errors or return corrupted data.
+        #
+        # Why this matters for this project:
+        # - Standard grayscale conversion expects Mono8 (single channel, 0-255)
+        # - Single-channel extraction expects color (RGB8, three channels)
+        # - If format doesn't match expectation, data becomes corrupted or useless
+        # - Stale format from previous run can cause format mismatches silently
+        #
+        # Why we switch dynamically:
+        # - Mono8 is faster and uses 3x less bandwidth/storage (efficiency for standard)
+        # - RGB8 preserves color data needed for channel extraction (correctness for single-channel)
+        # - ALWAYS explicitly setting (never relying on camera's remembered state) ensures
+        #   consistency across all runs and all cameras, and prevents the format-mismatch
+        #   errors that occurred in earlier development
+        if grayscale_method == "single_channel":
+            # Use RGB8: camera does demosaicing internally,
+            # returning (H, W, 3) actual RGB data instead of (H, W) Bayer pattern
+            pixel_format = "RGB8"
+        else:  # "standard"
+            pixel_format = "Mono8"
 
-        return handle
+        # Set pixel format with verification and retry logic. If it fails after
+        # multiple retries, disconnect and return None to signal the error up the stack.
+        if not set_pixel_format(handle, pixel_format):
+            print(f"[connect_camera] FATAL: Could not set pixel format to {pixel_format}")
+            try:
+                disconnect_camera(handle)
+            except Exception:
+                pass
+            return None, {}
+
+        # Detect format mismatch upfront (preemptive safety block)
+        target_format = "BGR8packed"
+        needs_channel_swap = (pixel_format == "RGB8")
+
+        if needs_channel_swap:
+            print(f"⚠️  Format mismatch detected:")
+            print(f"    Camera hardware outputs: {pixel_format} (actual RGB)")
+            print(f"    Display expects: {target_format} (BGR)")
+            print(f"⚠️  Will apply R↔B channel swap during frame capture")
+        else:
+            print(f"✓ Format match: Camera is {pixel_format}")
+
+        # Build format metadata dict
+        format_info = {
+            "hardware_format": pixel_format,
+            "target_format": target_format,
+            "needs_channel_swap": needs_channel_swap,
+            "camera_type": "Allied Vision",
+            "supports_color": (pixel_format in ["RGB8", "BayerRG8"]),
+            "grayscale_method": grayscale_method,
+        }
+
+        print(f"[connect_camera] Pixel format verified as {pixel_format} (grayscale_method={grayscale_method})")
+
+        return handle, format_info
 
     except Exception as e:
         print(f"[connect_camera] Failed to connect: {e}")
         traceback.print_exc()
-        return None
+        return None, {}
 
 
 def disconnect_camera(camera: _AVHandle) -> None:
@@ -202,6 +273,15 @@ def disconnect_camera(camera: _AVHandle) -> None:
     Not calling it can leave the SDK in a locked state that prevents the next run
     from connecting.
 
+    CLEANUP SAFEGUARD FOR PIXEL FORMAT MEMORY:
+    Before disconnecting, we reset the camera to Mono8 as a defensive measure.
+    Allied Vision cameras remember their pixel format in onboard memory across
+    power cycles. By always leaving the camera in a known format (Mono8),
+    we prevent the "stale format from previous run" problem that caused mysterious
+    errors in earlier development. If the next user/script chooses a different
+    format, connect_camera() will explicitly set it. If they don't specify,
+    Mono8 is a safe, widely-compatible default.
+
     Example:
         disconnect_camera(camera)
     """
@@ -209,6 +289,14 @@ def disconnect_camera(camera: _AVHandle) -> None:
     _roi_store.pop(id(camera), None)
 
     try:
+        # Reset to Mono8 as safe default, so next connection isn't affected
+        # by whatever format this session used. Ignore errors since we're disconnecting anyway.
+        try:
+            camera.cam.set_pixel_format(PixelFormat.Mono8)
+            print("  Pixel format reset to Mono8 for next session")
+        except Exception:
+            pass  # Errors during format reset on disconnect don't block disconnect
+
         camera.cam.__exit__(None, None, None)
         camera._vimba.__exit__(None, None, None)
         print("Allied Vision camera disconnected.")
@@ -332,28 +420,83 @@ def set_gain_auto(camera: _AVHandle) -> None:
         print("[set_gain_auto] Auto-gain not supported on this camera.")
 
 
-def set_pixel_format(camera: _AVHandle, pixel_format: str = "Mono8") -> None:
+def set_pixel_format(camera: _AVHandle, pixel_format: str = "Mono8") -> bool:
     """
-    Set the pixel format the camera uses to deliver frames.
+    Set the pixel format the camera uses to deliver frames, with verification
+    and retry logic to ensure the format actually takes effect.
 
-    We use 'Mono8' for several reasons: 8-bit greyscale (0-255), smallest files,
-    no conversion needed.
+    Parameters:
+        camera : _AVHandle
+            Camera handle returned by connect_camera()
+        pixel_format : str
+            Format to set (e.g., "Mono8", "BayerRG8")
 
-    vmbpy's own set_pixel_format() does not accept a plain string like "Mono8".
-    It needs the matching member of its own PixelFormat type (the same
-    object capture_and_display_allied.py uses directly as
-    vmbpy.PixelFormat.Mono8). getattr(PixelFormat, pixel_format) looks up that
-    member from the string name, the same way dict["Mono8"] would look up a
-    dictionary entry by its key.
+    Returns:
+        True if format was successfully set, False otherwise.
+
+    RETRY AND VERIFICATION LOGIC:
+    Allied Vision cameras can be finicky about format changes. If the format
+    doesn't "stick" (e.g., due to SDK state, DMA buffer state, or concurrent
+    I/O), a silent failure can occur: the set_pixel_format() call returns without
+    error, but the camera continues in the old format. This creates the exact
+    problem the user encountered: mysterious errors with "previous format being
+    used". To guard against this, we:
+
+    1. Set the format
+    2. Immediately read it back to verify it changed
+    3. If it didn't change, retry up to 3 times with small delays
+    4. If verification still fails, log a detailed error and return False
+
+    This ensures we catch format failures early, before grab attempts would fail
+    with cryptic errors.
 
     Example:
-        set_pixel_format(camera, "Mono8")
+        success = set_pixel_format(camera, "BayerRG8")
+        if not success:
+            print("Format change failed, reconnect and retry")
     """
-    try:
-        camera.cam.set_pixel_format(getattr(PixelFormat, pixel_format))
-        print(f"  Pixel format set to: {pixel_format}")
-    except Exception as e:
-        print(f"[set_pixel_format] Could not set format '{pixel_format}': {e}")
+    import time
+
+    if pixel_format not in ["Mono8", "BayerRG8", "BayerRG12", "Mono12"]:
+        print(f"[set_pixel_format] Unsupported format '{pixel_format}' (known: Mono8, BayerRG8, BayerRG12, Mono12)")
+        return False
+
+    max_retries = 3
+    retry_delay = 0.1  # seconds, increases with each retry
+
+    for attempt in range(max_retries):
+        try:
+            # Set the requested format
+            camera.cam.set_pixel_format(getattr(PixelFormat, pixel_format))
+
+            # Immediately verify the format was actually applied
+            time.sleep(0.05)  # small delay to let camera settle
+            actual_format = camera.cam.get_pixel_format()
+            actual_format_str = str(actual_format)
+
+            # Check if the format matches (PixelFormat enum has a readable name)
+            if pixel_format in actual_format_str:
+                print(f"  Pixel format set to: {pixel_format}")
+                return True
+            else:
+                print(f"[set_pixel_format] Format mismatch on attempt {attempt + 1}: requested {pixel_format}, got {actual_format_str}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                    continue
+
+        except Exception as e:
+            print(f"[set_pixel_format] Exception on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                retry_delay *= 1.5
+                continue
+
+    # All retries exhausted
+    print(f"[set_pixel_format] CRITICAL: Failed to set format '{pixel_format}' after {max_retries} attempts.")
+    print(f"                  This can cause silent format mismatches and data corruption.")
+    print(f"                  Recommended action: Disconnect camera, power cycle, and retry.")
+    return False
 
 
 def get_camera_info(camera: _AVHandle) -> dict:
@@ -598,6 +741,60 @@ def grab_single_frame_color(camera: _AVHandle,
     except Exception as e:
         print(f"[grab_single_frame_color] Error: {e}")
         return None
+
+
+def grab_single_frame_color_with_retry(camera: _AVHandle,
+                                        max_retries: int = 3,
+                                        retry_delay_s: float = 0.3,
+                                        max_total_wait_s: float | None = None) -> np.ndarray | None:
+    """
+    Like grab_single_frame_color(), but retries on failure.
+
+    GigE cameras can drop an occasional packet, the same reason
+    grab_single_frame_with_retry() already exists for the greyscale path.
+    A real USB webcam (a different camera module, but the same underlying
+    "camera needs a moment after opening" issue) was confirmed to need
+    actual wall-clock time between attempts, not just another immediate
+    try, so a short sleep is included here too rather than assuming GigE
+    packet drops never share that timing sensitivity.
+
+    That same real webcam's warm-up turned out to take several seconds
+    once exposure/gain were set, far longer than a small fixed attempt
+    count can cover. max_total_wait_s lets a caller (MonitorWorker) keep
+    retrying by elapsed wall-clock time instead of just attempt count --
+    see camera_control_inclusive.py's version of this function for the
+    full measurement this is based on. None (the default) preserves the
+    old count-only behavior exactly.
+
+    Returns a numpy array (color or greyscale, matching
+    grab_single_frame_color()'s own return shape) on success, or None if
+    all attempts failed.
+
+    Example:
+        frame = grab_single_frame_color_with_retry(camera, max_retries=3)
+        frame = grab_single_frame_color_with_retry(camera, max_total_wait_s=6.0)
+    """
+    start = time.monotonic() if max_total_wait_s is not None else None
+    attempt = 0
+
+    while True:
+        attempt += 1
+        frame = grab_single_frame_color(camera)
+        if frame is not None:
+            return frame
+
+        within_attempt_budget = attempt < max_retries
+        within_time_budget = (
+            start is not None and (time.monotonic() - start) < max_total_wait_s
+        )
+        if not (within_attempt_budget or within_time_budget):
+            break
+
+        print(f"  Frame grab failed, retrying (attempt {attempt + 1})...")
+        time.sleep(retry_delay_s)
+
+    print(f"[grab_single_frame_color_with_retry] All {attempt} attempt(s) failed.")
+    return None
 
 
 def grab_single_frame_with_retry(camera: _AVHandle,

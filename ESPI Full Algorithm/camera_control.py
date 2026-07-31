@@ -81,19 +81,31 @@ from datetime import datetime
 #       disconnect_camera(camera)
 # ==============================================================================
 
-def connect_camera():
+def connect_camera(grayscale_method: str = "standard"):
     """
-    Find the first available Basler camera, open it, and return it.
+    Find the first available Basler camera, open it, and return it WITH format metadata.
 
-    Returns the camera object if successful, or None if no camera is found.
+    Returns a tuple: (camera, format_info) if successful, or (None, {}) if no camera found.
 
-    The camera object is something you pass to every other function in this file.
-    
+    The camera object is passed to every other function. The format_info dict contains:
+        - "hardware_format": actual format reported by camera (RGB8, Mono8, etc.)
+        - "target_format": format we want for display (BGR8packed)
+        - "needs_channel_swap": True if RGB→BGR swap needed (RGB8 output)
+        - "camera_type": "Basler"
+        - "supports_color": True if format is RGB/Color, False if Mono
+
+    Parameters:
+        grayscale_method : "standard" or "single_channel"
+            Determines which pixel format to set on the camera.
+            - "standard": set to Mono8 (faster, less storage, but loses color data)
+            - "single_channel": set to RGB8 (preserves color for channel extraction)
 
     Example:
-        camera = connect_camera()
+        camera, format_info = connect_camera(grayscale_method="single_channel")
         if camera is None:
             print("No camera found.")
+        else:
+            print(format_info)  # Shows format detection results
     """
     try:
         # TlFactory scans all transport layers (USB3, GigE, etc.) and returns
@@ -108,20 +120,63 @@ def connect_camera():
         # any camera features or grabbing images.
         camera.Open()
 
-        # Basler cameras remember their pixel format in their own onboard
-        # memory across power cycles and reconnects. Without this, whatever
-        # format the camera was last left in (pylon Viewer, an older script,
-        # anything) silently carries over, and every image this project
-        # saves or displays assumes the 0-255 Mono8 format.
-        set_pixel_format(camera, "Mono8")
+        # PIXEL FORMAT RESET — CRITICAL FOR RELIABILITY
+        # Basler cameras (and all industrial cameras) remember their pixel format
+        # in onboard memory across power cycles and reconnects. Without explicitly
+        # setting the format here, a camera left in an unexpected format by a
+        # previous run (pylon Viewer, older script, etc.) silently carries over.
+        #
+        # Why this matters for this project:
+        # - Standard grayscale conversion expects Mono8 (single channel, 0-255)
+        # - Single-channel extraction expects color (RGB8, three channels)
+        # - If format doesn't match expectation, data becomes corrupted or useless
+        #
+        # Why we switch dynamically:
+        # - Mono8 is faster and uses 3x less bandwidth/storage (efficiency for standard)
+        # - RGB8 preserves color data needed for channel extraction (correctness for single-channel)
+        # - Always explicitly setting (never relying on camera's remembered state) ensures
+        #   consistency across all runs and all cameras
+        if grayscale_method == "single_channel":
+            # RGB8: camera does demosaicing internally, returns (H, W, 3) actual RGB data
+            pixel_format = "RGB8"
+        else:  # "standard"
+            pixel_format = "Mono8"
+
+        set_pixel_format(camera, pixel_format)
+
+        # Read back the actual format (always verify it took effect)
+        actual_format = camera.PixelFormat.GetValue()
+
+        # Detect format mismatch upfront (preemptive safety block from debug_camera_format.py)
+        target_format = "BGR8packed"
+        needs_channel_swap = (actual_format == "RGB8")
+
+        if needs_channel_swap:
+            print(f"⚠️  Format mismatch detected:")
+            print(f"    Camera hardware outputs: {actual_format}")
+            print(f"    Display expects: {target_format}")
+            print(f"⚠️  Will apply R↔B channel swap during frame capture")
+        else:
+            print(f"✓ Format match: Camera is {actual_format}")
+
+        # Build format metadata dict
+        format_info = {
+            "hardware_format": actual_format,
+            "target_format": target_format,
+            "needs_channel_swap": needs_channel_swap,
+            "camera_type": "Basler",
+            "supports_color": (actual_format in ["RGB8", "BayerRG8"]),
+            "grayscale_method": grayscale_method,
+        }
 
         print(f"Connected to: {camera.GetDeviceInfo().GetModelName()}")
-        return camera
+        print(f"[connect_camera] Pixel format set to {actual_format} (grayscale_method={grayscale_method})")
+        return camera, format_info
 
     except genicam.GenericException as e:
         # Covers: no camera found, USB/GigE communication failure, etc.
         print(f"Could not connect to camera: {e}")
-        return None
+        return None, {}
 
 
 def disconnect_camera(camera):
@@ -473,6 +528,80 @@ def grab_single_frame_color(camera):
     this simply delegates to grab_single_frame().
     """
     return grab_single_frame(camera)
+
+
+def grab_single_frame_color_with_retry(camera, max_retries: int = 3, retry_delay_s: float = 0.3,
+                                        max_total_wait_s: float | None = None):
+    """
+    Present for interface consistency with camera_control_inclusive.py and
+    camera_control_allied_vision.py, which both need real retry logic for
+    USB/GigE cameras that occasionally drop the first frame. Basler cameras
+    connect over a dedicated GenICam link, not shared USB bandwidth, so
+    this simply delegates to grab_single_frame_color() and ignores
+    max_retries, retry_delay_s, and max_total_wait_s. The three parameters
+    are still accepted so MonitorWorker can call this function the same
+    way regardless of which camera module is active.
+    """
+    return grab_single_frame_color(camera)
+
+
+def grab_single_frame_with_format_check(camera, format_info: dict):
+    """
+    Grab a frame, validate its format matches expectations, apply corrections.
+
+    This is the RECOMMENDED function for monitor_gui.py to use.
+    Implements defensive programming patterns from debug_camera_format.py:
+    1. Grabs frame using standard grab_single_frame_color_with_retry()
+    2. Validates frame shape is (H, W, 3) or (H, W)
+    3. Validates dtype is uint8
+    4. Applies channel swap if RGB→BGR mismatch detected
+    5. Returns corrected frame ready for grayscale conversion
+
+    Args:
+        camera      : camera object returned by connect_camera()
+        format_info : dict returned by connect_camera() containing format metadata
+
+    Returns:
+        frame : numpy array with proper format (BGR or grayscale), or None if failed
+
+    Example:
+        camera, format_info = connect_camera(grayscale_method="single_channel")
+        frame = grab_single_frame_with_format_check(camera, format_info)
+    """
+    try:
+        # Grab raw frame
+        frame = grab_single_frame_color_with_retry(camera)
+
+        if frame is None:
+            print("❌ Frame grab failed")
+            return None
+
+        # Defensive check 1: Validate shape
+        if len(frame.shape) == 2:
+            # Grayscale (H, W) - this is OK for Mono8
+            pass
+        elif len(frame.shape) == 3:
+            if frame.shape[2] != 3:
+                raise ValueError(
+                    f"Expected 3 channels for color frame, got {frame.shape[2]}. Shape: {frame.shape}"
+                )
+        else:
+            raise ValueError(f"Unexpected frame shape: {frame.shape}. Expected (H, W) or (H, W, 3)")
+
+        # Defensive check 2: Validate dtype
+        if frame.dtype != np.uint8:
+            raise TypeError(f"Expected dtype uint8, got {frame.dtype}")
+
+        # Defensive check 3: Apply channel swap if RGB→BGR mismatch
+        if format_info.get("needs_channel_swap", False):
+            if len(frame.shape) == 3:
+                frame = frame[:, :, ::-1]  # Swap R and B channels
+
+        return frame
+
+    except Exception as e:
+        print(f"❌ Error in grab_single_frame_with_format_check: {e}")
+        return None
 
 
 def grab_n_frames(camera, n: int):
