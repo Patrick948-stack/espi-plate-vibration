@@ -61,8 +61,9 @@ import sys
 
 import cv2
 import numpy as np
+import qtawesome as qta
 
-from PyQt6.QtCore import QObject, Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, QUrl, pyqtSignal, QSize
 from PyQt6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -76,12 +77,14 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QStyle,
@@ -92,7 +95,11 @@ from PyQt6.QtWidgets import (
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
+from typing import Optional, Tuple
+
 import run_experiment
+from settings_dialog import SettingsPage
+from settings_manager import load_settings, save_settings
 
 
 # ==============================================================================
@@ -192,7 +199,10 @@ class SetupPage(QWidget):
             self._camera_group.addButton(radio)
             self._camera_radios[choice] = radio
             camera_layout.addWidget(radio)
-        self._camera_radios["2"].setChecked(True)  # same default as choose_camera()
+        # Load default camera from settings
+        settings = load_settings()
+        default_camera = settings.get("default_camera_choice", "2")
+        self._camera_radios[default_camera].setChecked(True)
         camera_layout.addStretch()
         camera_group.setLayout(camera_layout)
         grid.addWidget(camera_group, 0, 0)
@@ -211,7 +221,7 @@ class SetupPage(QWidget):
             self._mode_group.addButton(radio)
             self._mode_radios[choice] = radio
             mode_layout.addWidget(radio)
-        self._mode_radios["1"].setChecked(True)  # same default as choose_mode()
+        self._mode_radios["1"].setChecked(True)  # Pair subtraction is default mode
         mode_layout.addStretch()
         mode_group.setLayout(mode_layout)
         grid.addWidget(mode_group, 0, 1)
@@ -222,28 +232,28 @@ class SetupPage(QWidget):
         freq_layout.addWidget(QLabel("Start frequency:"), 0, 0)
         self.start_freq_spin = QDoubleSpinBox()
         self.start_freq_spin.setRange(0.01, 1_000_000.0)
-        self.start_freq_spin.setValue(100.0)
+        self.start_freq_spin.setValue(settings.get("default_start_freq", 100.0))
         self.start_freq_spin.setSuffix(" Hz")
         freq_layout.addWidget(self.start_freq_spin, 0, 1)
 
         freq_layout.addWidget(QLabel("End frequency:"), 1, 0)
         self.end_freq_spin = QDoubleSpinBox()
         self.end_freq_spin.setRange(0.01, 1_000_000.0)
-        self.end_freq_spin.setValue(1000.0)
+        self.end_freq_spin.setValue(settings.get("default_end_freq", 1000.0))
         self.end_freq_spin.setSuffix(" Hz")
         freq_layout.addWidget(self.end_freq_spin, 1, 1)
 
         freq_layout.addWidget(QLabel("Step size:"), 2, 0)
         self.step_spin = QDoubleSpinBox()
         self.step_spin.setRange(0.01, 1_000_000.0)
-        self.step_spin.setValue(100.0)
+        self.step_spin.setValue(settings.get("default_step_size", 100.0))
         self.step_spin.setSuffix(" Hz")
         freq_layout.addWidget(self.step_spin, 2, 1)
 
         freq_layout.addWidget(QLabel("Frames per frequency:"), 3, 0)
         self.n_averages_spin = QSpinBox()
         self.n_averages_spin.setRange(1, 1000)
-        self.n_averages_spin.setValue(5)
+        self.n_averages_spin.setValue(settings.get("default_n_averages", 5))
         freq_layout.addWidget(self.n_averages_spin, 3, 1)
         freq_group.setLayout(freq_layout)
         grid.addWidget(freq_group, 1, 0)
@@ -256,21 +266,21 @@ class SetupPage(QWidget):
         self.exposure_spin.setDecimals(4)
         self.exposure_spin.setRange(0.0001, 10.0)
         self.exposure_spin.setSingleStep(0.01)
-        self.exposure_spin.setValue(0.01)
+        self.exposure_spin.setValue(settings.get("default_exposure", 0.01))
         capture_layout.addWidget(self.exposure_spin, 0, 1)
 
         capture_layout.addWidget(QLabel("Gain (dB):"), 1, 0)
         self.gain_spin = QDoubleSpinBox()
         self.gain_spin.setDecimals(2)
         self.gain_spin.setRange(-20.0, 50.0)  # 0 dB and negative values are valid
-        self.gain_spin.setValue(0.0)
+        self.gain_spin.setValue(settings.get("default_gain", 0.0))
         capture_layout.addWidget(self.gain_spin, 1, 1)
 
         capture_layout.addWidget(QLabel("gain_factor:"), 2, 0)
         self.gain_factor_spin = QDoubleSpinBox()
         self.gain_factor_spin.setDecimals(2)
         self.gain_factor_spin.setRange(0.01, 200.0)
-        self.gain_factor_spin.setValue(1.0)
+        self.gain_factor_spin.setValue(settings.get("default_gain_factor", 1.0))
         capture_layout.addWidget(self.gain_factor_spin, 2, 1)
 
         capture_layout.addWidget(QLabel("Output folder:"), 3, 0)
@@ -346,18 +356,59 @@ class CameraPreviewWorker(QThread):
 
     _FRAME_INTERVAL_MS = 66  # ~15 fps
 
-    def __init__(self, camera_choice, exposure_s, gain):
+    def __init__(
+        self,
+        camera_choice: str,
+        exposure_s: float,
+        gain: float,
+        grayscale_method: str = "standard"
+    ) -> None:
+        """Initialize preview worker with validated parameters."""
         super().__init__()
+        
+        # Boundary validation: fail early with clear errors
+        if camera_choice not in run_experiment.CAMERA_LIBRARY:
+            raise ValueError(
+                f"Invalid camera_choice: '{camera_choice}'. "
+                f"Must be one of {list(run_experiment.CAMERA_LIBRARY.keys())}"
+            )
+        if exposure_s <= 0:
+            raise ValueError(f"exposure_s must be > 0, got {exposure_s}")
+        if grayscale_method not in ("standard", "single_channel"):
+            raise ValueError(
+                f"grayscale_method must be 'standard' or 'single_channel', "
+                f"got '{grayscale_method}'"
+            )
+        
         self._camera_choice = camera_choice
         self._exposure_s = exposure_s
         self._gain = gain
+        self._grayscale_method = grayscale_method
         self._stop = False
 
     def stop(self):
         self._stop = True
 
     def run(self):
+        # Validate camera choice exists
+        if self._camera_choice not in run_experiment.CAMERA_LIBRARY:
+            self.error.emit(
+                f"[ERROR] Invalid camera choice: '{self._camera_choice}'. "
+                f"Available options: {list(run_experiment.CAMERA_LIBRARY.keys())}"
+            )
+            self.finished_cleanly.emit()
+            return
+        
         module_name = run_experiment.CAMERA_LIBRARY[self._camera_choice]
+        
+        # Validate module name
+        if not isinstance(module_name, str) or not module_name:
+            self.error.emit(
+                f"[ERROR] Camera module name is invalid: {module_name}"
+            )
+            self.finished_cleanly.emit()
+            return
+        
         try:
             cam_lib = importlib.import_module(module_name)
         except ImportError as e:
@@ -371,10 +422,39 @@ class CameraPreviewWorker(QThread):
             self.error.emit(buffer.getvalue().strip())
             self.finished_cleanly.emit()
             return
+        
+        # Validate module has all required functions
+        required_functions = [
+            'connect_camera', 'disconnect_camera', 'grab_single_frame',
+            'set_exposure_manual', 'set_gain_manual'
+        ]
+        for func_name in required_functions:
+            if not hasattr(cam_lib, func_name):
+                self.error.emit(
+                    f"[ERROR] Camera module '{module_name}' is missing function: '{func_name}'"
+                )
+                self.finished_cleanly.emit()
+                return
 
         camera = None
         try:
-            camera = cam_lib.connect_camera()
+            result = cam_lib.connect_camera(grayscale_method=self._grayscale_method)
+
+            # Defensive validation: result must be a 2-element tuple
+            if not isinstance(result, tuple):
+                self.error.emit(
+                    f"[ERROR] connect_camera returned invalid type: {type(result).__name__}, expected tuple"
+                )
+                return
+            if len(result) != 2:
+                self.error.emit(
+                    f"[ERROR] connect_camera returned tuple with {len(result)} elements, expected 2"
+                )
+                return
+
+            camera, format_info = result
+
+            # Check for camera connection failure
             if camera is None:
                 self.error.emit(
                     "Could not open the camera. Check it is plugged in and try again."
@@ -395,11 +475,22 @@ class CameraPreviewWorker(QThread):
                     break
                 self.frame_ready.emit(frame)
                 self.msleep(self._FRAME_INTERVAL_MS)
+        except AttributeError as e:
+            self.error.emit(f"[ERROR] Missing camera function: {e}")
+        except RuntimeError as e:
+            self.error.emit(f"[ERROR] Camera runtime error: {e}")
+        except ValueError as e:
+            self.error.emit(f"[ERROR] Invalid camera parameter: {e}")
         except Exception as e:
             self.error.emit(f"The preview stopped unexpectedly: {e}")
         finally:
             if camera is not None:
-                cam_lib.disconnect_camera(camera)
+                try:
+                    cam_lib.disconnect_camera(camera)
+                except AttributeError as e:
+                    self.error.emit(f"[ERROR] Failed to disconnect camera: {e}")
+                except Exception as e:
+                    self.error.emit(f"[ERROR] Unexpected error during disconnect: {e}")
             self.finished_cleanly.emit()
 
 
@@ -442,9 +533,9 @@ class PreviewPage(QWidget):
 
         self.setLayout(layout)
 
-    def start_preview(self, camera_choice, exposure_s, gain):
+    def start_preview(self, camera_choice, exposure_s, gain, grayscale_method="standard"):
         self.feed_label.setText("Connecting to camera…")
-        self._worker = CameraPreviewWorker(camera_choice, exposure_s, gain)
+        self._worker = CameraPreviewWorker(camera_choice, exposure_s, gain, grayscale_method)
         self._worker.frame_ready.connect(self._on_frame)
         self._worker.error.connect(self._on_error)
         self._worker.finished_cleanly.connect(self._on_finished)
@@ -610,6 +701,142 @@ class SweepWorker(QThread):
             self.finished_sweep.emit(results)
 
 
+class LiveMonitoringWorker(QThread):
+    """
+    Captures and displays live monitoring windows during sweep if enabled.
+    Shows: (1) Live feed, (2) Captured frame, (3) Difference image, (4) Averaged result.
+    """
+    
+    frame_update = pyqtSignal(dict)  # {'live': frame, 'captured': frame, 'diff': frame, 'avg': frame}
+    error = pyqtSignal(str)
+    finished = pyqtSignal()
+    
+    def __init__(
+        self,
+        camera_choice: str,
+        exposure_s: float,
+        gain: float,
+        grayscale_method: str
+    ) -> None:
+        """Initialize monitoring worker with validated parameters."""
+        super().__init__()
+        
+        # Boundary validation
+        if camera_choice not in run_experiment.CAMERA_LIBRARY:
+            raise ValueError(
+                f"Invalid camera_choice: '{camera_choice}'. "
+                f"Must be one of {list(run_experiment.CAMERA_LIBRARY.keys())}"
+            )
+        if exposure_s <= 0:
+            raise ValueError(f"exposure_s must be > 0, got {exposure_s}")
+        if grayscale_method not in ("standard", "single_channel"):
+            raise ValueError(
+                f"grayscale_method must be 'standard' or 'single_channel', "
+                f"got '{grayscale_method}'"
+            )
+        
+        self._camera_choice = camera_choice
+        self._exposure_s = exposure_s
+        self._gain = gain
+        self._grayscale_method = grayscale_method
+        self._stop = False
+        self._last_frame = None
+        self._reference_frame = None
+    
+    def stop(self):
+        self._stop = True
+    
+    def set_reference_frame(self, frame):
+        self._reference_frame = frame
+    
+    def run(self):
+        module_name = run_experiment.CAMERA_LIBRARY[self._camera_choice]
+        try:
+            cam_lib = importlib.import_module(module_name)
+        except ImportError as e:
+            self.error.emit(f"Could not load camera module: {e}")
+            self.finished.emit()
+            return
+        
+        camera = None
+        try:
+            result = cam_lib.connect_camera(grayscale_method=self._grayscale_method)
+            
+            # Defensive: validate return type before unpacking
+            if not isinstance(result, tuple):
+                self.error.emit(
+                    f"[ERROR] Camera module returned invalid type: {type(result).__name__}. "
+                    f"Expected tuple (camera, format_info)."
+                )
+                self.finished.emit()
+                return
+            
+            if len(result) != 2:
+                self.error.emit(
+                    f"[ERROR] Camera module returned tuple with {len(result)} elements. "
+                    f"Expected 2 (camera, format_info)."
+                )
+                self.finished.emit()
+                return
+            
+            camera, format_info = result
+            
+            # Single check: camera is None
+            if camera is None:
+                self.error.emit(
+                    "Could not connect to camera for live monitoring. "
+                    "Check camera is plugged in and not in use by another application."
+                )
+                self.finished.emit()
+                return
+            
+            exposure_value = math.log2(self._exposure_s) if self._camera_choice == "2" else self._exposure_s * 1_000_000
+            cam_lib.set_exposure_manual(camera, exposure_value)
+            cam_lib.set_gain_manual(camera, self._gain)
+            
+            while not self._stop:
+                frame = cam_lib.grab_single_frame(camera)
+                if frame is None:
+                    continue
+                
+                self._last_frame = frame
+                
+                # Compute difference if we have a reference
+                diff_frame = None
+                if self._reference_frame is not None:
+                    diff_frame = cv2.absdiff(frame, self._reference_frame)
+                
+                # Emit all frames (some may be None)
+                self.frame_update.emit({
+                    'live': frame,
+                    'captured': frame,
+                    'diff': diff_frame,
+                    'avg': frame
+                })
+                
+                self.msleep(66)  # ~15 fps
+        except AttributeError as e:
+            self.error.emit(
+                f"[ERROR] Camera object missing method: {e}. "
+                f"This may indicate wrong camera type or SDK not installed."
+            )
+        except RuntimeError as e:
+            self.error.emit(f"[HARDWARE] Camera error: {e}")
+        except ValueError as e:
+            self.error.emit(f"[PARAM] Invalid parameter: {e}")
+        except Exception as e:
+            self.error.emit(f"[UNEXPECTED] Monitoring stopped: {e}")
+        finally:
+            if camera is not None:
+                try:
+                    cam_lib.disconnect_camera(camera)
+                except AttributeError as e:
+                    print(f"[WARNING] Failed to disconnect camera: {e}")
+                except Exception as e:
+                    print(f"[ERROR] Unexpected error during disconnect: {e}")
+            
+            self.finished.emit()
+
 class SweepPage(QWidget):
     """
     A determinate progress bar plus a "Frequency i of N" label, driven
@@ -626,10 +853,12 @@ class SweepPage(QWidget):
     def __init__(self):
         super().__init__()
         self._worker = None
+        self._monitoring_worker = None
         self._camera_choice = None
         self._mode_choice = None
         self._params = None
         self._user_stopped = False
+        self._show_live_monitoring = False
 
         outer = QVBoxLayout()
 
@@ -680,6 +909,47 @@ class SweepPage(QWidget):
         progress_group.setLayout(progress_layout)
         outer.addWidget(progress_group)
 
+        # Live monitoring group (shown if enabled in settings)
+        monitoring_group = QGroupBox("Live Monitoring")
+        monitoring_layout = QGridLayout()
+        
+        self._live_label = QLabel("Live Feed")
+        self._live_label.setObjectName("MonitoringLabel")
+        self._live_display = QLabel()
+        self._live_display.setMinimumSize(160, 120)
+        self._live_display.setObjectName("MonitoringDisplay")
+        monitoring_layout.addWidget(self._live_label, 0, 0)
+        monitoring_layout.addWidget(self._live_display, 1, 0)
+        
+        self._captured_label = QLabel("Captured Frame")
+        self._captured_label.setObjectName("MonitoringLabel")
+        self._captured_display = QLabel()
+        self._captured_display.setMinimumSize(160, 120)
+        self._captured_display.setObjectName("MonitoringDisplay")
+        monitoring_layout.addWidget(self._captured_label, 0, 1)
+        monitoring_layout.addWidget(self._captured_display, 1, 1)
+        
+        self._diff_label = QLabel("Difference")
+        self._diff_label.setObjectName("MonitoringLabel")
+        self._diff_display = QLabel()
+        self._diff_display.setMinimumSize(160, 120)
+        self._diff_display.setObjectName("MonitoringDisplay")
+        monitoring_layout.addWidget(self._diff_label, 0, 2)
+        monitoring_layout.addWidget(self._diff_display, 1, 2)
+        
+        self._avg_label = QLabel("Averaged Result")
+        self._avg_label.setObjectName("MonitoringLabel")
+        self._avg_display = QLabel()
+        self._avg_display.setMinimumSize(160, 120)
+        self._avg_display.setObjectName("MonitoringDisplay")
+        monitoring_layout.addWidget(self._avg_label, 0, 3)
+        monitoring_layout.addWidget(self._avg_display, 1, 3)
+        
+        monitoring_group.setLayout(monitoring_layout)
+        monitoring_group.setVisible(False)  # Hidden until sweep starts with monitoring enabled
+        self._monitoring_group = monitoring_group
+        outer.addWidget(monitoring_group)
+
         outer.addStretch()
         self.setLayout(outer)
 
@@ -714,6 +984,9 @@ class SweepPage(QWidget):
 
     def stop_and_wait(self):
         """Used by MainWindow.closeEvent() once the user confirms stopping."""
+        if self._monitoring_worker is not None:
+            self._monitoring_worker.stop()
+            self._monitoring_worker.wait()
         if self._worker is not None:
             self._worker.stop()
             self._worker.wait()
@@ -723,6 +996,24 @@ class SweepPage(QWidget):
         self.stop_button.setVisible(True)
         self.stop_button.setEnabled(True)
         self.sweep_started.emit()
+
+        # Check if live monitoring should be shown
+        settings = load_settings()
+        self._show_live_monitoring = settings.get("show_live_feed_during_sweep", False)
+        self._monitoring_group.setVisible(self._show_live_monitoring)
+        
+        # Start monitoring worker if enabled
+        if self._show_live_monitoring:
+            grayscale_method = settings.get("grayscale_method", "standard")
+            self._monitoring_worker = LiveMonitoringWorker(
+                self._camera_choice,
+                self._params["exposure"],
+                self._params["gain"],
+                grayscale_method
+            )
+            self._monitoring_worker.frame_update.connect(self._on_monitor_frames)
+            self._monitoring_worker.error.connect(self._on_monitor_error)
+            self._monitoring_worker.start()
 
         stream = EmittingStream()
         stream.text_written.connect(self.log_line)
@@ -760,6 +1051,11 @@ class SweepPage(QWidget):
         QMessageBox.critical(self, "Sweep error", message)
 
     def _on_finished(self, results):
+        if self._monitoring_worker is not None:
+            self._monitoring_worker.stop()
+            self._monitoring_worker.wait()
+            self._monitoring_worker = None
+        self._monitoring_group.setVisible(False)
         self._worker = None
         self.stop_button.setVisible(False)
         if results and self._user_stopped:
@@ -770,6 +1066,25 @@ class SweepPage(QWidget):
             self.freq_label.setText("Sweep finished with no results — check the log below.")
         output_dir = self._params["output_dir"] if self._params else ""
         self.sweep_finished.emit(results, output_dir)
+
+    def _on_monitor_frames(self, frames):
+        """Update the monitoring displays with new frames."""
+        for key, display_widget in [
+            ('live', self._live_display),
+            ('captured', self._captured_display),
+            ('diff', self._diff_display),
+            ('avg', self._avg_display)
+        ]:
+            frame = frames.get(key)
+            if frame is not None:
+                pixmap = _frame_to_pixmap(frame)
+                if pixmap.width() > 0:
+                    scaled = pixmap.scaledToWidth(160, Qt.TransformationMode.SmoothTransformation)
+                    display_widget.setPixmap(scaled)
+    
+    def _on_monitor_error(self, error_msg):
+        """Handle monitoring errors."""
+        print(f"Live monitoring error: {error_msg}")
 
 
 # ==============================================================================
@@ -925,25 +1240,69 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ESPI Plate Vibration — Run Experiment")
         self.resize(1150, 820)
 
+        # Brand header with sidebar
+        nav_widget = QWidget()
+        nav_layout = QVBoxLayout()
+        nav_layout.setContentsMargins(10, 10, 10, 10)
+        nav_layout.setSpacing(0)
+
+        # Brand header: icon + "ESPI Scan Mode"
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(10, 6, 6, 18)
+        header_layout.setSpacing(10)
+        brand_icon = QLabel()
+        brand_icon.setPixmap(qta.icon('mdi6.radar', color=QColor("#e0e0e0")).pixmap(22, 22))
+        brand_title = QLabel("ESPI Scan Mode")
+        brand_title.setObjectName("BrandTitle")
+        header_layout.addWidget(brand_icon)
+        header_layout.addWidget(brand_title)
+        header_layout.addStretch()
+        nav_layout.addLayout(header_layout)
+
+        # Navigation items with icons
         self._nav = QListWidget()
         self._nav.setObjectName("NavRail")
-        self._nav.addItems(["Setup", "Preview", "Sweep", "Results"])
+        self._nav.setIconSize(QSize(18, 18))
+        self._nav.addItem(QListWidgetItem(
+            qta.icon('mdi6.tune-variant', color=QColor("#e0e0e0")), "Setup"
+        ))
+        self._nav.addItem(QListWidgetItem(
+            qta.icon('mdi6.eye-outline', color=QColor("#e0e0e0")), "Preview"
+        ))
+        self._nav.addItem(QListWidgetItem(
+            qta.icon('mdi6.radar', color=QColor("#e0e0e0")), "Sweep"
+        ))
+        self._nav.addItem(QListWidgetItem(
+            qta.icon('mdi6.chart-line', color=QColor("#e0e0e0")), "Results"
+        ))
+        self._nav.addItem(QListWidgetItem(
+            qta.icon('mdi6.cog-outline', color=QColor("#e0e0e0")), "Settings"
+        ))
+        self._nav.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        nav_layout.addWidget(self._nav)
+
+        nav_widget.setLayout(nav_layout)
+        
         self._nav.setFixedWidth(180)
         self._nav.setCurrentRow(0)
-        for row in (1, 2, 3):
+        for row in (1, 2, 3, 4):
             self._set_nav_enabled(row, False)
+        # Settings is always available
+        self._set_nav_enabled(4, True)
         self._nav.currentRowChanged.connect(self._on_nav_changed)
 
         self.setup_page = SetupPage()
         self.preview_page = PreviewPage()
         self.sweep_page = SweepPage()
         self.results_page = ResultsPage()
+        self.settings_page = SettingsPage()
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self.setup_page)
         self._stack.addWidget(self.preview_page)
         self._stack.addWidget(self.sweep_page)
         self._stack.addWidget(self.results_page)
+        self._stack.addWidget(self.settings_page)
 
         self.log_console = QPlainTextEdit()
         self.log_console.setObjectName("LogConsole")
@@ -965,7 +1324,7 @@ class MainWindow(QMainWindow):
         central_layout = QHBoxLayout()
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
-        central_layout.addWidget(self._nav)
+        central_layout.addWidget(nav_widget)
         central_layout.addWidget(right_side, stretch=1)
         central.setLayout(central_layout)
         self.setCentralWidget(central)
@@ -1002,10 +1361,11 @@ class MainWindow(QMainWindow):
     def _start_preview(self):
         params = self.setup_page.get_params()
         camera_choice = self.setup_page.camera_choice()
+        grayscale_method = load_settings().get("grayscale_method", "standard")
         self._set_nav_enabled(1, True)
         self._nav.setCurrentRow(1)
         self.statusBar().showMessage("Previewing camera feed")
-        self.preview_page.start_preview(camera_choice, params["exposure"], params["gain"])
+        self.preview_page.start_preview(camera_choice, params["exposure"], params["gain"], grayscale_method)
 
     def _start_sweep_stage(self):
         camera_choice = self.setup_page.camera_choice()
