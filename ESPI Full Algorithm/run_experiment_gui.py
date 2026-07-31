@@ -337,6 +337,31 @@ class SetupPage(QWidget):
             output_dir=self.output_dir_edit.text(),
         )
 
+    def reload_settings(self):
+        """Reload settings from disk and update all UI controls."""
+        settings = load_settings()
+        
+        # Update camera choice
+        camera_choice = settings.get("default_camera_choice", "2")
+        if camera_choice in self._camera_radios:
+            self._camera_radios[camera_choice].setChecked(True)
+        
+        # Update mode (default to pair subtraction if not in settings)
+        mode_choice = settings.get("default_mode_choice", "1")
+        if mode_choice in self._mode_radios:
+            self._mode_radios[mode_choice].setChecked(True)
+        
+        # Update frequency sweep parameters
+        self.start_freq_spin.setValue(settings.get("default_start_freq", 100.0))
+        self.end_freq_spin.setValue(settings.get("default_end_freq", 1000.0))
+        self.step_spin.setValue(settings.get("default_step_size", 100.0))
+        self.n_averages_spin.setValue(settings.get("default_n_averages", 5))
+        
+        # Update capture parameters
+        self.exposure_spin.setValue(settings.get("default_exposure", 0.01))
+        self.gain_spin.setValue(settings.get("default_gain", 0.0))
+        self.gain_factor_spin.setValue(settings.get("default_gain_factor", 1.0))
+
 
 # ==============================================================================
 # PREVIEW WORKER + PAGE
@@ -1362,6 +1387,22 @@ class MainWindow(QMainWindow):
         params = self.setup_page.get_params()
         camera_choice = self.setup_page.camera_choice()
         grayscale_method = load_settings().get("grayscale_method", "standard")
+        
+        # Save current settings before proceeding
+        current_settings = load_settings()
+        current_settings.update({
+            "default_camera_choice": camera_choice,
+            "default_start_freq": params["start_freq"],
+            "default_end_freq": params["end_freq"],
+            "default_step_size": params["step"],
+            "default_n_averages": params["n_averages"],
+            "default_exposure": params["exposure"],
+            "default_gain": params["gain"],
+            "default_gain_factor": params["gain_factor"],
+            "grayscale_method": grayscale_method,
+        })
+        save_settings(current_settings)
+        
         self._set_nav_enabled(1, True)
         self._nav.setCurrentRow(1)
         self.statusBar().showMessage("Previewing camera feed")
@@ -1371,6 +1412,21 @@ class MainWindow(QMainWindow):
         camera_choice = self.setup_page.camera_choice()
         mode_choice = self.setup_page.mode_choice()
         params = self.setup_page.get_params()
+        
+        # Save current settings before proceeding
+        current_settings = load_settings()
+        current_settings.update({
+            "default_camera_choice": camera_choice,
+            "default_start_freq": params["start_freq"],
+            "default_end_freq": params["end_freq"],
+            "default_step_size": params["step"],
+            "default_n_averages": params["n_averages"],
+            "default_exposure": params["exposure"],
+            "default_gain": params["gain"],
+            "default_gain_factor": params["gain_factor"],
+        })
+        save_settings(current_settings)
+        
         self.sweep_page.begin(camera_choice, mode_choice, params)
         self._set_nav_enabled(2, True)
         self._nav.setCurrentRow(2)
@@ -1394,6 +1450,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Sweep finished with no results — check the log below")
 
     def _on_run_again(self):
+        # Reload settings from disk when returning to setup
+        self.setup_page.reload_settings()
         self._set_nav_enabled(1, False)
         self._set_nav_enabled(2, False)
         self._set_nav_enabled(3, False)
