@@ -1078,6 +1078,7 @@ class SweepPage(QWidget):
         self._monitoring_group.setVisible(False)
         self._worker = None
         self.stop_button.setVisible(False)
+        self.start_button.setEnabled(True)
         if results and self._user_stopped:
             self.freq_label.setText(f"Sweep stopped — {len(results)} frequencies measured.")
         elif results:
