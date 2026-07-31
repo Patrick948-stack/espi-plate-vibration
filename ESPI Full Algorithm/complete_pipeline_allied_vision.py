@@ -203,12 +203,15 @@ def _connect_devices(channel: int):
     print(f"  Signal generator: {sg_identity}")
 
     print("\nConnecting to Allied Vision camera...")
-    camera = connect_camera(camera_index=0)
-    if camera is None:
+    result = connect_camera(camera_index=0)
+    if result is None or (isinstance(result, tuple) and result[0] is None):
         print("[ERROR] Allied Vision camera not found. Check USB cable.")
         close_connection(instr)
         return None, None, None
 
+
+    camera, format_info = result
+    camera, format_info = result
     return instr, camera, sg_identity
 
 

@@ -260,12 +260,15 @@ def frequency_sweep_inclusive(
         print(f"Signal generator identified: {sg_identity}")
 
         print("\nConnecting to camera...")
-        camera = connect_camera(camera_index=0)
-        if camera is None:
+        result = connect_camera(camera_index=0)
+
+        if result is None or (isinstance(result, tuple) and result[0] is None):
             print("[ERROR] Camera not found.  "
                   "Check the USB cable and try again.")
             return None
 
+
+        camera, format_info = result
         # ======================================================================
         # STEP 3 — LIVE FEED: AIM THE CAMERA
         # ======================================================================
@@ -702,11 +705,14 @@ def reference_frequency_sweep_inclusive(
         print(f"Signal generator identified: {sg_identity}")
 
         print("\nConnecting to camera...")
-        camera = connect_camera(camera_index=0)
-        if camera is None:
+        result = connect_camera(camera_index=0)
+
+        if result is None or (isinstance(result, tuple) and result[0] is None):
             print("[ERROR] Camera not found. Check the USB cable.")
             return None
 
+
+        camera, format_info = result
         # ======================================================================
         # STEP 3 — LIVE FEED: AIM THE CAMERA
         # ======================================================================
