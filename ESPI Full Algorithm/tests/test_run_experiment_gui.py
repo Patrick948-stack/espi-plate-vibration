@@ -36,6 +36,7 @@ Sections covered
 
 import os
 import sys
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -46,11 +47,13 @@ import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox
 
 import camera_control_inclusive as cci
 import run_experiment
 import run_experiment_gui as reg
+import settings_manager
 from run_experiment_gui import (
     CameraPreviewWorker,
     EmittingStream,
@@ -203,6 +206,95 @@ class TestSetupPage:
         assert page.output_dir_edit.text() == "output"
 
 
+class TestSetupPageGainVisibility:
+    """
+    Regression tests for the reported bug: "Gain (dB) control shows in
+    Setup even though 'Show Gain (dB)' is unchecked/disabled by default."
+
+    The real cause was that SetupPage's gain field had no conditional
+    visibility logic at all -- it was always shown, full stop, regardless
+    of the show_gain setting SettingsPage's own checkbox saved. isVisible()
+    is not used here on purpose: it only reflects real on-screen state,
+    which requires the whole ancestor chain to actually be shown, so it is
+    always False for a bare, unshown SetupPage() no matter what
+    setVisible() calls were made internally -- a test using isVisible()
+    here would trivially pass whether or not the underlying bug exists.
+    isVisibleTo(page) checks the same "would this become visible" state
+    setVisible() actually controls, without requiring a real window.
+    """
+
+    def test_gain_hidden_by_default(self, qtbot):
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert not page._gain_label.isVisibleTo(page)
+        assert not page.gain_spin.isVisibleTo(page)
+
+    def test_gain_shown_when_show_gain_setting_is_true(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_gain": True,
+        })
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert page._gain_label.isVisibleTo(page)
+        assert page.gain_spin.isVisibleTo(page)
+
+    def test_reload_settings_updates_gain_visibility(self, qtbot):
+        """The propagation bug: changing show_gain after construction must
+        actually reach Setup the next time it reloads, not just at __init__."""
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert not page._gain_label.isVisibleTo(page)
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_gain": True,
+        })
+        page.reload_settings()
+
+        assert page._gain_label.isVisibleTo(page)
+        assert page.gain_spin.isVisibleTo(page)
+
+    def test_reload_settings_can_hide_gain_again(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_gain": True,
+        })
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert page._gain_label.isVisibleTo(page)
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_gain": False,
+        })
+        page.reload_settings()
+
+        assert not page._gain_label.isVisibleTo(page)
+        assert not page.gain_spin.isVisibleTo(page)
+
+    def test_reload_settings_updates_camera_choice(self, qtbot):
+        """
+        Companion regression test: "Camera choice doesn't update in Setup
+        when user changes default camera in Settings." reload_settings()
+        already read default_camera_choice correctly -- the real bug was
+        that nothing ever saved a changed value for it to read (see
+        TestSettingsPagePersistenceIsWired in test_settings_dialog.py).
+        This confirms the read side works once given a real change.
+        """
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert page.camera_choice() == "2"
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "default_camera_choice": "1",
+        })
+        page.reload_settings()
+
+        assert page.camera_choice() == "1"
+
+
 # ===========================================================================
 # EmittingStream
 # ===========================================================================
@@ -253,10 +345,10 @@ class TestEmittingStream:
 class TestCameraPreviewWorker:
     def test_frame_ready_emits_grabbed_frames(self, qtbot, monkeypatch, gray_100x100):
         mock_camera = object()
-        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0, grayscale_method="standard": (mock_camera, {}))
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = CameraPreviewWorker("2", 0.05, 1.0)
@@ -268,17 +360,19 @@ class TestCameraPreviewWorker:
         worker.stop()
         worker.wait(2000)
 
+        # gray_100x100 is already 2D, so _apply_grayscale_conversion() is a
+        # no-op pass-through -- same array, not a copy.
         assert received[0] is gray_100x100
 
     def test_exposure_converted_with_log2_for_usb_camera(self, qtbot, monkeypatch, gray_100x100):
         mock_camera = object()
         received_exposure = []
-        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0, grayscale_method="standard": (mock_camera, {}))
         monkeypatch.setattr(
             cci, "set_exposure_manual", lambda cam, value: received_exposure.append(value)
         )
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = CameraPreviewWorker("2", 0.06, 1.0)
@@ -292,10 +386,10 @@ class TestCameraPreviewWorker:
     def test_disconnect_called_exactly_once_on_stop(self, qtbot, monkeypatch, gray_100x100):
         mock_camera = object()
         disconnect_calls = []
-        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0, grayscale_method="standard": (mock_camera, {}))
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame", lambda cam: gray_100x100)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: gray_100x100)
         monkeypatch.setattr(
             cci, "disconnect_camera", lambda cam: disconnect_calls.append(cam)
         )
@@ -309,7 +403,7 @@ class TestCameraPreviewWorker:
         assert disconnect_calls == [mock_camera]
 
     def test_missing_camera_emits_error_and_still_finishes(self, qtbot, monkeypatch):
-        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: None)
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0, grayscale_method="standard": (None, {}))
 
         worker = CameraPreviewWorker("2", 0.05, 1.0)
         error_blocker = qtbot.waitSignal(worker.error, timeout=2000)
@@ -322,10 +416,10 @@ class TestCameraPreviewWorker:
 
     def test_grab_failure_emits_error_and_finishes(self, qtbot, monkeypatch):
         mock_camera = object()
-        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0, grayscale_method="standard": (mock_camera, {}))
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
-        monkeypatch.setattr(cci, "grab_single_frame", lambda cam: None)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: None)
         monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
 
         worker = CameraPreviewWorker("2", 0.05, 1.0)
@@ -336,6 +430,114 @@ class TestCameraPreviewWorker:
         finished_blocker.wait()
 
         assert "grab" in error_blocker.args[0].lower()
+
+    def test_single_channel_color_frame_is_reduced_to_2d_before_emitting(self, qtbot, monkeypatch):
+        """
+        Regression test for a real crash: connect_camera(grayscale_method=
+        "single_channel") switches the Basler camera to RGB8, so
+        grab_single_frame_color() returns a real (H, W, 3) array. Without
+        reducing it to 2D before frame_ready.emit(), _on_frame() ->
+        _frame_to_pixmap() crashed with "too many values to unpack" trying
+        to do height, width = frame.shape on a 3D array.
+        """
+        mock_camera = object()
+        raw_frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        raw_frame[:, :, 2] = 200  # a distinct value in the "B" (BGR index 2) slot
+        monkeypatch.setattr(
+            cci, "connect_camera",
+            lambda camera_index=0, grayscale_method="standard": (mock_camera, {}),
+        )
+        monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: raw_frame)
+        monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
+
+        worker = CameraPreviewWorker("2", 0.05, 1.0, grayscale_method="standard")
+        received = []
+        worker.frame_ready.connect(received.append)
+        worker.start()
+        qtbot.waitUntil(lambda: len(received) >= 1, timeout=2000)
+        worker.stop()
+        worker.wait(2000)
+
+        assert received[0].ndim == 2
+
+    def test_single_channel_extraction_picks_the_requested_color(self, qtbot, monkeypatch):
+        """
+        camera_control_inclusive.py's connect_camera() always reports
+        needs_channel_swap=False -- cv2.VideoCapture already returns frames
+        in OpenCV's native BGR order, which is exactly what
+        _apply_grayscale_conversion()'s "numpy" backend assumes, so this
+        test's raw frame is laid out BGR (index 2 = Red), matching a real
+        webcam frame with no swap involved.
+        """
+        mock_camera = object()
+        raw_frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        raw_frame[:, :, 0] = 50   # true Blue, BGR index 0
+        raw_frame[:, :, 1] = 100  # true Green
+        raw_frame[:, :, 2] = 200  # true Red, BGR index 2
+        monkeypatch.setattr(
+            cci, "connect_camera",
+            lambda camera_index=0, grayscale_method="standard": (
+                mock_camera, {"needs_channel_swap": False}
+            ),
+        )
+        monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: raw_frame)
+        monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
+
+        worker = CameraPreviewWorker(
+            "2", 0.05, 1.0, grayscale_method="single_channel",
+            grayscale_color="R", grayscale_backend="numpy",
+        )
+        received = []
+        worker.frame_ready.connect(received.append)
+        worker.start()
+        qtbot.waitUntil(lambda: len(received) >= 1, timeout=2000)
+        worker.stop()
+        worker.wait(2000)
+
+        assert np.all(received[0] == 200)
+
+    def test_channel_swap_applied_when_format_info_requests_it(self, qtbot, monkeypatch):
+        """
+        Regression test: Basler's RGB8 output is true (R, G, B) order, but
+        _apply_grayscale_conversion() (borrowed from monitor_gui.py) assumes
+        OpenCV's BGR order. connect_camera() signals this mismatch via
+        format_info["needs_channel_swap"]; without honoring it, requesting
+        the "R" channel would silently return the true Blue channel instead.
+        """
+        mock_camera = object()
+        raw_frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        raw_frame[:, :, 0] = 200  # true Red, at RGB index 0
+        raw_frame[:, :, 1] = 100
+        raw_frame[:, :, 2] = 50   # true Blue, at RGB index 2
+        monkeypatch.setattr(
+            cci, "connect_camera",
+            lambda camera_index=0, grayscale_method="standard": (
+                mock_camera, {"needs_channel_swap": True}
+            ),
+        )
+        monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
+        monkeypatch.setattr(cci, "grab_single_frame_color", lambda cam: raw_frame)
+        monkeypatch.setattr(cci, "disconnect_camera", lambda cam: None)
+
+        worker = CameraPreviewWorker(
+            "2", 0.05, 1.0, grayscale_method="single_channel",
+            grayscale_color="R", grayscale_backend="numpy",
+        )
+        received = []
+        worker.frame_ready.connect(received.append)
+        worker.start()
+        qtbot.waitUntil(lambda: len(received) >= 1, timeout=2000)
+        worker.stop()
+        worker.wait(2000)
+
+        # With the swap applied, "R" must resolve to the true Red value (200),
+        # not the true Blue value (50) that a naive BGR-index read would grab.
+        assert np.all(received[0] == 200)
 
     def test_missing_sdk_emits_install_instructions(self, qtbot, monkeypatch):
         def _raise_import_error(name):
@@ -357,14 +559,14 @@ class TestCameraPreviewWorker:
     def test_unexpected_exception_still_disconnects(self, qtbot, monkeypatch):
         mock_camera = object()
         disconnect_calls = []
-        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: mock_camera)
+        monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0, grayscale_method="standard": (mock_camera, {}))
         monkeypatch.setattr(cci, "set_exposure_manual", lambda cam, value: None)
         monkeypatch.setattr(cci, "set_gain_manual", lambda cam, value: None)
 
         def _boom(cam):
             raise RuntimeError("camera unplugged")
 
-        monkeypatch.setattr(cci, "grab_single_frame", _boom)
+        monkeypatch.setattr(cci, "grab_single_frame_color", _boom)
         monkeypatch.setattr(
             cci, "disconnect_camera", lambda cam: disconnect_calls.append(cam)
         )
@@ -777,6 +979,155 @@ class TestSweepPage:
         assert results is expected_results
         assert output_dir == "my_output"
 
+    # =======================================================================
+    # Saved-image preview (Live Feed was removed: it never had a real
+    # frame source wired in, and only added confusion)
+    # =======================================================================
+
+    def test_begin_reads_monitoring_settings_fresh(self, qtbot):
+        """
+        Settings are read at begin() time, not at __init__ time, so a
+        setting the user changed in between two sweeps is picked up for
+        the next one without needing to rebuild the whole page.
+        """
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": True,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+        assert page._show_saved_image is True
+
+    def test_no_monitoring_section_when_disabled(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": False,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+        assert page._monitoring_container_layout.count() == 0
+
+    def test_window_shown_when_enabled(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": True,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+        assert page._monitoring_container_layout.count() == 1
+        assert page._saved_image_display is not None
+
+    def test_monitoring_section_rebuilds_on_every_begin(self, qtbot):
+        """A second sweep with different settings must not keep a stale window from the first."""
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": True,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params())
+        assert page._monitoring_container_layout.count() == 1
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": False,
+        })
+        page.begin("1", "1", _sweep_params())
+        assert page._monitoring_container_layout.count() == 0
+
+    def test_saved_image_updates_from_newest_output_file_after_progress(self, qtbot, tmp_path):
+        """
+        _on_progress() reacts to the file for the frequency that JUST
+        finished, not the one it's announcing (see that method's own
+        comment for why): call it once to simulate the sweep already
+        being one frequency in.
+        """
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": True,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params(output_dir=str(tmp_path)))
+
+        img = np.full((20, 20), 40, dtype=np.uint8)  # low, near-black raw values
+        cv2.imwrite(str(tmp_path / "espi_sweep_2026-01-01_00100.0Hz_010000us.png"), img)
+
+        page._on_progress(2, 2, 200.0)
+
+        assert not page._saved_image_display.pixmap().isNull()
+
+    def test_saved_image_ignores_files_from_before_this_sweep_started(self, qtbot, tmp_path):
+        """
+        Regression test for a real bug: a stray file already sitting in
+        the output folder (e.g. a leftover grid summary from a previous
+        run) has an older mtime than this sweep started, so it must never
+        be shown, even if it happens to be the only file present when the
+        first progress signal fires.
+        """
+        stale = tmp_path / "old_grid_summary.png"
+        cv2.imwrite(str(stale), np.full((20, 20), 200, dtype=np.uint8))
+        # Back-date it so it is unambiguously older than the sweep start below.
+        old_time = time.time() - 3600
+        os.utime(stale, (old_time, old_time))
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": True,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params(output_dir=str(tmp_path)))
+        # begin() alone doesn't set this -- only a real _start_sweep() does,
+        # which we don't want here since it launches a real SweepWorker
+        # thread. Setting it directly exercises the same mtime filter.
+        page._sweep_start_time = time.time()
+
+        page._on_progress(1, 2, 100.0)
+
+        assert page._saved_image_display.pixmap().isNull()
+
+    def test_saved_image_is_contrast_stretched_not_shown_literally(self, qtbot, tmp_path):
+        """
+        Regression test for a real bug: the saved file holds the raw
+        averaged difference image, whose pixel values are so small that
+        displaying it literally reads as solid black even though the file
+        has real, visible content once contrast-stretched (exactly what
+        the Results page already does when rendering the same data).
+        """
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_saved_image_after_capture": True,
+        })
+        page = SweepPage()
+        qtbot.addWidget(page)
+        page.begin("1", "1", _sweep_params(output_dir=str(tmp_path)))
+        page._sweep_start_time = time.time()
+
+        # A real raw difference frame: mostly low values with a small
+        # bright region -- visually black until normalized to 0-255.
+        raw = np.full((20, 20), 5, dtype=np.uint8)
+        raw[5:10, 5:10] = 20
+        cv2.imwrite(str(tmp_path / "espi_sweep_2026-01-01_00100.0Hz_010000us.png"), raw)
+
+        page._on_progress(2, 2, 200.0)
+
+        pixmap = page._saved_image_display.pixmap()
+        assert not pixmap.isNull()
+        image = pixmap.toImage()
+        # After stretching 5..20 to 0..255, the brightest pixel should
+        # read close to white -- literal (unstretched) values could never
+        # get anywhere near this bright.
+        brightest = max(
+            QColor(image.pixel(x, y)).lightness()
+            for x in range(image.width())
+            for y in range(image.height())
+        )
+        assert brightest > 200
+
     def test_on_progress_updates_bar_and_label(self, qtbot):
         # Calls _on_progress() directly rather than racing a real worker
         # thread: TestSweepWorker already covers the regex parsing that
@@ -837,6 +1188,42 @@ class TestResultsPage:
         page._show_next()
         assert page._single_index == 0
 
+    def test_single_image_view_is_the_default(self, qtbot, tmp_path):
+        """
+        Regression test: results used to open on the grid view, forcing an
+        extra click every time just to see one frequency at a time, which
+        is what most users actually want first.
+        """
+        page = ResultsPage()
+        qtbot.addWidget(page)
+        page.show()
+        qtbot.waitExposed(page)
+        page.show_results(self._results(), str(tmp_path))
+
+        assert page._single_card.isVisible() is True
+        assert page._grid_card.isVisible() is False
+        assert page.toggle_view_button.text() == "Switch to grid view"
+
+    def test_single_image_view_is_the_default_even_before_the_page_is_shown(self, qtbot, tmp_path):
+        """
+        The real bug: MainWindow calls show_results() BEFORE this page
+        becomes the QStackedWidget's current page (see
+        MainWindow._on_sweep_finished()), so isVisible() is False on every
+        widget here at that moment no matter which view is logically
+        selected. show_results() used to read _single_card.isVisible() to
+        decide the grid's visibility, which always came back False in this
+        exact sequence -- silently forcing the grid view back on every
+        single time, regardless of __init__'s own default. Deliberately
+        does NOT call page.show() first, matching real usage.
+        """
+        page = ResultsPage()
+        qtbot.addWidget(page)
+        page.show_results(self._results(), str(tmp_path))
+
+        assert page._grid_view_active is False
+        assert page._single_card.isVisible() is False  # page itself isn't shown -- expected
+        assert page._grid_card.isVisible() is False  # the actual bug: this used to be True
+
     def test_toggle_view_switches_visibility(self, qtbot, tmp_path):
         page = ResultsPage()
         qtbot.addWidget(page)
@@ -844,11 +1231,12 @@ class TestResultsPage:
         qtbot.waitExposed(page)
         page.show_results(self._results(), str(tmp_path))
 
-        assert page._grid_canvas.isVisible() is True
-        assert page._single_canvas.isVisible() is False
-        page._toggle_view()
-        assert page._grid_canvas.isVisible() is False
         assert page._single_canvas.isVisible() is True
+        assert page._grid_canvas.isVisible() is False
+        page._toggle_view()
+        assert page._single_canvas.isVisible() is False
+        assert page._grid_canvas.isVisible() is True
+        assert page.toggle_view_button.text() == "Switch to single-image view"
 
     def test_open_folder_calls_qdesktopservices(self, qtbot, tmp_path):
         page = ResultsPage()
@@ -877,6 +1265,20 @@ class TestMainWindow:
         assert bool(window._nav.item(0).flags() & Qt.ItemFlag.ItemIsEnabled)
         for row in (1, 2, 3):
             assert not (window._nav.item(row).flags() & Qt.ItemFlag.ItemIsEnabled)
+
+    def test_log_console_always_visible_with_fixed_height(self, qtbot):
+        """
+        The terminal/log console must always stay visible at a fixed
+        height, regardless of what SweepPage's monitoring section is
+        doing above it (0, 1, or 2 windows) -- it is a sibling of the
+        page stack, not part of any individual page's layout, so nothing
+        a page does can hide or resize it.
+        """
+        window = MainWindow()
+        qtbot.addWidget(window)
+        assert window.log_console.minimumHeight() == 140
+        assert window.log_console.maximumHeight() == 140
+        assert not window.log_console.isHidden()
 
     def test_continue_to_preview_unlocks_preview(self, qtbot, monkeypatch, gray_100x100):
         monkeypatch.setattr(cci, "connect_camera", lambda camera_index=0: object())

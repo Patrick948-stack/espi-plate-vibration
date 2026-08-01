@@ -289,8 +289,8 @@ class SettingsPage(QWidget):
 
 
 
-        # ========== Group 4: Live Monitoring During Sweep ==========
-        live_group = QGroupBox("Live Monitoring During Sweep")
+        # ========== Group 4: Saved Image During Sweep ==========
+        live_group = QGroupBox("Saved Image During Sweep")
         live_layout = QVBoxLayout()
 
         # Learn More button
@@ -300,7 +300,7 @@ class SettingsPage(QWidget):
         )
         self._live_learn_more.clicked.connect(
             lambda: LearnMoreDialog(
-                "About Live Monitoring",
+                "About the Saved Image Preview",
                 _LIVE_HELP_HTML,
                 self
             ).exec()
@@ -309,12 +309,6 @@ class SettingsPage(QWidget):
         live_learn_row.addStretch()
         live_learn_row.addWidget(self._live_learn_more)
         live_layout.addLayout(live_learn_row)
-
-        self._live_feed_checkbox = QCheckBox(
-            "Show live feed during sweep"
-        )
-        self._live_feed_checkbox.setChecked(True)
-        live_layout.addWidget(self._live_feed_checkbox)
 
         self._saved_image_checkbox = QCheckBox(
             "Show saved image after each capture"
@@ -325,6 +319,29 @@ class SettingsPage(QWidget):
         live_layout.addStretch()
         live_group.setLayout(live_layout)
         layout.addWidget(live_group)
+
+        # ========== Save control ==========
+        # This is the missing piece that caused the reported "settings
+        # don't propagate" bug: save_settings() below always worked
+        # correctly on its own, but nothing in the app ever called it, so
+        # every change made here was silently discarded the moment the
+        # user navigated to a different page. An explicit Save button is
+        # the same predictable pattern SetupPage already uses (it saves
+        # when the user clicks "Continue to Preview"): one clear action
+        # the user takes, that always writes the whole current form state
+        # to disk, rather than guessing which single field change should
+        # trigger an autosave.
+        self.save_button = QPushButton("Save Settings")
+        self.save_button.setObjectName("PrimaryButton")
+        self.save_button.setIcon(
+            qta.icon('mdi6.content-save-outline', color=QColor(_TEXT_PRIMARY))
+        )
+        self.save_button.clicked.connect(self._on_save_clicked)
+        layout.addWidget(self.save_button)
+
+        self._save_status_label = QLabel("")
+        self._save_status_label.setObjectName("SaveStatusLabel")
+        layout.addWidget(self._save_status_label)
 
         # ========== Finalize Layout ==========
         layout.addStretch()
@@ -345,12 +362,6 @@ class SettingsPage(QWidget):
         self._update_grayscale_visibility()
         self._update_camera_visibility()
         self._update_capture_visibility()
-
-        # Ensure this widget is visible so Qt event processing works properly
-        # This is necessary for signals to fire correctly in both interactive
-        # and test environments
-        if not self.isVisible():
-            self.setVisible(True)
 
     def _update_grayscale_visibility(self):
         """Show/hide color and backend controls based on method selection."""
@@ -374,6 +385,23 @@ class SettingsPage(QWidget):
         should_show = self._show_gain_checkbox.isChecked()
         self._gain_label.setVisible(should_show)
         self.gain_spin.setVisible(should_show)
+
+    def showEvent(self, event):
+        """
+        Reload from disk every time this page becomes visible, not just at
+        construction time. Without this, navigating away without saving
+        (or another part of the app changing settings) left this page
+        showing stale state the next time the user opened it.
+        """
+        super().showEvent(event)
+        self.load_settings()
+
+    def _on_save_clicked(self):
+        """Persist every control's current value to disk (see save_button above for why this exists)."""
+        if self.save_settings():
+            self._save_status_label.setText("Settings saved.")
+        else:
+            self._save_status_label.setText("Could not save settings — check the values above.")
 
     def load_settings(self):
         """Load settings from disk and populate controls."""
@@ -406,10 +434,6 @@ class SettingsPage(QWidget):
         self.gain_spin.setValue(settings.get("default_gain", 0.0))
         self.gain_factor_spin.setValue(settings.get("default_gain_factor", 1.0))
 
-        # Live monitoring
-        self._live_feed_checkbox.setChecked(
-            settings.get("show_live_feed_during_sweep", True)
-        )
         self._saved_image_checkbox.setChecked(
             settings.get("show_saved_image_after_capture", False)
         )
@@ -443,7 +467,6 @@ class SettingsPage(QWidget):
             "default_exposure": self.exposure_spin.value(),
             "default_gain": self.gain_spin.value(),
             "default_gain_factor": self.gain_factor_spin.value(),
-            "show_live_feed_during_sweep": self._live_feed_checkbox.isChecked(),
             "show_saved_image_after_capture": self._saved_image_checkbox.isChecked(),
         }
 
@@ -513,17 +536,17 @@ fringes more visible. Same concept as the monitor's amplification.</p>
 """
 
 _LIVE_HELP_HTML = """
-<h3>About Live Monitoring During Sweep</h3>
-<p>When enabled, the sweep window shows four embedded live displays:</p>
+<h3>About the Saved Image Preview</h3>
+<p>When enabled, the Sweep page shows the most recently saved result image
+underneath the progress bar, updated as each frequency finishes.</p>
 
-<ul>
-<li><b>Live Feed</b>: Black & white camera output, updated every frame</li>
-<li><b>Captured Frame</b>: The last frame grabbed for the current frequency</li>
-<li><b>Difference Image</b>: The subtraction result (frame pair or reference subtraction)</li>
-<li><b>Averaged Result</b>: The averaged difference being saved to disk</li>
-</ul>
+<p>This is the same file that gets written to your output folder: the
+averaged difference image for that frequency, contrast-stretched here so
+faint fringes are actually visible on screen (the saved file itself keeps
+its original values, so this preview never changes what gets written to
+disk).</p>
 
-<p>This helps you see the measurement as it happens and spot problems early.
-However, displaying these windows slows down the sweep a bit. Disable if you
-want maximum sweep speed.</p>
+<p>This helps you catch a bad measurement (camera out of focus, plate not
+vibrating, wrong exposure) while the sweep is still running, instead of
+only finding out once it finishes.</p>
 """

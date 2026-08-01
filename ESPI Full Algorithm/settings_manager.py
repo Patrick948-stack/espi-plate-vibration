@@ -29,7 +29,6 @@ DEFAULT_SETTINGS = {
     "default_exposure": 0.01,
     "default_gain": 0.0,
     "default_gain_factor": 1.0,
-    "show_live_feed_during_sweep": True,
     "show_saved_image_after_capture": False,
 }
 

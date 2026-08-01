@@ -58,6 +58,7 @@ import math
 import os
 import re
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -84,6 +85,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
@@ -98,6 +100,7 @@ from matplotlib.figure import Figure
 from typing import Optional, Tuple
 
 import run_experiment
+from monitor_gui import _apply_grayscale_conversion
 from settings_dialog import SettingsPage
 from settings_manager import load_settings, save_settings
 
@@ -118,6 +121,20 @@ def _frame_to_pixmap(frame: np.ndarray) -> QPixmap:
     height, width = frame.shape
     image = QImage(frame.data, width, height, width, QImage.Format.Format_Grayscale8)
     return QPixmap.fromImage(image.copy())
+
+
+def _amplify_for_display(diff: np.ndarray) -> np.ndarray:
+    """
+    Contrast-stretch a raw averaged-difference frame for on-screen preview
+    only. A real ESPI difference image has such a small pixel value range
+    that displayed literally it reads as solid black; this is the same
+    cv2.normalize stretch camera_control.py's amplify_difference() and
+    camera_control_inclusive.py's / camera_control_allied_vision.py's
+    identical copies apply, kept as a local copy here instead of importing
+    one of those modules so this file never depends on a specific camera
+    SDK (e.g. pypylon) being installed just to preview a saved sweep image.
+    """
+    return cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
 
 def _total_sweep_steps(params):
@@ -269,7 +286,8 @@ class SetupPage(QWidget):
         self.exposure_spin.setValue(settings.get("default_exposure", 0.01))
         capture_layout.addWidget(self.exposure_spin, 0, 1)
 
-        capture_layout.addWidget(QLabel("Gain (dB):"), 1, 0)
+        self._gain_label = QLabel("Gain (dB):")
+        capture_layout.addWidget(self._gain_label, 1, 0)
         self.gain_spin = QDoubleSpinBox()
         self.gain_spin.setDecimals(2)
         self.gain_spin.setRange(-20.0, 50.0)  # 0 dB and negative values are valid
@@ -295,6 +313,13 @@ class SetupPage(QWidget):
         grid.addWidget(capture_group, 1, 1)
 
         outer.addLayout(grid)
+
+        # Gain (dB) is an advanced control most users leave alone; only
+        # show it once the user has explicitly opted in via Settings ->
+        # "Show Gain (dB) control". This mirrors show_gain from
+        # settings_manager.DEFAULT_SETTINGS, the same key SettingsPage's
+        # own checkbox saves.
+        self._update_gain_visibility(settings)
 
         self.continue_button = QPushButton("Continue to Preview")
         self.continue_button.setObjectName("PrimaryButton")
@@ -340,27 +365,41 @@ class SetupPage(QWidget):
     def reload_settings(self):
         """Reload settings from disk and update all UI controls."""
         settings = load_settings()
-        
+
         # Update camera choice
         camera_choice = settings.get("default_camera_choice", "2")
         if camera_choice in self._camera_radios:
             self._camera_radios[camera_choice].setChecked(True)
-        
+
         # Update mode (default to pair subtraction if not in settings)
         mode_choice = settings.get("default_mode_choice", "1")
         if mode_choice in self._mode_radios:
             self._mode_radios[mode_choice].setChecked(True)
-        
+
         # Update frequency sweep parameters
         self.start_freq_spin.setValue(settings.get("default_start_freq", 100.0))
         self.end_freq_spin.setValue(settings.get("default_end_freq", 1000.0))
         self.step_spin.setValue(settings.get("default_step_size", 100.0))
         self.n_averages_spin.setValue(settings.get("default_n_averages", 5))
-        
+
         # Update capture parameters
         self.exposure_spin.setValue(settings.get("default_exposure", 0.01))
         self.gain_spin.setValue(settings.get("default_gain", 0.0))
         self.gain_factor_spin.setValue(settings.get("default_gain_factor", 1.0))
+
+        # Update conditional visibility (e.g. Gain control) to match
+        # whatever the user last saved in Settings. This is what actually
+        # reloading settings values above was missing: the values were
+        # already being refreshed correctly, but nothing re-applied
+        # visibility rules to match them, so a control that should now be
+        # hidden (or shown) stayed exactly as it was at construction time.
+        self._update_gain_visibility(settings)
+
+    def _update_gain_visibility(self, settings):
+        """Show the Gain (dB) control only if the user opted in via Settings."""
+        should_show = settings.get("show_gain", False)
+        self._gain_label.setVisible(should_show)
+        self.gain_spin.setVisible(should_show)
 
 
 # ==============================================================================
@@ -386,11 +425,13 @@ class CameraPreviewWorker(QThread):
         camera_choice: str,
         exposure_s: float,
         gain: float,
-        grayscale_method: str = "standard"
+        grayscale_method: str = "standard",
+        grayscale_color: str = "R",
+        grayscale_backend: str = "numpy",
     ) -> None:
         """Initialize preview worker with validated parameters."""
         super().__init__()
-        
+
         # Boundary validation: fail early with clear errors
         if camera_choice not in run_experiment.CAMERA_LIBRARY:
             raise ValueError(
@@ -404,11 +445,13 @@ class CameraPreviewWorker(QThread):
                 f"grayscale_method must be 'standard' or 'single_channel', "
                 f"got '{grayscale_method}'"
             )
-        
+
         self._camera_choice = camera_choice
         self._exposure_s = exposure_s
         self._gain = gain
         self._grayscale_method = grayscale_method
+        self._grayscale_color = grayscale_color
+        self._grayscale_backend = grayscale_backend
         self._stop = False
 
     def stop(self):
@@ -450,7 +493,7 @@ class CameraPreviewWorker(QThread):
         
         # Validate module has all required functions
         required_functions = [
-            'connect_camera', 'disconnect_camera', 'grab_single_frame',
+            'connect_camera', 'disconnect_camera', 'grab_single_frame_color',
             'set_exposure_manual', 'set_gain_manual'
         ]
         for func_name in required_functions:
@@ -494,10 +537,39 @@ class CameraPreviewWorker(QThread):
             cam_lib.set_gain_manual(camera, self._gain)
 
             while not self._stop:
-                frame = cam_lib.grab_single_frame(camera)
+                # grab_single_frame_color(), not grab_single_frame(): the
+                # plain version reduces a color frame to greyscale before
+                # returning it, which would make single-channel R/G/B
+                # extraction below a no-op regardless of what was picked
+                # (the same bug already fixed in monitor_gui.py's
+                # MonitorWorker). connect_camera(grayscale_method=
+                # "single_channel") switches the Basler camera to RGB8, so
+                # this can be a real (H, W, 3) array, not just (H, W).
+                frame = cam_lib.grab_single_frame_color(camera)
                 if frame is None:
                     self.error.emit("Failed to grab frame — check camera connection.")
                     break
+
+                # Basler's RGB8 output is true (R, G, B) channel order, but
+                # _apply_grayscale_conversion() below assumes OpenCV's BGR
+                # order. format_info["needs_channel_swap"] (set by
+                # connect_camera()) says whether this camera needs that
+                # reordering before grayscale conversion; without it,
+                # requesting "R" would silently read the true Blue channel.
+                if format_info.get("needs_channel_swap", False) and frame.ndim == 3:
+                    # .copy() turns the reversed (negative-stride) view into
+                    # a normal contiguous array -- cv2.cvtColor() (used by
+                    # the "standard" grayscale method below) can reject
+                    # negative-stride input.
+                    frame = frame[:, :, ::-1].copy()
+
+                # Reduce to the 2D array _frame_to_pixmap() (and every
+                # existing frame_ready subscriber) expects. A no-op for
+                # cameras that are already Mono8/greyscale.
+                frame = _apply_grayscale_conversion(
+                    frame, self._grayscale_method, self._grayscale_color, self._grayscale_backend
+                )
+
                 self.frame_ready.emit(frame)
                 self.msleep(self._FRAME_INTERVAL_MS)
         except AttributeError as e:
@@ -566,9 +638,12 @@ class PreviewPage(QWidget):
 
         self.setLayout(layout)
 
-    def start_preview(self, camera_choice, exposure_s, gain, grayscale_method="standard"):
+    def start_preview(self, camera_choice, exposure_s, gain, grayscale_method="standard",
+                       grayscale_color="R", grayscale_backend="numpy"):
         self.feed_label.setText("Connecting to camera…")
-        self._worker = CameraPreviewWorker(camera_choice, exposure_s, gain, grayscale_method)
+        self._worker = CameraPreviewWorker(
+            camera_choice, exposure_s, gain, grayscale_method, grayscale_color, grayscale_backend
+        )
         self._worker.frame_ready.connect(self._on_frame)
         self._worker.error.connect(self._on_error)
         self._worker.finished_cleanly.connect(self._on_finished)
@@ -734,142 +809,6 @@ class SweepWorker(QThread):
             self.finished_sweep.emit(results)
 
 
-class LiveMonitoringWorker(QThread):
-    """
-    Captures and displays live monitoring windows during sweep if enabled.
-    Shows: (1) Live feed, (2) Captured frame, (3) Difference image, (4) Averaged result.
-    """
-    
-    frame_update = pyqtSignal(dict)  # {'live': frame, 'captured': frame, 'diff': frame, 'avg': frame}
-    error = pyqtSignal(str)
-    finished = pyqtSignal()
-    
-    def __init__(
-        self,
-        camera_choice: str,
-        exposure_s: float,
-        gain: float,
-        grayscale_method: str
-    ) -> None:
-        """Initialize monitoring worker with validated parameters."""
-        super().__init__()
-        
-        # Boundary validation
-        if camera_choice not in run_experiment.CAMERA_LIBRARY:
-            raise ValueError(
-                f"Invalid camera_choice: '{camera_choice}'. "
-                f"Must be one of {list(run_experiment.CAMERA_LIBRARY.keys())}"
-            )
-        if exposure_s <= 0:
-            raise ValueError(f"exposure_s must be > 0, got {exposure_s}")
-        if grayscale_method not in ("standard", "single_channel"):
-            raise ValueError(
-                f"grayscale_method must be 'standard' or 'single_channel', "
-                f"got '{grayscale_method}'"
-            )
-        
-        self._camera_choice = camera_choice
-        self._exposure_s = exposure_s
-        self._gain = gain
-        self._grayscale_method = grayscale_method
-        self._stop = False
-        self._last_frame = None
-        self._reference_frame = None
-    
-    def stop(self):
-        self._stop = True
-    
-    def set_reference_frame(self, frame):
-        self._reference_frame = frame
-    
-    def run(self):
-        module_name = run_experiment.CAMERA_LIBRARY[self._camera_choice]
-        try:
-            cam_lib = importlib.import_module(module_name)
-        except ImportError as e:
-            self.error.emit(f"Could not load camera module: {e}")
-            self.finished.emit()
-            return
-        
-        camera = None
-        try:
-            result = cam_lib.connect_camera(grayscale_method=self._grayscale_method)
-            
-            # Defensive: validate return type before unpacking
-            if not isinstance(result, tuple):
-                self.error.emit(
-                    f"[ERROR] Camera module returned invalid type: {type(result).__name__}. "
-                    f"Expected tuple (camera, format_info)."
-                )
-                self.finished.emit()
-                return
-            
-            if len(result) != 2:
-                self.error.emit(
-                    f"[ERROR] Camera module returned tuple with {len(result)} elements. "
-                    f"Expected 2 (camera, format_info)."
-                )
-                self.finished.emit()
-                return
-            
-            camera, format_info = result
-            
-            # Single check: camera is None
-            if camera is None:
-                self.error.emit(
-                    "Could not connect to camera for live monitoring. "
-                    "Check camera is plugged in and not in use by another application."
-                )
-                self.finished.emit()
-                return
-            
-            exposure_value = math.log2(self._exposure_s) if self._camera_choice == "2" else self._exposure_s * 1_000_000
-            cam_lib.set_exposure_manual(camera, exposure_value)
-            cam_lib.set_gain_manual(camera, self._gain)
-            
-            while not self._stop:
-                frame = cam_lib.grab_single_frame(camera)
-                if frame is None:
-                    continue
-                
-                self._last_frame = frame
-                
-                # Compute difference if we have a reference
-                diff_frame = None
-                if self._reference_frame is not None:
-                    diff_frame = cv2.absdiff(frame, self._reference_frame)
-                
-                # Emit all frames (some may be None)
-                self.frame_update.emit({
-                    'live': frame,
-                    'captured': frame,
-                    'diff': diff_frame,
-                    'avg': frame
-                })
-                
-                self.msleep(66)  # ~15 fps
-        except AttributeError as e:
-            self.error.emit(
-                f"[ERROR] Camera object missing method: {e}. "
-                f"This may indicate wrong camera type or SDK not installed."
-            )
-        except RuntimeError as e:
-            self.error.emit(f"[HARDWARE] Camera error: {e}")
-        except ValueError as e:
-            self.error.emit(f"[PARAM] Invalid parameter: {e}")
-        except Exception as e:
-            self.error.emit(f"[UNEXPECTED] Monitoring stopped: {e}")
-        finally:
-            if camera is not None:
-                try:
-                    cam_lib.disconnect_camera(camera)
-                except AttributeError as e:
-                    print(f"[WARNING] Failed to disconnect camera: {e}")
-                except Exception as e:
-                    print(f"[ERROR] Unexpected error during disconnect: {e}")
-            
-            self.finished.emit()
-
 class SweepPage(QWidget):
     """
     A determinate progress bar plus a "Frequency i of N" label, driven
@@ -886,12 +825,13 @@ class SweepPage(QWidget):
     def __init__(self):
         super().__init__()
         self._worker = None
-        self._monitoring_worker = None
         self._camera_choice = None
         self._mode_choice = None
         self._params = None
         self._user_stopped = False
-        self._show_live_monitoring = False
+        self._show_saved_image = False
+        self._saved_image_display = None
+        self._sweep_start_time = None
 
         outer = QVBoxLayout()
 
@@ -942,49 +882,45 @@ class SweepPage(QWidget):
         progress_group.setLayout(progress_layout)
         outer.addWidget(progress_group)
 
-        # Live monitoring group (shown if enabled in settings)
-        monitoring_group = QGroupBox("Live Monitoring")
-        monitoring_layout = QGridLayout()
-        
-        self._live_label = QLabel("Live Feed")
-        self._live_label.setObjectName("MonitoringLabel")
-        self._live_display = QLabel()
-        self._live_display.setMinimumSize(160, 120)
-        self._live_display.setObjectName("MonitoringDisplay")
-        monitoring_layout.addWidget(self._live_label, 0, 0)
-        monitoring_layout.addWidget(self._live_display, 1, 0)
-        
-        self._captured_label = QLabel("Captured Frame")
-        self._captured_label.setObjectName("MonitoringLabel")
-        self._captured_display = QLabel()
-        self._captured_display.setMinimumSize(160, 120)
-        self._captured_display.setObjectName("MonitoringDisplay")
-        monitoring_layout.addWidget(self._captured_label, 0, 1)
-        monitoring_layout.addWidget(self._captured_display, 1, 1)
-        
-        self._diff_label = QLabel("Difference")
-        self._diff_label.setObjectName("MonitoringLabel")
-        self._diff_display = QLabel()
-        self._diff_display.setMinimumSize(160, 120)
-        self._diff_display.setObjectName("MonitoringDisplay")
-        monitoring_layout.addWidget(self._diff_label, 0, 2)
-        monitoring_layout.addWidget(self._diff_display, 1, 2)
-        
-        self._avg_label = QLabel("Averaged Result")
-        self._avg_label.setObjectName("MonitoringLabel")
-        self._avg_display = QLabel()
-        self._avg_display.setMinimumSize(160, 120)
-        self._avg_display.setObjectName("MonitoringDisplay")
-        monitoring_layout.addWidget(self._avg_label, 0, 3)
-        monitoring_layout.addWidget(self._avg_display, 1, 3)
-        
-        monitoring_group.setLayout(monitoring_layout)
-        monitoring_group.setVisible(False)  # Hidden until sweep starts with monitoring enabled
-        self._monitoring_group = monitoring_group
-        outer.addWidget(monitoring_group)
+        # Saved-image preview: built fresh by _setup_monitoring_ui() every
+        # time begin() runs, from whatever show_saved_image_after_capture
+        # is set to at that moment. This container is a plain QWidget, not
+        # a QGroupBox — when the setting is off, _setup_monitoring_ui()
+        # leaves it completely empty, so no empty box or wasted space
+        # appears (see that method for why a QGroupBox is only created
+        # when there is something to put in it).
+        self._monitoring_container = QWidget()
+        self._monitoring_container_layout = QVBoxLayout()
+        self._monitoring_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._monitoring_container.setLayout(self._monitoring_container_layout)
+        outer.addWidget(self._monitoring_container)
 
-        outer.addStretch()
-        self.setLayout(outer)
+        # No addStretch() here: the old fixed-size 4-window grid always
+        # reserved its own space whether or not it was visible, so a
+        # trailing stretch was needed to fill whatever was left over. The
+        # monitoring container now only takes as much space as it actually
+        # has content for (nothing, or the one saved-image window), so the
+        # layout itself grows and shrinks with it instead of stretching
+        # around a fixed gap.
+
+        # Wrapped in a QScrollArea for the same reason SettingsPage is
+        # (see its own comment): a QStackedWidget must be big enough to
+        # show every page it holds, even ones not currently visible, so
+        # this page's own natural height becomes a floor on the whole
+        # window's height. Without a scroll area, Summary + Sweep progress
+        # + the saved-image preview can exceed a real screen's height, and
+        # the bottom of the page (on a short screen, the Start Sweep
+        # button itself) gets cropped instead of becoming scrollable.
+        scroll_widget = QWidget()
+        scroll_widget.setLayout(outer)
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(scroll_widget)
+        scroll_area.setWidgetResizable(True)
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll_area)
+        self.setLayout(main_layout)
 
     def begin(self, camera_choice, mode_choice, params):
         """Called by MainWindow once the Preview stage hands off."""
@@ -1012,14 +948,75 @@ class SweepPage(QWidget):
             f"Output folder :  {params['output_dir']}"
         )
 
+        # Settings are read fresh here, not cached from __init__, so a
+        # preference the user changed in Settings since the last sweep
+        # (or the last time this page was even constructed) is honored
+        # for this run without needing to rebuild the page.
+        settings = load_settings()
+        self._show_saved_image = settings.get("show_saved_image_after_capture", False)
+        self._setup_monitoring_ui()
+
+    def _setup_monitoring_ui(self):
+        """
+        (Re)build the saved-image preview from self._show_saved_image: the
+        most recently saved result (after subtraction and averaging) for
+        the frequency that just finished.
+
+        Disabled -> the container is left completely empty: no QGroupBox,
+        no reserved space, nothing for the user to look at.
+        Enabled -> a single centered window.
+        """
+        while self._monitoring_container_layout.count():
+            item = self._monitoring_container_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self._saved_image_display = None
+
+        if not self._show_saved_image:
+            return
+
+        monitoring_group = QGroupBox("Saved Image")
+        row = QHBoxLayout()
+        row.addStretch()
+        self._saved_image_display = self._add_monitoring_window(
+            row, "Saved Image", "Result saved for the frequency that just finished"
+        )
+        row.addStretch()
+
+        monitoring_group.setLayout(row)
+        self._monitoring_container_layout.addWidget(monitoring_group)
+
+    def _add_monitoring_window(self, row_layout, title, description):
+        """Build one labeled monitoring card and add it to row_layout. Returns its QLabel display."""
+        card = QVBoxLayout()
+
+        title_label = QLabel(title)
+        title_label.setObjectName("MonitoringLabel")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card.addWidget(title_label)
+
+        display = QLabel("Waiting for the first frame…")
+        display.setObjectName("MonitoringDisplay")
+        display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        display.setMinimumSize(280, 210)
+        card.addWidget(display)
+
+        description_label = QLabel(description)
+        description_label.setObjectName("MonitoringDescription")
+        description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description_label.setWordWrap(True)
+        card.addWidget(description_label)
+
+        row_layout.addLayout(card)
+        return display
+
     def is_running(self):
         return self._worker is not None and self._worker.isRunning()
 
     def stop_and_wait(self):
         """Used by MainWindow.closeEvent() once the user confirms stopping."""
-        if self._monitoring_worker is not None:
-            self._monitoring_worker.stop()
-            self._monitoring_worker.wait()
         if self._worker is not None:
             self._worker.stop()
             self._worker.wait()
@@ -1030,10 +1027,10 @@ class SweepPage(QWidget):
         self.stop_button.setEnabled(True)
         self.sweep_started.emit()
 
-        # Note: Live monitoring disabled for now because it requires a separate camera connection,
-        # which conflicts with SweepWorker holding the camera exclusively.
-        # TODO: Future enhancement - support dual-camera setups or display-only monitoring
-        self._monitoring_group.setVisible(False)
+        # Marks which files in the output folder belong to this run, so
+        # _refresh_saved_image() can never show a file left over from an
+        # earlier sweep (or anything else already in that folder).
+        self._sweep_start_time = time.time()
 
         stream = EmittingStream()
         stream.text_written.connect(self.log_line)
@@ -1066,16 +1063,66 @@ class SweepPage(QWidget):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
         self.freq_label.setText(f"Sweeping frequency {current} of {total} — {freq:g} Hz")
+        # Reacting to THIS signal shows the PREVIOUS frequency's saved
+        # result, not the one just announced: complete_pipeline*.py prints
+        # "Sweeping frequency: X Hz" at the START of that frequency's
+        # measurement, and only writes its file at the END, after
+        # capturing and averaging every frame pair. The pipeline runs
+        # sequentially, so by the time progress advances to a new
+        # frequency, the previous one's file is guaranteed to already be
+        # on disk -- no arbitrary delay needed to "wait for the write".
+        if self._show_saved_image:
+            self._refresh_saved_image()
+
+    def _refresh_saved_image(self):
+        """Load whichever file this sweep run has written most recently."""
+        if self._saved_image_display is None or not self._params:
+            return
+        output_dir = self._params.get("output_dir", "")
+        if not output_dir or not os.path.isdir(output_dir):
+            return
+
+        # mtime filter: only files THIS sweep wrote are eligible. Without
+        # it, a file already sitting in the output folder from an earlier
+        # run (or anything else saved there) could be picked up and shown
+        # before this sweep has written anything of its own.
+        cutoff = self._sweep_start_time or 0
+        image_files = [
+            path
+            for name in os.listdir(output_dir)
+            if name.lower().endswith((".png", ".tif", ".tiff"))
+            for path in [os.path.join(output_dir, name)]
+            if os.path.getmtime(path) >= cutoff
+        ]
+        if not image_files:
+            return
+
+        newest = max(image_files, key=os.path.getmtime)
+        raw = cv2.imread(newest, cv2.IMREAD_UNCHANGED)
+        if raw is None:
+            return
+
+        # The saved file holds the raw averaged difference image, not a
+        # contrast-stretched one -- correct for measurement (nothing about
+        # the actual saved data changes), but a real ESPI difference frame
+        # has such a small pixel value range that displayed literally, on
+        # screen, it reads as solid black. _amplify_for_display() stretches
+        # it to the full 0-255 range for this preview only.
+        display_frame = _amplify_for_display(raw)
+        pixmap = _frame_to_pixmap(display_frame)
+        if pixmap.isNull():
+            return
+        scaled = pixmap.scaled(
+            self._saved_image_display.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._saved_image_display.setPixmap(scaled)
 
     def _on_error(self, message):
         QMessageBox.critical(self, "Sweep error", message)
 
     def _on_finished(self, results):
-        if self._monitoring_worker is not None:
-            self._monitoring_worker.stop()
-            self._monitoring_worker.wait()
-            self._monitoring_worker = None
-        self._monitoring_group.setVisible(False)
         self._worker = None
         self.stop_button.setVisible(False)
         self.start_button.setEnabled(True)
@@ -1085,27 +1132,13 @@ class SweepPage(QWidget):
             self.freq_label.setText(f"Sweep complete — {len(results)} frequencies measured.")
         else:
             self.freq_label.setText("Sweep finished with no results — check the log below.")
+        # One more refresh: _on_progress() only shows a frequency's result
+        # once the NEXT one starts, so the very last frequency's file
+        # never gets shown until now.
+        if self._show_saved_image:
+            self._refresh_saved_image()
         output_dir = self._params["output_dir"] if self._params else ""
         self.sweep_finished.emit(results, output_dir)
-
-    def _on_monitor_frames(self, frames):
-        """Update the monitoring displays with new frames."""
-        for key, display_widget in [
-            ('live', self._live_display),
-            ('captured', self._captured_display),
-            ('diff', self._diff_display),
-            ('avg', self._avg_display)
-        ]:
-            frame = frames.get(key)
-            if frame is not None:
-                pixmap = _frame_to_pixmap(frame)
-                if pixmap.width() > 0:
-                    scaled = pixmap.scaledToWidth(160, Qt.TransformationMode.SmoothTransformation)
-                    display_widget.setPixmap(scaled)
-    
-    def _on_monitor_error(self, error_msg):
-        """Handle monitoring errors."""
-        print(f"Live monitoring error: {error_msg}")
 
 
 # ==============================================================================
@@ -1114,12 +1147,13 @@ class SweepPage(QWidget):
 
 class ResultsPage(QWidget):
     """
-    Embeds build_grid_figure()'s Figure directly (default view), plus a
-    second, GUI-owned single-image view with Prev/Next paging — a separate
-    canvas rather than reusing show_results()'s
-    fig.canvas.mpl_connect("key_press_event", ...) viewer, since that
-    relies on matplotlib's own blocking plt.show() event loop, which would
-    conflict with Qt's event loop already running here.
+    A GUI-owned single-image view with Prev/Next paging (the default view),
+    plus build_grid_figure()'s Figure embedded directly as a secondary
+    "see every frequency at once" view, reachable via the toggle button.
+    The single-image view is a separate canvas rather than reusing
+    show_results()'s fig.canvas.mpl_connect("key_press_event", ...) viewer,
+    since that relies on matplotlib's own blocking plt.show() event loop,
+    which would conflict with Qt's event loop already running here.
     """
 
     run_again = pyqtSignal()
@@ -1131,6 +1165,13 @@ class ResultsPage(QWidget):
         self._freqs = []
         self._fmt = lambda f: f"{f:g}"
         self._single_index = 0
+        # Explicit state, not inferred from isVisible(): MainWindow calls
+        # show_results() BEFORE this page becomes the QStackedWidget's
+        # current page (see _on_sweep_finished()), so at that moment
+        # isVisible() is always False regardless of which card is
+        # logically selected -- reading it back to "preserve" the current
+        # view used to silently force the grid view on every time.
+        self._grid_view_active = False
 
         self._layout = QVBoxLayout()
 
@@ -1140,11 +1181,14 @@ class ResultsPage(QWidget):
         # would otherwise ignore a border/background applied directly to
         # it.
         self._grid_card, self._grid_canvas = self._make_canvas_card()
+        # Single-image view is the default the user actually wants to land
+        # on -- the grid is the secondary, "see everything at once" view,
+        # opted into via the toggle button below.
+        self._grid_card.setVisible(False)
         self._layout.addWidget(self._grid_card, stretch=1)
 
         self._single_card, self._single_canvas = self._make_canvas_card()
         self._single_ax = self._single_canvas.figure.add_subplot(111)
-        self._single_card.setVisible(False)
         self._layout.addWidget(self._single_card, stretch=1)
 
         nav_row = QHBoxLayout()
@@ -1159,7 +1203,7 @@ class ResultsPage(QWidget):
         self._layout.addLayout(nav_row)
 
         button_row = QHBoxLayout()
-        self.toggle_view_button = QPushButton("Switch to single-image view")
+        self.toggle_view_button = QPushButton("Switch to grid view")
         self.toggle_view_button.clicked.connect(self._toggle_view)
         self.open_folder_button = QPushButton("Open output folder")
         self.open_folder_button.clicked.connect(self._open_folder)
@@ -1204,7 +1248,11 @@ class ResultsPage(QWidget):
         new_canvas.setVisible(True)
         self._grid_canvas.deleteLater()
         self._grid_canvas = new_canvas
-        self._grid_card.setVisible(not self._single_card.isVisible())
+        # Re-apply whichever view the user last chose (or the single-image
+        # default on the very first call) -- from _grid_view_active, not
+        # from isVisible(), which is unreliable here (see __init__).
+        self._grid_card.setVisible(self._grid_view_active)
+        self._single_card.setVisible(not self._grid_view_active)
 
         self._draw_single(0)
         self.prev_button.setVisible(True)
@@ -1233,11 +1281,11 @@ class ResultsPage(QWidget):
         self._draw_single(min(len(self._freqs) - 1, self._single_index + 1))
 
     def _toggle_view(self):
-        grid_was_visible = self._grid_card.isVisible()
-        self._grid_card.setVisible(not grid_was_visible)
-        self._single_card.setVisible(grid_was_visible)
+        self._grid_view_active = not self._grid_view_active
+        self._grid_card.setVisible(self._grid_view_active)
+        self._single_card.setVisible(not self._grid_view_active)
         self.toggle_view_button.setText(
-            "Switch to grid view" if grid_was_visible else "Switch to single-image view"
+            "Switch to single-image view" if self._grid_view_active else "Switch to grid view"
         )
 
     def _open_folder(self):
@@ -1385,8 +1433,11 @@ class MainWindow(QMainWindow):
     def _start_preview(self):
         params = self.setup_page.get_params()
         camera_choice = self.setup_page.camera_choice()
-        grayscale_method = load_settings().get("grayscale_method", "standard")
-        
+        settings = load_settings()
+        grayscale_method = settings.get("grayscale_method", "standard")
+        grayscale_color = settings.get("grayscale_color", "R")
+        grayscale_backend = settings.get("grayscale_backend", "numpy")
+
         # Save current settings before proceeding
         current_settings = load_settings()
         current_settings.update({
@@ -1401,11 +1452,14 @@ class MainWindow(QMainWindow):
             "grayscale_method": grayscale_method,
         })
         save_settings(current_settings)
-        
+
         self._set_nav_enabled(1, True)
         self._nav.setCurrentRow(1)
         self.statusBar().showMessage("Previewing camera feed")
-        self.preview_page.start_preview(camera_choice, params["exposure"], params["gain"], grayscale_method)
+        self.preview_page.start_preview(
+            camera_choice, params["exposure"], params["gain"],
+            grayscale_method, grayscale_color, grayscale_backend,
+        )
 
     def _start_sweep_stage(self):
         camera_choice = self.setup_page.camera_choice()

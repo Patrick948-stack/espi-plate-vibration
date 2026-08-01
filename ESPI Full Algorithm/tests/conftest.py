@@ -2,9 +2,38 @@
 conftest.py — shared pytest fixtures for ESPI camera and signal generator tests.
 """
 
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import numpy as np
 import pytest
 from unittest.mock import MagicMock
+
+
+# ---------------------------------------------------------------------------
+# Isolate settings_manager's JSON file so tests never touch the real
+# ~/.espi/settings.json on whatever machine runs them
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_file(tmp_path, monkeypatch):
+    """
+    Every test that touches settings_manager (directly or through
+    SettingsPage / SetupPage / SweepPage) used to read and write the real
+    user's ~/.espi/settings.json, with no isolation at all. That meant a
+    test's result depended on whatever was left on disk from a previous
+    test run or the developer's own real usage of the app, and running
+    the suite could silently overwrite the developer's own saved settings.
+
+    Redirecting _get_settings_path() to a per-test tmp_path file makes
+    every test start from a clean slate and never touch real user data,
+    without changing anything about how settings_manager itself works.
+    """
+    import settings_manager
+    fake_path = tmp_path / "settings.json"
+    monkeypatch.setattr(settings_manager, "_get_settings_path", lambda: fake_path)
 
 
 # ---------------------------------------------------------------------------
