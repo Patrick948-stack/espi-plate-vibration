@@ -93,13 +93,7 @@ class SettingsManager:
                 "exposure_s": 0.05,
                 "control_gain": False,
                 "control_gain_factor": True,
-            },
-            "visualization": {
-                "show_intensity_graph": True,
-                "show_histogram": False,
-                "show_3d_graph": False,
-                "show_log_histogram": False,
-                "show_live_feed": True,
+                "preview_size": "Medium",  # "Small", "Medium", or "Large"
             },
             "persistence": {
                 "user_last_settings_as_default": False,
@@ -112,6 +106,9 @@ class SettingsManager:
                 "theme": "light",
                 "window_width": 1200,
                 "window_height": 800,
+                "window_geometry": "",  # base64 QByteArray from saveGeometry(), set on close
+                "remember_window_geometry": True,
+                "show_tooltips": True,
             },
         }
 

@@ -43,7 +43,15 @@ import time
 import traceback
 from datetime import datetime
 
-from signal_generator_control import *
+from sdg_control import (
+    open_connection,
+    close_connection,
+    get_identity,
+    configure_channel,
+    set_frequency,
+    turn_on_output,
+    turn_off_output,
+)
 from camera_control_allied_vision import *
 
 
@@ -216,7 +224,8 @@ def _connect_devices(channel: int):
 
 
 def _configure_signal_generator(instr, waveform: str, start_freq: float,
-                                 amplitude: float, channel: int) -> str | None:
+                                 amplitude: float, channel: int,
+                                 offset: float = 0.0) -> str | None:
     """
     Configure the signal generator and turn on its output.
 
@@ -230,13 +239,16 @@ def _configure_signal_generator(instr, waveform: str, start_freq: float,
         waveform  = waveform,
         frequency = start_freq,
         amplitude = amplitude,
-        offset    = 0.0,
+        offset    = offset,
         channel   = channel,
     )
 
-    # configure_channel returns a dict. If the output could not be turned on,
-    # the 'channel output' key will be missing or None.
-    if not sg_settings or sg_settings.get("channel output") is None:
+    # turn_on_output() returns the channel number on success, None on a
+    # communication error. configure_channel()'s own return dict never had
+    # a "channel output" key to check here (neither the old nor the new
+    # signal generator library returns one) -- this used to check a key
+    # that was always missing, so this branch always fired.
+    if not sg_settings or turn_on_output(instr, channel=channel) is None:
         print(f"[ERROR] Could not turn on channel {channel} of the signal generator.")
         return None
 
@@ -300,6 +312,7 @@ def frequency_sweep_allied_vision(
     output_dir:      str,
     waveform:        str   = "sine",
     amplitude:       float = 1.0,
+    offset:          float = 0.0,
     warmup_frames:   int   = 10,
     channel:         int   = 1,
     skip_live_feed:  bool  = False,
@@ -339,6 +352,9 @@ def frequency_sweep_allied_vision(
         output_dir    : folder where images will be saved (created if missing)
         waveform      : signal shape, e.g. "sine" or "square"
         amplitude     : peak-to-peak voltage in Vpp
+        offset        : signal generator DC offset, in Volts. Clamped by
+                        configure_channel() so the waveform's peaks stay
+                        within the +/-10V rail. Defaults to 0.0.
         warmup_frames : frames to discard after connecting the camera
         channel       : signal generator output channel, 1 or 2
         gain_factor   : multiplier applied to each difference image, before
@@ -392,7 +408,7 @@ def frequency_sweep_allied_vision(
 
         # ---- Turn on signal generator ----
         active_waveform = _configure_signal_generator(
-            instr, waveform, start_freq, amplitude, channel
+            instr, waveform, start_freq, amplitude, channel, offset=offset
         )
         if active_waveform is None:
             return None
@@ -514,6 +530,7 @@ def reference_frequency_sweep_allied_vision(
     output_dir:      str,
     waveform:        str   = "sine",
     amplitude:       float = 1.0,
+    offset:          float = 0.0,
     warmup_frames:   int   = 10,
     channel:         int   = 1,
     skip_live_feed:  bool  = False,
@@ -581,7 +598,7 @@ def reference_frequency_sweep_allied_vision(
 
         # ---- Turn on signal generator ----
         active_waveform = _configure_signal_generator(
-            instr, waveform, start_freq, amplitude, channel
+            instr, waveform, start_freq, amplitude, channel, offset=offset
         )
         if active_waveform is None:
             return None

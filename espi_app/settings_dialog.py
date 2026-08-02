@@ -4,10 +4,12 @@ settings_dialog.py
 Settings dialog — allows users to configure application preferences.
 
 The dialog is organized into tabs:
-1. Hardware — camera choice, exposure, frame rate, pixel format
-2. Visualization — graph options, refresh rate
-3. UI — theme selection
+1. Hardware — camera choice, exposure, gain, gain factor, preview size
+2. UI — theme selection, persistence, window behavior
 """
+
+import sys
+from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -22,9 +24,23 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QPushButton,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 
 from espi_app.settings import SettingsManager
+
+
+def _ensure_espi_algorithm_on_path():
+    """
+    Add the ESPI Full Algorithm folder to sys.path so its settings_manager
+    can be imported. A local copy of the same helper in main_window.py and
+    styles.py — kept local rather than imported from main_window.py to
+    avoid a circular import (main_window.py itself imports SettingsDialog
+    from this file).
+    """
+    algo_dir = Path(__file__).resolve().parent.parent / "ESPI Full Algorithm"
+    if str(algo_dir) not in sys.path:
+        sys.path.insert(0, str(algo_dir))
+
 
 # Camera choices (same as in run_experiment.py)
 CAMERA_NAMES = {
@@ -33,21 +49,36 @@ CAMERA_NAMES = {
     "3": "Allied Vision",
 }
 
+# Preview window size choices, mapped to pixel dimensions.
+PREVIEW_SIZES = {
+    "Small": (640, 480),
+    "Medium": (1024, 768),
+    "Large": (1920, 1080),
+}
+
 
 class SettingsDialog(QDialog):
     """
     Modal dialog for configuring application settings.
 
-    Users can adjust hardware settings (exposure, gain), visualization
-    preferences (which graphs to show), and UI preferences (theme).
+    Users can adjust hardware settings (camera, exposure, gain, gain
+    factor, preview size) and UI preferences (theme, persistence,
+    window behavior).
 
     Settings are saved to disk when the user clicks "Save".
 
     Signals:
         theme_changed: Emitted with (new_theme_name) when user saves a theme change
+        hardware_defaults_changed: Emitted (no args) when the Hardware tab's
+            camera/exposure/gain/gain_factor fields were editable (i.e. "Use
+            Last Settings as Default" was off) and just got saved, so the
+            landing page can push them out to Monitor/Scan mode's own
+            settings file. Not emitted when those fields were locked —
+            they're auto-managed in that case, not being set by hand here.
     """
 
     theme_changed = pyqtSignal(str)
+    hardware_defaults_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         """
@@ -75,12 +106,10 @@ class SettingsDialog(QDialog):
 
         # Create each tab
         self.hardware_tab = self._create_hardware_tab()
-        self.visualization_tab = self._create_visualization_tab()
         self.ui_tab = self._create_ui_tab()
 
         # Add tabs
         self.tabs.addTab(self.hardware_tab, "Hardware")
-        self.tabs.addTab(self.visualization_tab, "Visualization")
         self.tabs.addTab(self.ui_tab, "UI")
 
         layout.addWidget(self.tabs)
@@ -110,6 +139,15 @@ class SettingsDialog(QDialog):
         - Default Exposure time (in seconds)
         - Default Gain value
         - Default Gain Factor value
+        - Preview Window Size (Small/Medium/Large)
+
+        When "Use Last Settings as Default" is on, the camera/exposure/gain/
+        gain factor fields are disabled and instead show whatever was
+        actually last used in Monitor Mode or Scan Mode (see
+        _default_value_source()) — these values are now managed
+        automatically, not typed in by hand. Preview Window Size stays
+        editable either way, since it is a window-size preference, not a
+        measurement default.
 
         Returns:
             QWidget: The hardware tab widget
@@ -122,6 +160,14 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout()
 
+        locked = self.settings_manager.get("persistence.user_last_settings_as_default")
+        camera_choice, exposure, gain, gain_factor = self._default_value_source(locked)
+        # Default Gain / Gain Factor are QSpinBox (integers), but the
+        # dashboards' own gain widgets are QDoubleSpinBox (real decimals) —
+        # round rather than truncate so display is as close as possible.
+        gain = round(gain)
+        gain_factor = round(gain_factor)
+
         # --- Camera selection ---
         layout.addWidget(QLabel("Default Camera:"))
         self.camera_combo = QComboBox()
@@ -131,13 +177,12 @@ class SettingsDialog(QDialog):
         for choice_code, camera_name in CAMERA_NAMES.items():
             self.camera_combo.addItem(camera_name, choice_code)
 
-        # Load current camera choice
-        camera_choice = self.settings_manager.get("hardware.default_camera_choice")
         current_index = self.camera_combo.findData(camera_choice)
         if current_index >= 0:
             self.camera_combo.setCurrentIndex(current_index)
         else:
             self.camera_combo.setCurrentIndex(0)  # Default to first option
+        self.camera_combo.setEnabled(not locked)
 
         layout.addWidget(self.camera_combo)
 
@@ -147,9 +192,8 @@ class SettingsDialog(QDialog):
         self.exposure_spin.setMinimum(0.001)
         self.exposure_spin.setMaximum(10.0)
         self.exposure_spin.setDecimals(3)
-        self.exposure_spin.setValue(
-            self.settings_manager.get("hardware.exposure_s")
-        )
+        self.exposure_spin.setValue(exposure)
+        self.exposure_spin.setEnabled(not locked)
         layout.addWidget(self.exposure_spin)
 
         # --- Gain ---
@@ -157,9 +201,8 @@ class SettingsDialog(QDialog):
         self.default_gain_spin = QSpinBox()
         self.default_gain_spin.setMinimum(0)
         self.default_gain_spin.setMaximum(100)
-        self.default_gain_spin.setValue(
-            self.settings_manager.get("persistence.default_gain")
-        )
+        self.default_gain_spin.setValue(gain)
+        self.default_gain_spin.setEnabled(not locked)
         layout.addWidget(self.default_gain_spin)
 
         # --- Gain Factor ---
@@ -167,78 +210,76 @@ class SettingsDialog(QDialog):
         self.default_gain_factor_spin = QSpinBox()
         self.default_gain_factor_spin.setMinimum(0)
         self.default_gain_factor_spin.setMaximum(100)
-        self.default_gain_factor_spin.setValue(
-            self.settings_manager.get("persistence.default_gain_factor")
-        )
+        self.default_gain_factor_spin.setValue(gain_factor)
+        self.default_gain_factor_spin.setEnabled(not locked)
         layout.addWidget(self.default_gain_factor_spin)
 
+        # --- Preview window size ---
+        layout.addWidget(QLabel("Preview Window Size:"))
+        self.preview_size_combo = QComboBox()
+        self.preview_size_combo.addItems(list(PREVIEW_SIZES.keys()))
+        preview_size_index = self.preview_size_combo.findText(
+            self.settings_manager.get("hardware.preview_size")
+        )
+        self.preview_size_combo.setCurrentIndex(max(preview_size_index, 0))
+        layout.addWidget(self.preview_size_combo)
+
         layout.addStretch()  # Fill remaining space
         widget.setLayout(layout)
         return widget
 
-    def _create_visualization_tab(self) -> QWidget:
+    def _default_value_source(self, locked: bool):
         """
-        Create the Visualization tab.
+        Return (camera_choice, exposure, gain, gain_factor) to display on
+        the Hardware tab.
 
-        Settings on this tab:
-        - Show Intensity Graph checkbox (master toggle for graphs)
-          - When ON: Show Histogram, Show 3D Graph, Show Log Histogram can be toggled
-          - When OFF: Other graph options are disabled
-        - Show Live Feed checkbox
-
-        Returns:
-            QWidget: The visualization tab widget
-
-        Example:
-            # Called automatically during __init__()
-            # Live feed is shown first, then intensity graph master toggle
-            # Graph type options are indented and depend on intensity graph state
+        If not locked, these are simply espi_app's own saved values — the
+        normal, editable case. If locked ("Use Last Settings as Default"
+        is on), read the shared ESPI Full Algorithm settings file instead,
+        and pick whichever dashboard's keys match "last_used_dashboard" —
+        monitor_gui.py and run_experiment_gui.py keep separate
+        exposure/gain/gain_factor keys (they have different historical
+        defaults), so we cannot just read one fixed key regardless of
+        which dashboard actually ran. Falls back to espi_app's own values
+        if neither dashboard has auto-saved anything yet.
         """
-        widget = QWidget()
-        layout = QVBoxLayout()
+        if not locked:
+            return (
+                self.settings_manager.get("hardware.default_camera_choice"),
+                self.settings_manager.get("hardware.exposure_s"),
+                self.settings_manager.get("persistence.default_gain"),
+                self.settings_manager.get("persistence.default_gain_factor"),
+            )
 
-        # --- Live feed checkbox ---
-        self.show_live_feed_check = QCheckBox("Show Live Feed")
-        self.show_live_feed_check.setChecked(
-            self.settings_manager.get("visualization.show_live_feed")
+        _ensure_espi_algorithm_on_path()
+        import settings_manager as espi_settings_manager
+
+        other = espi_settings_manager.load_settings()
+        last_used = other.get("last_used_dashboard")
+
+        if last_used == "monitor":
+            return (
+                other.get("default_camera_choice"),
+                other.get("monitor_default_exposure"),
+                other.get("monitor_default_gain"),
+                other.get("monitor_default_gain_factor"),
+            )
+        if last_used == "scan":
+            return (
+                other.get("default_camera_choice"),
+                other.get("default_exposure"),
+                other.get("default_gain"),
+                other.get("default_gain_factor"),
+            )
+
+        # Neither dashboard has auto-saved yet — fall back to espi_app's
+        # own values so the (disabled) fields show something sensible.
+        return (
+            self.settings_manager.get("hardware.default_camera_choice"),
+            self.settings_manager.get("hardware.exposure_s"),
+            self.settings_manager.get("persistence.default_gain"),
+            self.settings_manager.get("persistence.default_gain_factor"),
         )
-        layout.addWidget(self.show_live_feed_check)
-
-        # --- Intensity graph checkbox (master toggle) ---
-        self.show_intensity_check = QCheckBox("Show Intensity Graphs")
-        self.show_intensity_check.setChecked(
-            self.settings_manager.get("visualization.show_intensity_graph")
-        )
-        self.show_intensity_check.stateChanged.connect(self._on_intensity_graph_toggled)
-        layout.addWidget(self.show_intensity_check)
-
-        # --- Graph type options (only enabled when intensity graphs are ON) ---
-        layout.addWidget(QLabel("Graph Types (when intensity graphs are enabled):"))
-
-        self.show_histogram_check = QCheckBox("Show Histogram")
-        self.show_histogram_check.setChecked(
-            self.settings_manager.get("visualization.show_histogram")
-        )
-        layout.addWidget(self.show_histogram_check)
-
-        self.show_3d_check = QCheckBox("Show 3D Surface Plot")
-        self.show_3d_check.setChecked(
-            self.settings_manager.get("visualization.show_3d_graph")
-        )
-        layout.addWidget(self.show_3d_check)
-
-        self.show_log_histogram_check = QCheckBox("Show Log Histogram")
-        self.show_log_histogram_check.setChecked(
-            self.settings_manager.get("visualization.show_log_histogram")
-        )
-        layout.addWidget(self.show_log_histogram_check)
-
-        # Set initial enabled/disabled state of graph type options
-        self._update_graph_options_enabled_state()
-
-        layout.addStretch()  # Fill remaining space
-        widget.setLayout(layout)
-        return widget
 
     def _create_ui_tab(self) -> QWidget:
         """
@@ -247,6 +288,8 @@ class SettingsDialog(QDialog):
         Settings on this tab:
         - Theme selection (light/dark)
         - Use Last Settings as Default checkbox
+        - Remember Window Position and Size checkbox
+        - Show Tooltips checkbox
 
         Returns:
             QWidget: The UI tab widget
@@ -276,46 +319,35 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.use_last_settings_check)
 
+        # --- Remember window position and size ---
+        self.remember_geometry_check = QCheckBox("Remember Window Position and Size")
+        self.remember_geometry_check.setChecked(
+            self.settings_manager.get("ui.remember_window_geometry")
+        )
+        layout.addWidget(self.remember_geometry_check)
+
+        # --- Show tooltips ---
+        self.show_tooltips_check = QCheckBox("Show Tooltips")
+        self.show_tooltips_check.setChecked(
+            self.settings_manager.get("ui.show_tooltips")
+        )
+        layout.addWidget(self.show_tooltips_check)
+
         layout.addStretch()  # Fill remaining space
         widget.setLayout(layout)
         return widget
-
-    def _update_graph_options_enabled_state(self) -> None:
-        """
-        Enable or disable graph type options based on show_intensity_graph state.
-
-        If show_intensity_graph is ON, graph type options are enabled.
-        If show_intensity_graph is OFF, graph type options are disabled.
-
-        Example:
-            # Called automatically when intensity graph toggle is clicked
-            # or during initialization to set the correct initial state
-        """
-        intensity_enabled = self.show_intensity_check.isChecked()
-        self.show_histogram_check.setEnabled(intensity_enabled)
-        self.show_3d_check.setEnabled(intensity_enabled)
-        self.show_log_histogram_check.setEnabled(intensity_enabled)
-
-    def _on_intensity_graph_toggled(self) -> None:
-        """
-        Handle when the intensity graph master toggle is clicked.
-
-        Example:
-            # Called automatically when user clicks the intensity graph checkbox
-            # Updates the enabled state of graph type options
-        """
-        self._update_graph_options_enabled_state()
 
     def _on_save(self):
         """
         Save all settings and close the dialog.
 
         Collects values from all widgets and saves them to disk.
-        If "Use Last Settings as Default" is enabled, stores current
-        exposure, camera, gain, and gain_factor as new defaults.
 
         If theme changed, emits theme_changed signal so the app can
-        re-apply the theme immediately.
+        re-apply the theme immediately. If the Hardware tab's
+        camera/exposure/gain/gain_factor fields were editable (not locked
+        by "Use Last Settings as Default"), emits hardware_defaults_changed
+        so the landing page can push them to Monitor/Scan mode.
 
         Example:
             # Called automatically when user clicks "Save" button
@@ -324,6 +356,10 @@ class SettingsDialog(QDialog):
         """
         # Track the old theme to detect changes
         old_theme = self.settings_manager.get("ui.theme")
+        # Whether the Hardware tab's default-value fields were editable
+        # (not locked by "Use Last Settings as Default") — determines
+        # whether hardware_defaults_changed fires below.
+        hardware_fields_were_unlocked = self.camera_combo.isEnabled()
 
         # Hardware settings
         # Store the camera choice code ("1", "2", or "3"), not the index
@@ -332,32 +368,21 @@ class SettingsDialog(QDialog):
         self.settings_manager.set("hardware.exposure_s", self.exposure_spin.value())
         self.settings_manager.set("hardware.control_gain", False)
         self.settings_manager.set("hardware.control_gain_factor", True)
-
-        # Visualization settings
         self.settings_manager.set(
-            "visualization.show_intensity_graph",
-            self.show_intensity_check.isChecked()
-        )
-        self.settings_manager.set(
-            "visualization.show_histogram",
-            self.show_histogram_check.isChecked()
-        )
-        self.settings_manager.set(
-            "visualization.show_3d_graph",
-            self.show_3d_check.isChecked()
-        )
-        self.settings_manager.set(
-            "visualization.show_log_histogram",
-            self.show_log_histogram_check.isChecked()
-        )
-        self.settings_manager.set(
-            "visualization.show_live_feed",
-            self.show_live_feed_check.isChecked()
+            "hardware.preview_size", self.preview_size_combo.currentText()
         )
 
         # UI settings (including theme)
         new_theme = self.theme_combo.currentText().lower()
         self.settings_manager.set("ui.theme", new_theme)
+        self.settings_manager.set(
+            "ui.remember_window_geometry",
+            self.remember_geometry_check.isChecked()
+        )
+        self.settings_manager.set(
+            "ui.show_tooltips",
+            self.show_tooltips_check.isChecked()
+        )
 
         # Persistence settings
         self.settings_manager.set(
@@ -387,6 +412,12 @@ class SettingsDialog(QDialog):
         # Emit signal if theme changed
         if old_theme != new_theme:
             self.theme_changed.emit(new_theme)
+
+        # Emit signal if the hardware defaults were actually editable
+        # (i.e. not locked by "Use Last Settings as Default") — locked
+        # fields are auto-managed, not something this Save should push.
+        if hardware_fields_were_unlocked:
+            self.hardware_defaults_changed.emit()
 
         # Close dialog (success)
         self.accept()

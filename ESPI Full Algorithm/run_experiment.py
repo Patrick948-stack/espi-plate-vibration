@@ -595,6 +595,11 @@ def run_pipeline(camera_choice, mode_choice, params, stop_check=None):
     gain        = params["gain"]
     gain_factor = params["gain_factor"]
     output_dir  = params["output_dir"]
+    # .get() with the same 1.0/0.0 every sweep function already defaults
+    # to, since run_experiment.py's own terminal CLI (choose_sweep_params())
+    # does not collect these yet — only run_experiment_gui.py's SetupPage does.
+    amplitude   = params.get("amplitude", 1.0)
+    offset      = params.get("offset", 0.0)
 
     base_params = dict(
         start_freq  = params["start_freq"],
@@ -603,6 +608,8 @@ def run_pipeline(camera_choice, mode_choice, params, stop_check=None):
         n_averages  = params["n_averages"],
         gain        = gain,
         gain_factor = gain_factor,
+        amplitude   = amplitude,
+        offset      = offset,
         output_dir  = output_dir,
         stop_check  = stop_check,
     )

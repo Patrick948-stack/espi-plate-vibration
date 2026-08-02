@@ -1,221 +1,36 @@
 """
 styles.py
 
-Theme stylesheets for the ESPI app.
+Theme stylesheet for the ESPI app.
 
-PyQt6 uses "stylesheets" (similar to CSS) to style widgets.
-This file defines both light and dark themes, and provides a function
-to apply them to the entire application.
-
-Light theme uses a light background with dark text.
-Dark theme uses a dark background with light text.
+The actual color tokens and stylesheet live in ESPI Full Algorithm/theme.py,
+shared with monitor_gui.py and run_experiment_gui.py, so the landing page,
+Settings dialog, and both dashboards always match whichever theme is
+selected — one theme choice, one stylesheet, applied everywhere.
 """
 
-# Light theme — light background with dark text
-LIGHT_THEME = """
-    QMainWindow, QWidget {
-        background-color: #F5F5F5;
-        color: #000000;
-    }
+import sys
+from pathlib import Path
 
-    QLabel {
-        color: #000000;
-        background-color: transparent;
-    }
 
-    QPushButton {
-        background-color: #E0E0E0;
-        color: #000000;
-        padding: 8px 16px;
-        border-radius: 4px;
-        border: 1px solid #B0B0B0;
-        font-size: 14px;
-    }
-
-    QPushButton:hover {
-        background-color: #D0D0D0;
-        border: 1px solid #A0A0A0;
-    }
-
-    QPushButton:pressed {
-        background-color: #FFFFFF;
-        border: 1px solid #A0A0A0;
-    }
-
-    QPushButton:disabled {
-        background-color: #D5D5D5;
-        color: #999999;
-    }
-
-    QGroupBox {
-        color: #000000;
-        border: 1px solid #B0B0B0;
-        border-radius: 4px;
-        margin-top: 8px;
-        padding-top: 8px;
-        font-weight: bold;
-    }
-
-    QGroupBox::title {
-        subcontrol-origin: margin;
-        left: 10px;
-        padding: 0 3px 0 3px;
-    }
-
-    QTabWidget::pane {
-        border: 1px solid #B0B0B0;
-    }
-
-    QTabBar::tab {
-        background-color: #E0E0E0;
-        color: #000000;
-        padding: 8px 20px;
-        margin-right: 2px;
-        border: 1px solid #B0B0B0;
-    }
-
-    QTabBar::tab:selected {
-        background-color: #FFFFFF;
-        border-bottom: 2px solid #3366CC;
-    }
-
-    QSpinBox, QDoubleSpinBox, QComboBox {
-        background-color: #FFFFFF;
-        color: #000000;
-        border: 1px solid #B0B0B0;
-        border-radius: 3px;
-        padding: 4px;
-    }
-
-    QCheckBox {
-        color: #000000;
-        spacing: 5px;
-    }
-
-    QCheckBox::indicator {
-        width: 18px;
-        height: 18px;
-    }
-
-    QCheckBox::indicator:unchecked {
-        background-color: #FFFFFF;
-        border: 1px solid #B0B0B0;
-        border-radius: 3px;
-    }
-
-    QCheckBox::indicator:checked {
-        background-color: #E0E0E0;
-        border: 1px solid #3366CC;
-        border-radius: 3px;
-    }
-"""
-
-# Dark theme — dark background with light text
-DARK_THEME = """
-    QMainWindow, QWidget {
-        background-color: #1E1E1E;
-        color: #FFFFFF;
-    }
-
-    QLabel {
-        color: #FFFFFF;
-        background-color: transparent;
-    }
-
-    QPushButton {
-        background-color: #292929;
-        color: #FFFFFF;
-        padding: 8px 16px;
-        border-radius: 4px;
-        border: 1px solid #4D4D4D;
-        font-size: 14px;
-    }
-
-    QPushButton:hover {
-        background-color: #383838;
-        border: 1px solid #4D4D4D;
-    }
-
-    QPushButton:pressed {
-        background-color: #000000;
-        border: 1px solid #000000;
-    }
-
-    QPushButton:disabled {
-        background-color: #2D2D2D;
-        color: #666666;
-    }
-
-    QGroupBox {
-        color: #FFFFFF;
-        border: 1px solid #4D4D4D;
-        border-radius: 4px;
-        margin-top: 8px;
-        padding-top: 8px;
-        font-weight: bold;
-    }
-
-    QGroupBox::title {
-        subcontrol-origin: margin;
-        left: 10px;
-        padding: 0 3px 0 3px;
-    }
-
-    QTabWidget::pane {
-        border: 1px solid #4D4D4D;
-    }
-
-    QTabBar::tab {
-        background-color: #292929;
-        color: #FFFFFF;
-        padding: 8px 20px;
-        margin-right: 2px;
-        border: 1px solid #4D4D4D;
-    }
-
-    QTabBar::tab:selected {
-        background-color: #383838;
-        border-bottom: 2px solid #6699FF;
-    }
-
-    QSpinBox, QDoubleSpinBox, QComboBox {
-        background-color: #292929;
-        color: #FFFFFF;
-        border: 1px solid #4D4D4D;
-        border-radius: 3px;
-        padding: 4px;
-    }
-
-    QCheckBox {
-        color: #FFFFFF;
-        spacing: 5px;
-    }
-
-    QCheckBox::indicator {
-        width: 18px;
-        height: 18px;
-    }
-
-    QCheckBox::indicator:unchecked {
-        background-color: #292929;
-        border: 1px solid #4D4D4D;
-        border-radius: 3px;
-    }
-
-    QCheckBox::indicator:checked {
-        background-color: #383838;
-        border: 1px solid #6699FF;
-        border-radius: 3px;
-    }
-"""
+def _ensure_espi_algorithm_on_path():
+    """
+    Add the ESPI Full Algorithm folder to sys.path so theme.py can be
+    imported. See main_window.py's copy of this same helper for the full
+    explanation of why this is needed.
+    """
+    algo_dir = Path(__file__).resolve().parent.parent / "ESPI Full Algorithm"
+    if str(algo_dir) not in sys.path:
+        sys.path.insert(0, str(algo_dir))
 
 
 def apply_theme(app, theme_name: str):
     """
     Apply a theme to the entire application.
 
-    Applies a complete stylesheet to all widgets. Light theme has light
-    background with dark text. Dark theme has dark background with light text.
+    Applies the shared stylesheet (see ESPI Full Algorithm/theme.py) to
+    all widgets. Light theme uses several shades of light gray with dark
+    text (never pure white); dark theme uses dark grays with light text.
 
     Args:
         app: QApplication instance
@@ -231,7 +46,17 @@ def apply_theme(app, theme_name: str):
         # Later, change to light theme
         apply_theme(app, "light")
     """
-    if theme_name.lower() == "dark":
-        app.setStyleSheet(DARK_THEME)
-    else:
-        app.setStyleSheet(LIGHT_THEME)
+    _ensure_espi_algorithm_on_path()
+    import theme
+
+    normalized = "dark" if theme_name.lower() == "dark" else "light"
+    app.setStyleSheet(theme.build_stylesheet(normalized))
+
+
+def icon_color(theme_name: str) -> str:
+    """Return the hex color espi_app's own qtawesome icons should use."""
+    _ensure_espi_algorithm_on_path()
+    import theme
+
+    normalized = "dark" if theme_name.lower() == "dark" else "light"
+    return theme.icon_color(normalized)

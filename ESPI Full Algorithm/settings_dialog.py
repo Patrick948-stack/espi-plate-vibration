@@ -438,6 +438,32 @@ class SettingsPage(QWidget):
             settings.get("show_saved_image_after_capture", False)
         )
 
+        self._apply_lock_state(settings)
+
+    def _apply_lock_state(self, settings):
+        """
+        "Use Last Settings as Default" (set from espi_app's Settings
+        dialog, bridged into this same settings file) means camera,
+        index, frequency sweep, and capture fields are now auto-managed
+        from whatever was actually last used to run a Preview or Sweep —
+        this page exists specifically to hand-set those defaults, so it
+        (including its own Save button) is locked while that is active.
+        Grayscale, show-gain, and saved-image are unrelated
+        display/processing preferences and stay editable either way.
+        """
+        locked = settings.get("use_last_settings_as_default", False)
+        for radio in self._camera_radios.values():
+            radio.setEnabled(not locked)
+        self._index_spin.setEnabled(not locked)
+        self.start_freq_spin.setEnabled(not locked)
+        self.end_freq_spin.setEnabled(not locked)
+        self.step_spin.setEnabled(not locked)
+        self.n_averages_spin.setEnabled(not locked)
+        self.exposure_spin.setEnabled(not locked)
+        self.gain_spin.setEnabled(not locked)
+        self.gain_factor_spin.setEnabled(not locked)
+        self.save_button.setEnabled(not locked)
+
     def save_settings(self) -> bool:
         """Save current control values to disk."""
         color_text = self._color_combo.currentText()

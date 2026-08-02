@@ -60,7 +60,15 @@ import os
 import time
 from datetime import datetime
 
-from signal_generator_control import *
+from sdg_control import (
+    open_connection,
+    close_connection,
+    get_identity,
+    configure_channel,
+    set_frequency,
+    turn_on_output,
+    turn_off_output,
+)
 from camera_control_inclusive import *
 
 
@@ -106,6 +114,7 @@ def frequency_sweep_inclusive(
     output_dir,
     waveform       = "sine",
     amplitude      = 1.0,
+    offset         = 0.0,
     warmup_frames  = 10,
     channel        = 1,
     skip_live_feed = False,
@@ -165,6 +174,9 @@ def frequency_sweep_inclusive(
         amplitude     (float) : Peak-to-peak output voltage in Vpp.
                                 Start low (1.0 Vpp) and increase if needed.
                                 The SDG1015 maximum is 20 Vpp.
+        offset        (float) : Signal generator DC offset, in Volts. Clamped
+                                by configure_channel() so the waveform's peaks
+                                stay within the +/-10V rail. Defaults to 0.0.
         warmup_frames (int)   : Frames to discard after opening the camera and
                                 after locking exposure.  Lets the sensor settle.
                                 Defaults to 10.
@@ -321,8 +333,9 @@ def frequency_sweep_inclusive(
         # STEP 6 — CONFIGURE THE SIGNAL GENERATOR AND TURN OUTPUT ON
         # ======================================================================
         # configure_channel() sets waveform shape, frequency, amplitude, and
-        # DC offset all in one call, then switches the output ON.
-        # We start at start_freq; the loop below will update it each iteration.
+        # DC offset in one call. We start at start_freq; the loop below will
+        # update it each iteration. It does NOT turn the output on itself —
+        # that is a separate call, turn_on_output(), below.
         #
         # sg_settings stores the values that were actually applied — these may
         # differ slightly from what we requested because the hardware rounds
@@ -335,12 +348,17 @@ def frequency_sweep_inclusive(
             waveform  = waveform,
             frequency = start_freq,
             amplitude = amplitude,
-            offset    = 0.0,
+            offset    = offset,
             channel   = channel,
         )
 
         # Make sure the output actually turned on before we start the sweep.
-        if sg_settings.get("channel output") is None:
+        # turn_on_output() returns the channel number on success, None on a
+        # communication error — configure_channel()'s own return dict never
+        # had a "channel output" key to check here, so this used to always
+        # fail (checking a key that was always None) before this call
+        # actually existed.
+        if turn_on_output(instr, channel=channel) is None:
             print(f"[ERROR] Could not turn on channel {channel} output.  "
                   f"Check the signal generator and try again.")
             return None
@@ -590,6 +608,7 @@ def reference_frequency_sweep_inclusive(
     output_dir,
     waveform       = "sine",
     amplitude      = 1.0,
+    offset         = 0.0,
     warmup_frames  = 10,
     channel        = 1,
     skip_live_feed = False,
@@ -639,6 +658,7 @@ def reference_frequency_sweep_inclusive(
         output_dir    (str)   : Folder where images will be saved.
         waveform      (str)   : Signal shape ("sine", "square", etc.).
         amplitude     (float) : Peak-to-peak output voltage in Vpp.
+        offset        (float) : Signal generator DC offset, in Volts. Defaults to 0.0.
         warmup_frames (int)   : Frames to discard while sensor settles.
         channel       (int)   : Signal generator channel (1 or 2).
         gain_factor   (float) : Multiplier applied to each difference image,
@@ -762,11 +782,11 @@ def reference_frequency_sweep_inclusive(
             waveform  = waveform,
             frequency = start_freq,
             amplitude = amplitude,
-            offset    = 0.0,
+            offset    = offset,
             channel   = channel,
         )
 
-        if sg_settings.get("channel output") is None:
+        if turn_on_output(instr, channel=channel) is None:
             print(f"[ERROR] Could not turn on channel {channel} output.")
             return None
 

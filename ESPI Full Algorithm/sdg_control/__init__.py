@@ -23,6 +23,7 @@ from .waveform import (
     configure_channel,
 )
 from .limits import clamp_frequency, clamp_amplitude, clamp_offset
+from .constants import COMMAND_SETTLE_S, OUTPUT_SETTLE_S
 
 __all__ = [
     "get_resource_manager", "discover_instruments", "find_instruments", "connect_instrument", "open_connection",
@@ -30,5 +31,5 @@ __all__ = [
     "get_wave_status", "turn_on_output", "turn_off_output",
     "set_waveform", "set_frequency", "set_amplitude", "set_offset",
     "configure_channel", "clamp_frequency", "clamp_amplitude",
-    "clamp_offset",
+    "clamp_offset", "COMMAND_SETTLE_S", "OUTPUT_SETTLE_S",
 ]

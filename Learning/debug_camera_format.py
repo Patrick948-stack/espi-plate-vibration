@@ -24,8 +24,9 @@ import numpy as np
 import cv2
 from pypylon import pylon
 
-# Add ESPI Full Algorithm to path
-project_root = Path(__file__).parent
+# Add ESPI Full Algorithm to path (this script now lives one level deeper,
+# in Learning/, so the project root is one parent further up than before)
+project_root = Path(__file__).parent.parent
 espi_dir = project_root / "ESPI Full Algorithm"
 sys.path.insert(0, str(espi_dir))
 

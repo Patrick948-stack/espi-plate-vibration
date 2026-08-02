@@ -425,7 +425,7 @@ python run_experiment_gui.py
   <img src="screenshots/run_experiment_gui_results.png" width="70%" alt="run_experiment_gui.py Results page showing the sweep results grid">
 </p>
 
-**Setup** — camera, subtraction mode, and every sweep parameter (frequency range, frames per frequency, exposure, gain, gain_factor, output folder) on one page, arranged as four cards. Click "Continue to Preview" when ready.
+**Setup** — camera, subtraction mode, and every sweep parameter (frequency range, frames per frequency, exposure, gain, gain_factor, signal generator amplitude and DC offset, output folder) on one page, arranged as five cards. Amplitude and offset reach the signal generator through the same `configure_channel()` call used everywhere else in this project — the hardware clamps them to safe ranges (2 mVpp - 20 Vpp for amplitude, +/-10V minus half the amplitude swing for offset) regardless of what is typed here. Click "Continue to Preview" when ready.
 
 **Preview** — the live camera feed embedded directly in the window, using the exact exposure and gain you just set. Click "Lock in settings & continue" once the plate is in frame and focused.
 
@@ -545,7 +545,7 @@ Select a type through `monitor.py`'s "Graph type" question (`none`, `histogram`,
 | `camera_control.py` | Library | Low level camera functions for Basler |
 | `camera_control_inclusive.py` | Library | Low level camera functions for USB or webcam |
 | `camera_control_allied_vision.py` | Library | Low level camera functions for Allied Vision |
-| `signal_generator_control.py` | Library | Signal generator functions for a Siglent SDG |
+| `sdg_control/` | Package | Signal generator functions for a Siglent SDG |
 | `capture_and_display.py` | Script or importable | Live preview only, Basler. `main(exposure_us, gain_db, gain_factor, graph_type)` |
 | `capture_and_display_cv2.py` | Script or importable | Live preview only, any camera. `main(camera_index, exposure, gain, gain_factor, graph_type)` |
 | `capture_and_display_allied.py` | Script or importable | Live preview only, Allied Vision. `main(camera_index, exposure_us, gain, gain_factor, list_cameras, graph_type)` |
@@ -641,16 +641,19 @@ All three functions also accept a `skip_live_feed=True` argument if you want to 
 
 ## The signal generator
 
-`signal_generator_control.py` handles talking to a Siglent SDG signal generator over USB.
+`sdg_control/` handles talking to a Siglent SDG signal generator over USB — a modular package (`connections.py`, `status.py`, `output.py`, `waveform.py`, `limits.py`, `constants.py`, `errors.py`), replacing what used to be one monolithic `signal_generator_control.py` file.
 
 | Function | What it does |
 |---|---|
 | `open_connection()` | Finds and connects to the signal generator |
 | `get_identity(instr)` | Returns the device name and serial number |
-| `configure_channel(instr, waveform, frequency, amplitude, offset, channel)` | Sets everything and turns the output on |
+| `configure_channel(instr, waveform, frequency, amplitude, offset, channel)` | Sets waveform, frequency, amplitude, and offset — does **not** turn the output on itself |
+| `turn_on_output(instr, channel)` | Turns the output on — always call this after `configure_channel()` |
 | `set_frequency(instr, freq, channel, waveform)` | Changes frequency during a sweep |
 | `turn_off_output(instr, channel)` | Turns the output off |
 | `close_connection(instr)` | Closes the connection cleanly |
+
+Every function above accepts `instr=None` and a bad/disconnected instrument gracefully — it prints a specific, actionable message (including Windows-specific Zadig driver hints where relevant) and returns `None` instead of crashing with a raw `AttributeError` or `pyvisa.VisaIOError`.
 
 If you ask for a frequency outside the instrument's allowed range for a given waveform, the value gets clamped automatically to the nearest allowed value, and a warning is printed so you know it happened.
 

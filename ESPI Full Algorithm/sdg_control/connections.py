@@ -7,6 +7,8 @@ import os
 
 import pyvisa
 
+from .errors import describe_visa_error, require_instrument
+
 DEFAULT_TIMEOUT_MS = 10000
 _ON_WINDOWS = os.name == "nt"
 
@@ -39,11 +41,54 @@ def get_resource_manager():
 
 
 def find_instruments(rm):
-    """List all VISA-visible instruments. Returns a tuple of addresses, or None."""
-    instrs = rm.list_resources()
-    if len(instrs) == 0:
-        print("[ERROR] No instruments found. Check USB connection and driver.")
+    """
+    Scan for all VISA-compatible instruments connected right now.
+
+    Returns:
+        tuple : One VISA address string per detected instrument.
+        None  : If nothing was found, or the VISA backend itself failed to
+                scan (a broken pyvisa/pyvisa-py install, not "nothing is
+                plugged in").
+    """
+    try:
+        instrs = rm.list_resources()
+    except Exception as e:
+        print(f"[ERROR] Could not scan for instruments: {e}")
+        if _ON_WINDOWS:
+            print("  Reinstall the backend: pip install pyvisa pyvisa-py libusb-package")
+            print("  Or install NI-VISA instead (see README.md 'Signal generator setup').")
+        else:
+            print("  Try reinstalling the backend: pip install pyvisa pyvisa-py")
         return None
+
+    if len(instrs) == 0:
+        steps = ["Is the signal generator powered on and the USB cable connected?"]
+        if _ON_WINDOWS:
+            steps.append(
+                "(Windows) Has Zadig been used to bind a WinUSB driver to it? "
+                "Download: https://zadig.akeo.ie"
+            )
+            steps.append(
+                "(Windows) Is 'libusb-package' installed? "
+                "pip install libusb-package"
+            )
+        else:
+            steps.append("Unplug and replug the USB cable, then try again.")
+        steps.append(
+            'Run: python -c "import usb.core; '
+            'print(list(usb.core.find(find_all=True)))" '
+            "-- an empty list or a 'NoBackendError' confirms the problem is "
+            "at the USB driver level, not in this script (see README.md "
+            "'Signal generator setup')."
+        )
+
+        print("[ERROR] No VISA instruments found.")
+        print("  This does not necessarily mean Python or pyvisa are broken "
+              "-- check, in order:")
+        for i, step in enumerate(steps, start=1):
+            print(f"    {i}. {step}")
+        return None
+
     print(f"Found {len(instrs)} instrument(s):")
     for i, addr in enumerate(instrs):
         print(f"  [{i}] {addr}")
@@ -94,8 +139,36 @@ def discover_instruments():
 
 
 def connect_instrument(rm, instrs, index=0):
-    """Open a session with the instrument at the given index."""
-    instr = rm.open_resource(instrs[index])
+    """
+    Open a session with the instrument at the given index.
+
+    Returns:
+        instr : An open PyVISA resource object.
+        None  : If instrs is empty, index is out of range, or the
+                instrument could not be opened (e.g. it was unplugged
+                between find_instruments() finding it and this call
+                trying to open it).
+    """
+    if not instrs:
+        print("[ERROR] Cannot connect -- no instrument addresses were given.")
+        print("  Call find_instruments() first and check it did not return None.")
+        return None
+
+    if index < 0 or index >= len(instrs):
+        print(f"[ERROR] index={index} is out of range -- only {len(instrs)} "
+              f"instrument(s) were found (valid indices: 0 to {len(instrs) - 1}).")
+        return None
+
+    try:
+        instr = rm.open_resource(instrs[index])
+    except pyvisa.VisaIOError as e:
+        print(f"[ERROR] Could not open a connection to {instrs[index]}: "
+              f"{describe_visa_error(e)}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Unexpected error opening {instrs[index]}: {e}")
+        return None
+
     instr.timeout = DEFAULT_TIMEOUT_MS
     instr.read_termination = '\n'
     instr.write_termination = '\n'
@@ -108,13 +181,32 @@ def open_connection(index=0):
     Convenience wrapper: create a resource manager, scan, and open the
     instrument at `index`. Returns None if nothing is connected.
     """
-    rm, instrs = discover_instruments()
-    if instrs is None:
+    try:
+        rm, instrs = discover_instruments()
+    except Exception as e:
+        print(f"[ERROR] Could not start a VISA resource manager: {e}")
+        print("  Make sure both packages are installed: pip install pyvisa pyvisa-py")
+        if _ON_WINDOWS:
+            print("  On Windows, also make sure the Zadig driver step has been "
+                  "done (see README.md 'Signal generator setup (Windows only)'), "
+                  "or install NI-VISA instead: https://www.ni.com")
         return None
+
+    if instrs is None:
+        return None  # find_instruments() already printed a specific reason
+
     return connect_instrument(rm, instrs, index=index)
 
 
 def close_connection(instr):
     """Close the VISA session. Always call this when finished."""
-    instr.close()
-    print("Connection closed.")
+    if not require_instrument(instr, "close the connection"):
+        return
+
+    try:
+        instr.close()
+        print("Connection closed.")
+    except pyvisa.VisaIOError as e:
+        # Usually harmless -- the instrument was likely already disconnected
+        # or powered off, so there is nothing left to close cleanly.
+        print(f"[WARNING] Instrument did not close cleanly: {describe_visa_error(e)}")

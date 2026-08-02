@@ -26,11 +26,12 @@ README.md for Windows-specific driver steps).
 
 import time
 
-from signal_generator_control import (
+from sdg_control import (
     discover_instruments,
     connect_instrument,
     get_identity,
     configure_channel,
+    turn_on_output,
     turn_off_output,
     close_connection,
 )
@@ -92,9 +93,12 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # STEP 5 — leave the output on briefly, then turn it off and disconnect
+    # STEP 5 — turn the output on, leave it on briefly, then turn it off
+    #          and disconnect. configure_channel() only sets the waveform
+    #          parameters -- it does not enable the output itself.
     # ------------------------------------------------------------------
     print("\n[5/5] Turning the output on for 3 seconds, then off again...")
+    turn_on_output(instr, channel=1)
     time.sleep(3)
     turn_off_output(instr, channel=1)
     close_connection(instr)

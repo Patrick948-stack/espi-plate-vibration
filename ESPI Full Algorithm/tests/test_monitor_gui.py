@@ -49,6 +49,7 @@ from PyQt6.QtWidgets import QLabel, QMessageBox, QPushButton
 import camera_control_inclusive as cci
 import live_graphs
 import monitor
+import settings_manager
 from monitor_gui import (
     SetupPage,
     SettingsPage,
@@ -208,6 +209,51 @@ class TestSetupPage:
         qtbot.addWidget(page)
         page.exposure_spin.setValue(0.02)
         assert "0.02" in page._summary_label.text()
+
+
+class TestSetupPageLockedByUseLastSettingsAsDefault:
+    """
+    While "Use Last Settings as Default" is on (set from espi_app's
+    Settings dialog, bridged into this shared settings file), camera,
+    index, exposure, gain, and gain_factor are auto-managed from whatever
+    was actually last used to start a monitor session — not something to
+    type in by hand — so those fields are disabled. n_averages is not a
+    tracked default and stays editable either way.
+    """
+
+    def test_fields_enabled_when_flag_is_off(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": False,
+        })
+
+        page = SetupPage()
+        qtbot.addWidget(page)
+
+        assert page._radios["2"].isEnabled() is True
+        assert page._index_spin.isEnabled() is True
+        assert page.exposure_spin.isEnabled() is True
+        assert page.gain_spin.isEnabled() is True
+        assert page.gain_factor_spin.isEnabled() is True
+        assert page.n_averages_spin.isEnabled() is True
+
+    def test_fields_disabled_when_flag_is_on(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+
+        page = SetupPage()
+        qtbot.addWidget(page)
+
+        for choice in ("1", "2", "3"):
+            assert page._radios[choice].isEnabled() is False
+        assert page._index_spin.isEnabled() is False
+        assert page.exposure_spin.isEnabled() is False
+        assert page.gain_spin.isEnabled() is False
+        assert page.gain_factor_spin.isEnabled() is False
+        # Not a tracked default — always stays editable.
+        assert page.n_averages_spin.isEnabled() is True
 
 
 # ===========================================================================
@@ -1603,4 +1649,61 @@ class TestMainWindow:
         event = MagicMock()
         window.closeEvent(event)
 
-        event.accept.assert_called_once()
+
+# ===========================================================================
+# Auto-save "last used settings" as the new default (gated by
+# use_last_settings_as_default, bridged from espi_app)
+# ===========================================================================
+
+class TestStartMonitorSavesLastUsedSettings:
+    """
+    Tests _save_last_used_settings_if_enabled() directly, rather than
+    through _start_monitor() + a real MonitorWorker QThread: starting a
+    real worker (even a fully-mocked one) ties these tests to this
+    environment's pre-existing QThread start/stop issues (see the "Fix
+    hanging worker-stop tests" follow-up task), which have nothing to do
+    with the settings-saving logic actually being tested here.
+    """
+
+    def test_saves_defaults_and_last_used_dashboard_when_flag_is_on(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.setup_page._radios["3"].setChecked(True)
+        window.setup_page.exposure_spin.setValue(0.08)
+        window.setup_page.gain_spin.setValue(4.5)
+        window.setup_page.gain_factor_spin.setValue(15.0)
+
+        window._save_last_used_settings_if_enabled(
+            window.setup_page.camera_choice(), window.setup_page.settings()
+        )
+
+        saved = settings_manager.load_settings()
+        assert saved["default_camera_choice"] == "3"
+        assert saved["monitor_default_exposure"] == pytest.approx(0.08)
+        assert saved["monitor_default_gain"] == pytest.approx(4.5)
+        assert saved["monitor_default_gain_factor"] == pytest.approx(15.0)
+        assert saved["last_used_dashboard"] == "monitor"
+
+    def test_does_not_save_defaults_when_flag_is_off(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": False,
+            "monitor_default_exposure": 0.06,
+        })
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.setup_page.exposure_spin.setValue(0.08)
+
+        window._save_last_used_settings_if_enabled(
+            window.setup_page.camera_choice(), window.setup_page.settings()
+        )
+
+        saved = settings_manager.load_settings()
+        assert saved["monitor_default_exposure"] == pytest.approx(0.06)
+        assert saved.get("last_used_dashboard") != "monitor"

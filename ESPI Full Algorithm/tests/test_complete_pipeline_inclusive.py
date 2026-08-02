@@ -94,7 +94,7 @@ class TestReferenceFrequencySweepInclusiveValidation:
 FAKE_FRAME = np.zeros((50, 50), dtype=np.uint8)
 SG_SETTINGS = {
     "waveform": "sine", "frequency": 100.0,
-    "amplitude": 1.0,   "offset": 0.0, "channel output": 1,
+    "amplitude": 1.0,   "offset": 0.0,
 }
 FAKE_CAM_INFO = {
     "model": "MockCam", "index": 0,
@@ -108,7 +108,7 @@ def _hw_patches(tmp_path, *, include_reference_grab=False):
     patches = [
         patch("complete_pipeline_inclusive.open_connection",         return_value=MagicMock()),
         patch("complete_pipeline_inclusive.get_identity",            return_value="MOCK_SG"),
-        patch("complete_pipeline_inclusive.connect_camera",          return_value=MagicMock()),
+        patch("complete_pipeline_inclusive.connect_camera",          return_value=(MagicMock(), {})),
         patch("complete_pipeline_inclusive.show_live_feed_from_camera"),
         patch("complete_pipeline_inclusive.discard_warmup_frames"),
         patch("complete_pipeline_inclusive.set_exposure_manual",     return_value=-6.0),
@@ -116,6 +116,7 @@ def _hw_patches(tmp_path, *, include_reference_grab=False):
         patch("complete_pipeline_inclusive.get_camera_info",         return_value=FAKE_CAM_INFO),
         patch("complete_pipeline_inclusive.configure_channel",       return_value=SG_SETTINGS),
         patch("complete_pipeline_inclusive.set_frequency",           return_value=100.0),
+        patch("complete_pipeline_inclusive.turn_on_output",          return_value=1),
         patch("complete_pipeline_inclusive.turn_off_output"),
         patch("complete_pipeline_inclusive.disconnect_camera"),
         patch("complete_pipeline_inclusive.close_connection"),
@@ -218,6 +219,61 @@ class TestReferenceFrequencySweepInclusiveMocked:
     def test_returns_none_when_signal_generator_missing(self, tmp_path):
         with patch("complete_pipeline_inclusive.open_connection", return_value=None):
             result = cp.reference_frequency_sweep_inclusive(100, 200, 100, 2, -6, 0.0, str(tmp_path))
+        assert result is None
+
+
+# ===========================================================================
+# AMPLITUDE / OFFSET PASSTHROUGH + turn_on_output()
+# offset used to be hardcoded to 0.0 inside configure_channel()'s call. The
+# "channel output" check here worked fine while this file imported
+# configure_channel() from signal_generator_control.py (which turns the
+# output on internally and does return that key) -- but sdg_control's own
+# configure_channel() deliberately does neither, so this check needed
+# fixing ahead of this file's imports being migrated to sdg_control (see
+# MIGRATION_PLAN.md). Fixed by calling turn_on_output() explicitly and
+# checking its own return value instead of the dict key.
+# ===========================================================================
+
+class TestAmplitudeOffsetPassthroughInclusive:
+
+    def test_frequency_sweep_passes_through_custom_amplitude_and_offset(self, hw):
+        with patch("complete_pipeline_inclusive.configure_channel", return_value=SG_SETTINGS) as mock_cc:
+            cp.frequency_sweep_inclusive(
+                100, 200, 100, 2, -6, 0.0, str(hw["tmp_path"]),
+                amplitude=3.3, offset=-2.0,
+            )
+        _, kwargs = mock_cc.call_args
+        assert kwargs["amplitude"] == pytest.approx(3.3)
+        assert kwargs["offset"] == pytest.approx(-2.0)
+
+    def test_reference_frequency_sweep_passes_through_custom_amplitude_and_offset(self, hw_ref):
+        with patch("complete_pipeline_inclusive.configure_channel", return_value=SG_SETTINGS) as mock_cc:
+            cp.reference_frequency_sweep_inclusive(
+                100, 200, 100, 2, -6, 0.0, str(hw_ref["tmp_path"]),
+                amplitude=5.0, offset=1.5,
+            )
+        _, kwargs = mock_cc.call_args
+        assert kwargs["amplitude"] == pytest.approx(5.0)
+        assert kwargs["offset"] == pytest.approx(1.5)
+
+    def test_frequency_sweep_calls_turn_on_output(self, hw):
+        with patch("complete_pipeline_inclusive.turn_on_output", return_value=1) as mock_on:
+            cp.frequency_sweep_inclusive(100, 200, 100, 2, -6, 0.0, str(hw["tmp_path"]))
+        mock_on.assert_called_once_with(mock_on.call_args[0][0], channel=1)
+
+    def test_frequency_sweep_aborts_when_turn_on_output_fails(self, hw):
+        with patch("complete_pipeline_inclusive.turn_on_output", return_value=None):
+            result = cp.frequency_sweep_inclusive(100, 200, 100, 2, -6, 0.0, str(hw["tmp_path"]))
+        assert result is None
+
+    def test_reference_frequency_sweep_calls_turn_on_output(self, hw_ref):
+        with patch("complete_pipeline_inclusive.turn_on_output", return_value=1) as mock_on:
+            cp.reference_frequency_sweep_inclusive(100, 200, 100, 2, -6, 0.0, str(hw_ref["tmp_path"]))
+        mock_on.assert_called_once_with(mock_on.call_args[0][0], channel=1)
+
+    def test_reference_frequency_sweep_aborts_when_turn_on_output_fails(self, hw_ref):
+        with patch("complete_pipeline_inclusive.turn_on_output", return_value=None):
+            result = cp.reference_frequency_sweep_inclusive(100, 200, 100, 2, -6, 0.0, str(hw_ref["tmp_path"]))
         assert result is None
 
 

@@ -188,20 +188,24 @@ def hw(tmp_path):
     end-to-end without a signal generator or Basler camera.
     """
     with patch("complete_pipeline.open_connection",   return_value=MagicMock()) as sg, \
-         patch("complete_pipeline.connect_camera",    return_value=MagicMock()) as cam, \
+         patch("complete_pipeline.connect_camera",    return_value=(MagicMock(), {})) as cam, \
          patch("complete_pipeline.close_connection"), \
          patch("complete_pipeline.disconnect_camera"), \
          patch("complete_pipeline.set_exposure_manual"), \
          patch("complete_pipeline.set_gain_manual"), \
-         patch("complete_pipeline.configure_channel", return_value=SG_SETTINGS), \
+         patch("complete_pipeline.configure_channel", return_value=SG_SETTINGS) as cfg, \
          patch("complete_pipeline.set_frequency"), \
+         patch("complete_pipeline.turn_on_output") as turn_on, \
          patch("complete_pipeline.turn_off_output"), \
          patch("complete_pipeline.grab_n_frames",     return_value=[FAKE_FRAME, FAKE_FRAME]), \
          patch("complete_pipeline.substract_frames",  return_value=FAKE_FRAME), \
          patch("complete_pipeline.average_img",       return_value=FAKE_FRAME), \
          patch("complete_pipeline.save_image",        return_value=str(tmp_path / "img.png")), \
          patch("complete_pipeline._settle_with_live_feed"):
-        yield {"sg": sg, "cam": cam, "tmp_path": tmp_path}
+        yield {
+            "sg": sg, "cam": cam, "tmp_path": tmp_path,
+            "configure_channel": cfg, "turn_on_output": turn_on,
+        }
 
 
 class TestFrequencySweepMocked:
@@ -255,6 +259,55 @@ class TestReferenceFrequencySweepMocked:
         with patch("complete_pipeline.open_connection", return_value=None):
             result = cp.reference_frequency_sweep(100, 200, 100, 2, 10000, 0.0, str(tmp_path))
         assert result is None
+
+
+# ===========================================================================
+# AMPLITUDE / OFFSET PASSTHROUGH
+# Both amplitude and offset used to be hardcoded to 1.0/0.0 inside
+# configure_channel()'s call. Now they are real parameters (defaulting to
+# the same 1.0/0.0 so every pre-existing terminal caller is unaffected),
+# threaded through from run_experiment_gui.py's Signal Generator controls.
+# ===========================================================================
+
+class TestAmplitudeOffsetPassthrough:
+
+    def test_frequency_sweep_defaults_match_old_hardcoded_values(self, hw):
+        cp.frequency_sweep(100, 200, 100, 2, 10000, 0.0, str(hw["tmp_path"]))
+        _, kwargs = hw["configure_channel"].call_args
+        assert kwargs["amplitude"] == pytest.approx(1.0)
+        assert kwargs["offset"] == pytest.approx(0.0)
+
+    def test_frequency_sweep_passes_through_custom_amplitude_and_offset(self, hw):
+        cp.frequency_sweep(
+            100, 200, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+            amplitude=3.3, offset=-2.0,
+        )
+        _, kwargs = hw["configure_channel"].call_args
+        assert kwargs["amplitude"] == pytest.approx(3.3)
+        assert kwargs["offset"] == pytest.approx(-2.0)
+
+    def test_reference_frequency_sweep_passes_through_custom_amplitude_and_offset(self, hw):
+        cp.reference_frequency_sweep(
+            100, 200, 100, 2, 10000, 0.0, str(hw["tmp_path"]),
+            amplitude=5.0, offset=1.5,
+        )
+        _, kwargs = hw["configure_channel"].call_args
+        assert kwargs["amplitude"] == pytest.approx(5.0)
+        assert kwargs["offset"] == pytest.approx(1.5)
+
+    def test_frequency_sweep_turns_output_on_after_configuring(self, hw):
+        """
+        Pre-existing bug found while wiring amplitude/offset through:
+        neither sweep function ever called turn_on_output() -- only
+        turn_off_output() at the very end. Fixed alongside this change
+        since it's the exact code block being touched anyway.
+        """
+        cp.frequency_sweep(100, 200, 100, 2, 10000, 0.0, str(hw["tmp_path"]))
+        hw["turn_on_output"].assert_called_once_with(hw["sg"].return_value, channel=1)
+
+    def test_reference_frequency_sweep_turns_output_on_after_configuring(self, hw):
+        cp.reference_frequency_sweep(100, 200, 100, 2, 10000, 0.0, str(hw["tmp_path"]))
+        hw["turn_on_output"].assert_called_once_with(hw["sg"].return_value, channel=1)
 
 
 # ===========================================================================

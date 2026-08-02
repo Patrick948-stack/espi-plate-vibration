@@ -141,3 +141,67 @@ class TestSettingsPagePersistenceIsWired:
 
         assert page._show_gain_checkbox.isChecked()
         assert page._camera_radios["3"].isChecked()
+
+
+class TestSettingsPageLockedByUseLastSettingsAsDefault:
+    """
+    While "Use Last Settings as Default" is on (set from espi_app's
+    Settings dialog, bridged into this shared settings file), camera,
+    index, frequency sweep, and capture fields here are auto-managed from
+    whatever was actually last used to run a Preview or Sweep — this page
+    exists specifically to hand-set those defaults, so while auto-managed
+    it is locked, including its own Save button. Grayscale, show-gain, and
+    saved-image preferences are unrelated display/processing choices and
+    stay editable either way.
+    """
+
+    def test_fields_enabled_when_flag_is_off(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": False,
+        })
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+        page.show()
+        qtbot.wait(10)
+
+        assert page._camera_radios["2"].isEnabled() is True
+        assert page._index_spin.isEnabled() is True
+        assert page.start_freq_spin.isEnabled() is True
+        assert page.end_freq_spin.isEnabled() is True
+        assert page.step_spin.isEnabled() is True
+        assert page.n_averages_spin.isEnabled() is True
+        assert page.exposure_spin.isEnabled() is True
+        assert page.gain_spin.isEnabled() is True
+        assert page.gain_factor_spin.isEnabled() is True
+        assert page.save_button.isEnabled() is True
+        # Unrelated preferences, unaffected either way.
+        assert page._show_gain_checkbox.isEnabled() is True
+        assert page._saved_image_checkbox.isEnabled() is True
+
+    def test_fields_disabled_when_flag_is_on(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+        page.show()
+        qtbot.wait(10)
+
+        for choice in ("1", "2", "3"):
+            assert page._camera_radios[choice].isEnabled() is False
+        assert page._index_spin.isEnabled() is False
+        assert page.start_freq_spin.isEnabled() is False
+        assert page.end_freq_spin.isEnabled() is False
+        assert page.step_spin.isEnabled() is False
+        assert page.n_averages_spin.isEnabled() is False
+        assert page.exposure_spin.isEnabled() is False
+        assert page.gain_spin.isEnabled() is False
+        assert page.gain_factor_spin.isEnabled() is False
+        assert page.save_button.isEnabled() is False
+        # Unrelated preferences, unaffected either way.
+        assert page._show_gain_checkbox.isEnabled() is True
+        assert page._saved_image_checkbox.isEnabled() is True

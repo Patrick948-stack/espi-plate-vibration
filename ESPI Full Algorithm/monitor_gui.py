@@ -84,6 +84,8 @@ from matplotlib.figure import Figure
 
 import live_graphs
 import monitor
+import settings_manager
+import theme
 
 
 # ==============================================================================
@@ -484,6 +486,13 @@ class SetupPage(QWidget):
         super().__init__()
         layout = QVBoxLayout()
 
+        # Defaults come from the same settings file run_experiment_gui.py's
+        # SetupPage reads (~/.espi/settings.json via settings_manager). This
+        # is also where espi_app writes its own hardware defaults, when the
+        # user has "Use Last Settings as Default" checked, so opening
+        # Monitor Mode from espi_app starts from the same values.
+        settings = settings_manager.load_settings()
+
         # ---- Camera group (mirrors monitor.choose_camera() / choose_camera_index()) ----
         camera_group = QGroupBox("Camera")
         camera_layout = QVBoxLayout()
@@ -495,7 +504,8 @@ class SetupPage(QWidget):
             self._camera_group.addButton(radio)
             self._radios[choice] = radio
             camera_layout.addWidget(radio)
-        self._radios["2"].setChecked(True)  # same default as choose_camera()
+        default_camera = settings.get("default_camera_choice", "2")
+        self._radios[default_camera].setChecked(True)
 
         self._index_label = QLabel("Camera index (0 = first device found):")
         self._index_spin = QSpinBox()
@@ -520,21 +530,21 @@ class SetupPage(QWidget):
         self.exposure_spin.setDecimals(4)
         self.exposure_spin.setRange(0.0001, 10.0)
         self.exposure_spin.setSingleStep(0.01)
-        self.exposure_spin.setValue(0.06)
+        self.exposure_spin.setValue(settings.get("monitor_default_exposure", 0.06))
         settings_layout.addWidget(self.exposure_spin)
 
         settings_layout.addWidget(QLabel("Gain (dB):"))
         self.gain_spin = QDoubleSpinBox()
         self.gain_spin.setDecimals(2)
         self.gain_spin.setRange(-20.0, 50.0)  # 0 dB and negative values are valid
-        self.gain_spin.setValue(1.0)
+        self.gain_spin.setValue(settings.get("monitor_default_gain", 1.0))
         settings_layout.addWidget(self.gain_spin)
 
         settings_layout.addWidget(QLabel("gain_factor (subtraction display amplifier):"))
         self.gain_factor_spin = QDoubleSpinBox()
         self.gain_factor_spin.setDecimals(2)
         self.gain_factor_spin.setRange(0.01, 200.0)
-        self.gain_factor_spin.setValue(10.0)
+        self.gain_factor_spin.setValue(settings.get("monitor_default_gain_factor", 10.0))
         settings_layout.addWidget(self.gain_factor_spin)
 
         settings_layout.addWidget(QLabel("Frames to average:"))
@@ -581,6 +591,20 @@ class SetupPage(QWidget):
         self.n_averages_spin.valueChanged.connect(self._update_summary)
 
         self._update_summary()
+
+        # "Use Last Settings as Default" (set from espi_app's Settings
+        # dialog, bridged into this same settings file) means camera,
+        # index, exposure, gain, and gain_factor are now auto-managed from
+        # whatever was actually last used to start a session — not typed
+        # in by hand — so those fields are locked. n_averages is not a
+        # tracked default and always stays editable.
+        if settings.get("use_last_settings_as_default", False):
+            for radio in self._radios.values():
+                radio.setEnabled(False)
+            self._index_spin.setEnabled(False)
+            self.exposure_spin.setEnabled(False)
+            self.gain_spin.setEnabled(False)
+            self.gain_factor_spin.setEnabled(False)
 
     def _update_index_visibility(self):
         # Basler always uses index 0 (see monitor.choose_camera_index), so
@@ -1716,7 +1740,11 @@ class SettingsPage(QWidget):
         """
         button = QPushButton("Learn More")
         button.setObjectName("LearnMoreButton")
-        button.setIcon(qta.icon('mdi6.help-circle-outline', color=QColor(_TEXT_SECONDARY)))
+        current_theme = settings_manager.load_settings().get("theme", "dark")
+        button.setIcon(qta.icon(
+            'mdi6.help-circle-outline',
+            color=QColor(theme.icon_color_secondary(current_theme)),
+        ))
         button.clicked.connect(
             lambda: LearnMoreDialog(title, html_content, self).exec()
         )
@@ -1800,7 +1828,12 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        QApplication.instance().setStyleSheet(_STYLESHEET)
+        # theme defaults to "dark" (this file's original, only look)
+        # when run standalone with no theme key saved yet. espi_app
+        # writes its own light/dark choice into this same settings file
+        # before launching this window, so the two always agree.
+        self._current_theme = settings_manager.load_settings().get("theme", "dark")
+        QApplication.instance().setStyleSheet(_stylesheet_for(self._current_theme))
         self.setWindowTitle("ESPI Camera Monitor")
 
         # Clamp the launch size to the actual screen instead of a bare
@@ -1811,7 +1844,9 @@ class MainWindow(QMainWindow):
         # the smaller of "our preferred size" and "what actually fits" means
         # the window is always fully visible at launch, on any screen.
         screen = QApplication.instance().primaryScreen()
-        preferred_width, preferred_height = 900, 700
+        preferred_width, preferred_height = settings_manager.PREVIEW_SIZES.get(
+            settings_manager.load_settings().get("preview_size", "Medium"), (900, 700)
+        )
         if screen is not None:
             available = screen.availableGeometry()
             margin = 40
@@ -1835,11 +1870,12 @@ class MainWindow(QMainWindow):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(10, 6, 6, 18)
         header_layout.setSpacing(10)
-        brand_icon = QLabel()
-        brand_icon.setPixmap(qta.icon('mdi6.camera-iris', color=QColor(_TEXT_PRIMARY)).pixmap(22, 22))
+        icon_color = QColor(theme.icon_color(self._current_theme))
+        self._brand_icon = QLabel()
+        self._brand_icon.setPixmap(qta.icon('mdi6.camera-iris', color=icon_color).pixmap(22, 22))
         brand_title = QLabel("ESPI Monitor")
         brand_title.setObjectName("BrandTitle")
-        header_layout.addWidget(brand_icon)
+        header_layout.addWidget(self._brand_icon)
         header_layout.addWidget(brand_title)
         header_layout.addStretch()
         nav_layout.addLayout(header_layout)
@@ -1849,10 +1885,10 @@ class MainWindow(QMainWindow):
         self._nav.setObjectName("NavRail")
         self._nav.setIconSize(QSize(18, 18))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.tune-variant', color=QColor(_TEXT_PRIMARY)), "Setup"
+            qta.icon('mdi6.tune-variant', color=icon_color), "Setup"
         ))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.video-outline', color=QColor(_TEXT_PRIMARY)), "Live Monitor"
+            qta.icon('mdi6.video-outline', color=icon_color), "Live Monitor"
         ))
         self._nav.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         nav_layout.addWidget(self._nav)
@@ -1870,7 +1906,7 @@ class MainWindow(QMainWindow):
         # Settings button at bottom
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("SidebarSettings")
-        self.settings_button.setIcon(qta.icon('mdi6.cog-outline', color=QColor(_TEXT_PRIMARY)))
+        self.settings_button.setIcon(qta.icon('mdi6.cog-outline', color=icon_color))
         self.settings_button.clicked.connect(self._open_settings)
         nav_layout.addWidget(self.settings_button)
 
@@ -1930,10 +1966,54 @@ class MainWindow(QMainWindow):
         """Open settings page. Nav selection is left unchanged (Settings is not a nav item)."""
         self._stack.setCurrentIndex(2)
 
+    def refresh_theme(self, theme_name):
+        """
+        Re-apply the app stylesheet and re-color this window's icons for
+        a new theme.
+
+        Called by espi_app when the user changes theme in Settings while
+        this window is already open. The stylesheet itself restyles every
+        widget automatically (Qt re-applies QSS to the whole app the
+        moment setStyleSheet() is called again) — only the qtawesome
+        icons need to be explicitly re-created, since a QIcon is a static
+        bitmap baked at one fixed color and does not follow stylesheet
+        changes on its own.
+        """
+        self._current_theme = theme_name
+        QApplication.instance().setStyleSheet(_stylesheet_for(theme_name))
+
+        icon_color = QColor(theme.icon_color(theme_name))
+        self._brand_icon.setPixmap(qta.icon('mdi6.camera-iris', color=icon_color).pixmap(22, 22))
+        self._nav.item(0).setIcon(qta.icon('mdi6.tune-variant', color=icon_color))
+        self._nav.item(1).setIcon(qta.icon('mdi6.video-outline', color=icon_color))
+        self.settings_button.setIcon(qta.icon('mdi6.cog-outline', color=icon_color))
+
+    def _save_last_used_settings_if_enabled(self, camera_choice, settings):
+        """
+        If "Use Last Settings as Default" is on, remember whatever was
+        just used to start this monitor session as the new default for
+        next time — the counterpart to SetupPage locking those same
+        fields so they cannot be typed in by hand while this is active.
+
+        Does nothing if the flag is off, leaving whatever defaults were
+        last explicitly configured untouched.
+        """
+        current = settings_manager.load_settings()
+        if not current.get("use_last_settings_as_default", False):
+            return
+
+        current["default_camera_choice"] = camera_choice
+        current["monitor_default_exposure"] = settings["exposure_s"]
+        current["monitor_default_gain"] = settings["gain_db"]
+        current["monitor_default_gain_factor"] = settings["gain_factor"]
+        current["last_used_dashboard"] = "monitor"
+        settings_manager.save_settings(current)
+
     def _start_monitor(self):
         camera_choice = self.setup_page.camera_choice()
         camera_index = self.setup_page.camera_index()
         settings = self.setup_page.settings()
+        self._save_last_used_settings_if_enabled(camera_choice, settings)
         # Merge in the processing strategy settings from settings page
         settings["averaging_method"] = self.settings_page.averaging_method()
         settings["graph_type"] = self.settings_page.graph_type()
@@ -2009,17 +2089,11 @@ class MainWindow(QMainWindow):
 # ==============================================================================
 # STYLESHEET
 # ==============================================================================
-# The same strictly monochrome dark theme as run_experiment_gui.py (no color
-# accents — off-blacks and grays only), for visual consistency between the
-# two dashboards in this project. See that file's _STYLESHEET for the full
-# rationale behind each choice.
-
-_BASE_BG = "#1e1e1e"
-_SURFACE_BG = "#292929"
-_BORDER = "#383838"
-_TEXT_SECONDARY = "#8a8a8a"
-_TEXT_PRIMARY = "#e0e0e0"
-_RAIL_BG = "#171717"
+# The color tokens and full stylesheet now live in theme.py, shared with
+# run_experiment_gui.py (and, via espi_app/styles.py, espi_app's own
+# windows) so every window always matches whichever theme is selected.
+# Only this file's own nav item height, which the shared stylesheet does
+# not know about, is appended on top — see _stylesheet_for() below.
 
 # Sidebar layout constants
 SIDEBAR_WIDTH = 176
@@ -2027,191 +2101,11 @@ SIDEBAR_MARGIN = 8
 SIDEBAR_ITEM_HEIGHT = 38
 
 
-_STYLESHEET = f"""
-QMainWindow, QWidget {{
-    background-color: {_BASE_BG};
-    color: {_TEXT_PRIMARY};
-    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    font-size: 13px;
-}}
-QFrame#Sidebar {{
-    background-color: {_RAIL_BG};
-    border: none;
-}}
-
-QLabel#BrandTitle {{
-    color: {_TEXT_PRIMARY};
-    font-size: 14px;
-    font-weight: 600;
-    background-color: transparent;
-}}
-
-QListWidget#NavRail {{
-    background-color: {_RAIL_BG};
-    border: none;
-    border-right: 1px solid {_BORDER};
-    padding: 12px 0px;
-    outline: 0;
-}}
-QListWidget#NavRail::item {{
-    color: {_TEXT_SECONDARY};
-    padding: 14px 22px;
-    border-left: 3px solid transparent;
-    height: {SIDEBAR_ITEM_HEIGHT}px;
-}}
-QListWidget#NavRail::item:hover {{
-    background-color: #202020;
-    color: {_TEXT_PRIMARY};
-}}
-QListWidget#NavRail::item:selected, QListWidget#NavRail::item:selected:!active {{
-    background-color: {_SURFACE_BG};
-    color: {_TEXT_PRIMARY};
-    border-left: 3px solid {_TEXT_PRIMARY};
-}}
-QListWidget#NavRail::item:disabled {{
-    color: #4a4a4a;
-}}
-
-
-QFrame#NavSeparator {{
-    background-color: {_BORDER};
-    margin: 8px 12px;
-}}
-QPushButton#SidebarSettings {{
-    background-color: transparent;
-    color: {_TEXT_SECONDARY};
-    text-align: left;
-    padding-left: 22px;
-    padding: 8px 8px;
-    border: none;
-    outline: 0;
-}}
-QPushButton#SidebarSettings:hover {{
-    background-color: {_SURFACE_BG};
-    color: {_TEXT_PRIMARY};
-}}
-QPushButton#SidebarSettings:pressed {{
-    background-color: {_BORDER};
-}}
-
-QGroupBox {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 12px;
-    margin-top: 18px;
-    padding: 20px;
-    font-weight: 600;
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    left: 14px;
-    padding: 0 6px;
-    color: {_TEXT_SECONDARY};
-}}
-
-QLabel {{
-    color: {_TEXT_PRIMARY};
-    background-color: transparent;
-}}
-QLabel#SummaryLabel {{
-    font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
-    background-color: #232323;
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 12px;
-}}
-QLabel#FeedFrame {{
-    background-color: #141414;
-    border: 1px solid {_BORDER};
-    border-radius: 12px;
-    color: {_TEXT_SECONDARY};
-    font-size: 13px;
-}}
-QLabel#InfoLabel {{
-    color: {_TEXT_SECONDARY};
-    font-size: 12px;
-    background-color: transparent;
-}}
-
-QPushButton {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 9px 18px;
-    color: {_TEXT_PRIMARY};
-}}
-QPushButton:hover {{ background-color: #333333; border-color: #4a4a4a; }}
-QPushButton:pressed {{ background-color: #202020; }}
-QPushButton:disabled {{ color: #5a5a5a; background-color: #232323; border-color: #2e2e2e; }}
-
-QPushButton#PrimaryButton {{
-    background-color: {_TEXT_PRIMARY};
-    border: 1px solid {_TEXT_PRIMARY};
-    color: #181818;
-    font-weight: 600;
-}}
-QPushButton#PrimaryButton:hover {{ background-color: #cfcfcf; border-color: #cfcfcf; }}
-QPushButton#PrimaryButton:pressed {{ background-color: #b0b0b0; border-color: #b0b0b0; }}
-QPushButton#PrimaryButton:disabled {{
-    background-color: #4a4a4a; border-color: #4a4a4a; color: #7a7a7a;
-}}
-
-QDoubleSpinBox, QSpinBox, QLineEdit {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 6px;
-    padding: 6px 8px;
-    color: {_TEXT_PRIMARY};
-    selection-background-color: #4a4a4a;
-    selection-color: {_TEXT_PRIMARY};
-}}
-QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{
-    border: 1px solid {_TEXT_PRIMARY};
-}}
-
-QRadioButton {{
-    spacing: 8px;
-    padding: 4px 0px;
-    background-color: transparent;
-    outline: none;
-}}
-
-QPushButton#LearnMoreButton {{
-    background-color: transparent;
-    border: 1px solid {_BORDER};
-    border-radius: 6px;
-    padding: 4px 10px;
-    color: {_TEXT_SECONDARY};
-    font-size: 12px;
-}}
-QPushButton#LearnMoreButton:hover {{
-    background-color: {_SURFACE_BG};
-    color: {_TEXT_PRIMARY};
-    border-color: #4a4a4a;
-}}
-
-QTextBrowser#LearnMoreBrowser {{
-    background-color: #232323;
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 14px;
-    color: {_TEXT_PRIMARY};
-    font-size: 13px;
-}}
-
-QWidget#CanvasCard {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 12px;
-}}
-
-QStatusBar {{
-    background-color: {_BASE_BG};
-    border-top: 1px solid {_BORDER};
-    color: {_TEXT_SECONDARY};
-}}
-"""
+def _stylesheet_for(theme_name):
+    """Shared stylesheet plus this file's own nav item height rule."""
+    return theme.build_stylesheet(theme_name) + (
+        f"QListWidget#NavRail::item {{ height: {SIDEBAR_ITEM_HEIGHT}px; }}"
+    )
 
 
 def _apply_card_shadow(widget, blur_radius=28, y_offset=6, alpha=140):
@@ -2230,7 +2124,8 @@ def _apply_card_shadow(widget, blur_radius=28, y_offset=6, alpha=140):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyleSheet(_STYLESHEET)
+    # MainWindow.__init__ applies the theme stylesheet itself (reading the
+    # saved theme from settings_manager), so main() does not need to here.
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

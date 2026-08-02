@@ -1,18 +1,39 @@
 """
-test_signal_generator_control.py
-Tests for signal_generator_control.py (Siglent SDG1015 via pyvisa).
+test_sdg_control.py
+Tests for the sdg_control package (Siglent SDG1015 via pyvisa).
+
+Ported from tests/test_signal_generator_control.py, since sdg_control's
+connections.py/status.py/output.py/waveform.py were built to have the same
+externally-visible behavior as signal_generator_control.py's equivalent
+functions (error diagnostics included), just split into focused modules
+instead of one file. sdg_control is imported through its package __init__,
+so `sg.find_instruments(...)`, `sg.turn_on_output(...)`, etc. all work the
+same way `sg.` did against the old monolithic module -- only the internal
+`patch(...)` targets differ, since they now point at whichever specific
+submodule actually defines the name being patched.
 
 Sections covered
 ----------------
-  
-    clamp_frequency, clamp_amplitude, clamp_offset
+  clamp_frequency, clamp_amplitude, clamp_offset (limits.py)
 
   Hardware functions (pyvisa.ResourceManager mocked):
-    find_instruments, connect_instrument, open_connection, close_connection,
-    get_identity, get_output_status, get_wave_status,
-    turn_on_output, turn_off_output,
-    set_waveform, set_frequency, set_amplitude, set_offset,
-    configure_channel
+    find_instruments, connect_instrument, open_connection, close_connection
+    (connections.py), get_identity, get_output_status, get_wave_status
+    (status.py), turn_on_output, turn_off_output (output.py), set_waveform,
+    set_frequency, set_amplitude, set_offset, configure_channel (waveform.py)
+
+  Error diagnostics (errors.py): describe_visa_error, require_instrument,
+  and every function's None-instrument guard.
+
+Deliberate differences from signal_generator_control.py, reflected below:
+  - sdg_control.waveform.configure_channel() does NOT turn the output on
+    and does NOT return a "channel output" key -- unlike the old module's
+    configure_channel(), which does both. Configuring a channel and
+    enabling its output are two separate, single-responsibility calls
+    here (see turn_on_output() in output.py). Callers that need the
+    output on must call turn_on_output() themselves afterward -- this is
+    exactly what complete_pipeline.py, complete_pipeline_inclusive.py, and
+    complete_pipeline_allied_vision.py now do.
 """
 
 import sys
@@ -22,7 +43,9 @@ from unittest.mock import MagicMock, patch, call
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import signal_generator_control as sg
+import sdg_control as sg
+import sdg_control.connections as sg_connections
+import sdg_control.errors as sg_errors
 
 from conftest import make_mock_instrument
 
@@ -67,7 +90,7 @@ class TestClampFrequency:
         result = sg.clamp_frequency(100e6, "noise")
         assert result == 50e6
 
-    # --- Too-low values are clamped to 1 µHz minimum ---
+    # --- Too-low values are clamped to 1 uHz minimum ---
     def test_below_min_clamped_to_1uhz(self):
         result = sg.clamp_frequency(0.0, "sine")
         assert result == 1e-6
@@ -126,14 +149,14 @@ class TestClampOffset:
         assert sg.clamp_offset(0.0, 0.0) == 0.0
 
     def test_positive_offset_within_range(self):
-        # amplitude=4 Vpp → peaks swing ±2 V → max offset = 10 - 2 = 8 V
+        # amplitude=4 Vpp -> peaks swing +-2 V -> max offset = 10 - 2 = 8 V
         assert sg.clamp_offset(5.0, amplitude=4.0) == 5.0
 
     def test_negative_offset_within_range(self):
         assert sg.clamp_offset(-5.0, amplitude=4.0) == -5.0
 
     def test_offset_clamped_when_above_limit(self):
-        # amplitude=4 Vpp, max offset = 8 V; request 9 V → clamped to 8 V
+        # amplitude=4 Vpp, max offset = 8 V; request 9 V -> clamped to 8 V
         result = sg.clamp_offset(9.0, amplitude=4.0)
         assert result == pytest.approx(8.0)
 
@@ -142,7 +165,7 @@ class TestClampOffset:
         assert result == pytest.approx(-8.0)
 
     def test_max_amplitude_forces_zero_offset(self):
-        # 20 Vpp → peaks swing ±10 V → offset must be 0
+        # 20 Vpp -> peaks swing +-10 V -> offset must be 0
         result = sg.clamp_offset(1.0, amplitude=20.0)
         assert result == 0.0
 
@@ -186,7 +209,7 @@ class TestConnectInstrument:
         instr = make_mock_instrument()
         mock_rm.open_resource.return_value = instr
         addrs = ("USB0::FIRST", "USB0::SECOND")
-        result = sg.connect_instrument(mock_rm, addrs, index=0)
+        sg.connect_instrument(mock_rm, addrs, index=0)
         mock_rm.open_resource.assert_called_once_with("USB0::FIRST")
 
     def test_selects_correct_index(self):
@@ -215,7 +238,7 @@ class TestConnectInstrument:
 
 class TestOpenConnection:
     def test_returns_none_when_no_instruments_found(self):
-        with patch("signal_generator_control.pyvisa") as mock_pyvisa:
+        with patch("sdg_control.connections.pyvisa") as mock_pyvisa:
             mock_rm = MagicMock()
             mock_rm.list_resources.return_value = ()
             mock_pyvisa.ResourceManager.return_value = mock_rm
@@ -223,7 +246,7 @@ class TestOpenConnection:
         assert result is None
 
     def test_returns_instrument_when_found(self):
-        with patch("signal_generator_control.pyvisa") as mock_pyvisa:
+        with patch("sdg_control.connections.pyvisa") as mock_pyvisa:
             mock_rm = MagicMock()
             mock_rm.list_resources.return_value = ("USB0::INSTR",)
             instr = make_mock_instrument()
@@ -492,10 +515,14 @@ class TestConfigureChannel:
         return instr
 
     def test_returns_dict_with_all_keys(self):
+        # No "channel output" key here -- see the module docstring above for
+        # why sdg_control's configure_channel() deliberately does not turn
+        # the output on or report its state, unlike signal_generator_control.py's.
         instr = self._make_instr()
         result = sg.configure_channel(instr, "sine", 1000.0, 1.0, 0.0, channel=1)
-        for key in ("waveform", "frequency", "amplitude", "offset", "channel output"):
+        for key in ("waveform", "frequency", "amplitude", "offset"):
             assert key in result
+        assert "channel output" not in result
 
     def test_waveform_key_is_lowercase(self):
         instr = self._make_instr()
@@ -522,11 +549,17 @@ class TestConfigureChannel:
         written_commands = [c[0][0] for c in instr.write.call_args_list]
         assert all("C2:" in cmd for cmd in written_commands)
 
-    def test_turns_on_output(self):
+    def test_does_not_turn_on_output(self):
+        """
+        Deliberate divergence from signal_generator_control.py's
+        configure_channel(), which does turn the output on internally.
+        Here, enabling output is turn_on_output()'s job alone -- callers
+        (see complete_pipeline*.py) must call it explicitly.
+        """
         instr = self._make_instr()
         sg.configure_channel(instr, "sine", 1000.0, 1.0, 0.0, channel=1)
         written_commands = [c[0][0] for c in instr.write.call_args_list]
-        assert "C1:OUTP ON" in written_commands
+        assert "C1:OUTP ON" not in written_commands
 
     def test_unknown_waveform_still_attempts_remaining_steps(self):
         instr = self._make_instr()
@@ -539,10 +572,11 @@ class TestConfigureChannel:
 # ===========================================================================
 # SECTION 7 — ERROR DIAGNOSTICS
 # ===========================================================================
-# Covers _describe_visa_error(), _require_instrument(), and every place that
-# now (a) rejects instr=None with a specific message instead of crashing
-# with AttributeError, and (b) translates a pyvisa.VisaIOError into an
-# actionable sentence instead of printing pyvisa's generic e.description.
+# Covers describe_visa_error(), require_instrument() (both in errors.py),
+# and every function that (a) rejects instr=None with a specific message
+# instead of crashing with AttributeError, and (b) translates a
+# pyvisa.VisaIOError into an actionable sentence instead of printing
+# pyvisa's generic e.description.
 # ===========================================================================
 
 import pyvisa as _pyvisa  # local alias so "pyvisa" stays free for per-test imports above
@@ -551,31 +585,31 @@ import pyvisa as _pyvisa  # local alias so "pyvisa" stays free for per-test impo
 class TestDescribeVisaError:
     def test_known_error_code_returns_specific_help(self):
         e = _pyvisa.VisaIOError(-1073807339)  # VI_ERROR_TMO
-        message = sg._describe_visa_error(e)
+        message = sg_errors.describe_visa_error(e)
         assert "did not respond in time" in message
 
     def test_resource_not_found_returns_specific_help(self):
         from pyvisa import constants
         e = _pyvisa.VisaIOError(constants.VI_ERROR_RSRC_NFOUND)
-        message = sg._describe_visa_error(e)
+        message = sg_errors.describe_visa_error(e)
         assert "no longer reachable" in message
 
     def test_resource_busy_returns_specific_help(self):
         from pyvisa import constants
         e = _pyvisa.VisaIOError(constants.VI_ERROR_RSRC_BUSY)
-        message = sg._describe_visa_error(e)
+        message = sg_errors.describe_visa_error(e)
         assert "already in use" in message
 
     def test_unrecognised_error_code_falls_back_to_pyvisa_description(self):
         from pyvisa import constants
         e = _pyvisa.VisaIOError(constants.VI_ERROR_NLISTENERS)  # not in our lookup table
-        message = sg._describe_visa_error(e)
+        message = sg_errors.describe_visa_error(e)
         assert message == e.description
 
 
 class TestRequireInstrument:
     def test_none_returns_false_and_explains(self, capsys):
-        result = sg._require_instrument(None, "set the frequency")
+        result = sg_errors.require_instrument(None, "set the frequency")
         assert result is False
         out = capsys.readouterr().out
         assert "set the frequency" in out
@@ -583,7 +617,7 @@ class TestRequireInstrument:
 
     def test_real_instrument_returns_true_silently(self, capsys):
         instr = make_mock_instrument()
-        result = sg._require_instrument(instr, "set the frequency")
+        result = sg_errors.require_instrument(instr, "set the frequency")
         assert result is True
         assert capsys.readouterr().out == ""
 
@@ -607,7 +641,7 @@ class TestFindInstrumentsErrorPaths:
     def test_windows_steps_shown_only_on_windows(self, capsys):
         mock_rm = MagicMock()
         mock_rm.list_resources.return_value = ()
-        with patch.object(sg, "_ON_WINDOWS", True):
+        with patch.object(sg_connections, "_ON_WINDOWS", True):
             sg.find_instruments(mock_rm)
         out = capsys.readouterr().out
         assert "Zadig" in out
@@ -616,7 +650,7 @@ class TestFindInstrumentsErrorPaths:
     def test_non_windows_steps_hide_windows_instructions(self, capsys):
         mock_rm = MagicMock()
         mock_rm.list_resources.return_value = ()
-        with patch.object(sg, "_ON_WINDOWS", False):
+        with patch.object(sg_connections, "_ON_WINDOWS", False):
             sg.find_instruments(mock_rm)
         out = capsys.readouterr().out
         assert "Zadig" not in out
@@ -665,7 +699,7 @@ class TestConnectInstrumentErrorPaths:
 
 class TestOpenConnectionErrorPaths:
     def test_resource_manager_creation_failure_returns_none(self, capsys):
-        with patch("signal_generator_control.pyvisa.ResourceManager",
+        with patch("sdg_control.connections.pyvisa.ResourceManager",
                    side_effect=OSError("no VISA library found")):
             result = sg.open_connection()
         assert result is None
@@ -674,9 +708,9 @@ class TestOpenConnectionErrorPaths:
         assert "pip install pyvisa pyvisa-py" in out
 
     def test_windows_mentions_zadig_on_resource_manager_failure(self, capsys):
-        with patch("signal_generator_control.pyvisa.ResourceManager",
+        with patch("sdg_control.connections.pyvisa.ResourceManager",
                    side_effect=OSError("no VISA library found")), \
-             patch.object(sg, "_ON_WINDOWS", True):
+             patch.object(sg_connections, "_ON_WINDOWS", True):
             sg.open_connection()
         out = capsys.readouterr().out
         assert "Zadig" in out
@@ -729,10 +763,9 @@ class TestNoneInstrumentGuards:
             "frequency": None,
             "amplitude": None,
             "offset": None,
-            "channel output": None,
         }
         out = capsys.readouterr().out
-        # Exactly one guard message, not five (one per sub-call it never made).
+        # Exactly one guard message, not four (one per sub-call it never made).
         assert out.count("[ERROR] Cannot") == 1
 
 

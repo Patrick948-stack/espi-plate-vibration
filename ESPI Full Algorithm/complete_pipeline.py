@@ -43,9 +43,17 @@ import math
 import os
 import time
 
-# Import every public function from both library files.
-# "from X import *" brings in all names listed in their __all__ lists.
-from signal_generator_control import *
+# Import every public function this file needs from sdg_control (the
+# modular signal generator library) and camera_control.
+from sdg_control import (
+    clamp_frequency,
+    open_connection,
+    close_connection,
+    configure_channel,
+    set_frequency,
+    turn_on_output,
+    turn_off_output,
+)
 from camera_control import *
 
 
@@ -76,7 +84,7 @@ def _settle_with_live_feed(camera, seconds, freq):
 
 
 def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
-                     gain_factor=1, stop_check=None):
+                     gain_factor=1, amplitude=1.0, offset=0.0, stop_check=None):
     """
     Run a full ESPI frequency sweep and save one averaged difference image per frequency.
 
@@ -119,6 +127,14 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
                               plain multiplication of a uint8 array would. Defaults
                               to 1 (no amplification) so the saved data matches the
                               raw camera difference unless you explicitly ask for more.
+        amplitude   (float) : Signal generator peak-to-peak amplitude, in Vpp.
+                              Clamped to 2 mVpp - 20 Vpp by configure_channel().
+                              Defaults to 1.0, matching this function's own
+                              long-standing hardcoded value.
+        offset      (float) : Signal generator DC offset, in Volts. Clamped so
+                              the waveform's peaks stay within the +/-10V rail
+                              by configure_channel(). Defaults to 0.0, matching
+                              this function's own long-standing hardcoded value.
         stop_check  (callable, optional) : Called once at the start of every
                               frequency, before any signal generator or camera
                               command for that frequency is issued. If it returns
@@ -206,10 +222,11 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
         instr,
         waveform  = "sine",
         frequency = start_freq,
-        amplitude = 1.0,
-        offset    = 0.0,
+        amplitude = amplitude,
+        offset    = offset,
         channel   = 1,
     )
+    turn_on_output(instr, channel=1)
 
     # ==========================================================================
     # STEP 4 — CREATE OUTPUT FOLDER AND RESULTS CONTAINER
@@ -343,7 +360,7 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
 
 
 def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
-                               gain_factor=1, stop_check=None):
+                               gain_factor=1, amplitude=1.0, offset=0.0, stop_check=None):
     """
     Reference-based ESPI frequency sweep.
 
@@ -387,6 +404,12 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
                               docstring for why cv2.convertScaleAbs is used
                               instead of plain multiplication. Defaults to 1
                               (no amplification).
+        amplitude   (float) : Signal generator peak-to-peak amplitude, in Vpp.
+                              See frequency_sweep()'s docstring — same
+                              clamping, same 1.0 default.
+        offset      (float) : Signal generator DC offset, in Volts. See
+                              frequency_sweep()'s docstring — same clamping,
+                              same 0.0 default.
         stop_check  (callable, optional) : See frequency_sweep()'s docstring —
                               same safe, between-frequencies stop mechanism.
 
@@ -466,10 +489,11 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         instr,
         waveform  = "sine",
         frequency = start_freq,
-        amplitude = 1.0,
-        offset    = 0.0,
+        amplitude = amplitude,
+        offset    = offset,
         channel   = 1,
     )
+    turn_on_output(instr, channel=1)
 
     # ==========================================================================
     # STEP 5 — FREQUENCY SWEEP LOOP

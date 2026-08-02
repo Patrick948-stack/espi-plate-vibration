@@ -100,9 +100,11 @@ from matplotlib.figure import Figure
 from typing import Optional, Tuple
 
 import run_experiment
+import theme
 from monitor_gui import _apply_grayscale_conversion
+from sdg_control.limits import MIN_AMPLITUDE, MAX_AMPLITUDE, VOLTAGE_RAIL
 from settings_dialog import SettingsPage
-from settings_manager import load_settings, save_settings
+from settings_manager import load_settings, save_settings, PREVIEW_SIZES
 
 
 # ==============================================================================
@@ -312,6 +314,32 @@ class SetupPage(QWidget):
         capture_group.setLayout(capture_layout)
         grid.addWidget(capture_group, 1, 1)
 
+        # ---- Signal Generator group (amplitude/offset, sent to
+        # configure_channel() via run_pipeline()) ----
+        sg_group = QGroupBox("Signal Generator")
+        sg_layout = QGridLayout()
+        sg_layout.addWidget(QLabel("Amplitude (Vpp):"), 0, 0)
+        self.amplitude_spin = QDoubleSpinBox()
+        self.amplitude_spin.setDecimals(3)
+        self.amplitude_spin.setRange(MIN_AMPLITUDE, MAX_AMPLITUDE)
+        self.amplitude_spin.setValue(settings.get("default_amplitude", 1.0))
+        sg_layout.addWidget(self.amplitude_spin, 0, 1)
+
+        sg_layout.addWidget(QLabel("DC Offset (V):"), 1, 0)
+        self.offset_spin = QDoubleSpinBox()
+        self.offset_spin.setDecimals(2)
+        # A static +/-VOLTAGE_RAIL range here is intentionally generous:
+        # the real legal offset range narrows as amplitude grows (see
+        # sdg_control.limits.clamp_offset), and configure_channel() already
+        # clamps to that dynamic range before anything reaches the
+        # instrument, so this spinbox does not need to track amplitude_spin
+        # live to stay hardware-safe.
+        self.offset_spin.setRange(-VOLTAGE_RAIL, VOLTAGE_RAIL)
+        self.offset_spin.setValue(settings.get("default_offset", 0.0))
+        sg_layout.addWidget(self.offset_spin, 1, 1)
+        sg_group.setLayout(sg_layout)
+        grid.addWidget(sg_group, 2, 0, 1, 2)
+
         outer.addLayout(grid)
 
         # Gain (dB) is an advanced control most users leave alone; only
@@ -329,6 +357,36 @@ class SetupPage(QWidget):
         outer.addWidget(self.continue_button)
 
         self.setLayout(outer)
+
+        self._apply_lock_state(settings)
+
+    def _apply_lock_state(self, settings):
+        """
+        "Use Last Settings as Default" (set from espi_app's Settings
+        dialog, bridged into this same settings file) means camera, mode,
+        frequency sweep, and capture fields are now auto-managed from
+        whatever was actually last used to run a Preview or Sweep — not
+        typed in by hand — so those fields are locked. output_dir is not
+        a tracked default and always stays editable.
+
+        Called once from __init__, and again from reload_settings() so
+        navigating back to Setup after a settings change reflects the
+        current lock state.
+        """
+        locked = settings.get("use_last_settings_as_default", False)
+        for radio in self._camera_radios.values():
+            radio.setEnabled(not locked)
+        for radio in self._mode_radios.values():
+            radio.setEnabled(not locked)
+        self.start_freq_spin.setEnabled(not locked)
+        self.end_freq_spin.setEnabled(not locked)
+        self.step_spin.setEnabled(not locked)
+        self.n_averages_spin.setEnabled(not locked)
+        self.exposure_spin.setEnabled(not locked)
+        self.gain_spin.setEnabled(not locked)
+        self.gain_factor_spin.setEnabled(not locked)
+        self.amplitude_spin.setEnabled(not locked)
+        self.offset_spin.setEnabled(not locked)
 
     def _browse_output_dir(self):
         directory = QFileDialog.getExistingDirectory(
@@ -359,6 +417,8 @@ class SetupPage(QWidget):
             exposure=self.exposure_spin.value(),
             gain=self.gain_spin.value(),
             gain_factor=self.gain_factor_spin.value(),
+            amplitude=self.amplitude_spin.value(),
+            offset=self.offset_spin.value(),
             output_dir=self.output_dir_edit.text(),
         )
 
@@ -387,6 +447,10 @@ class SetupPage(QWidget):
         self.gain_spin.setValue(settings.get("default_gain", 0.0))
         self.gain_factor_spin.setValue(settings.get("default_gain_factor", 1.0))
 
+        # Update Signal Generator parameters
+        self.amplitude_spin.setValue(settings.get("default_amplitude", 1.0))
+        self.offset_spin.setValue(settings.get("default_offset", 0.0))
+
         # Update conditional visibility (e.g. Gain control) to match
         # whatever the user last saved in Settings. This is what actually
         # reloading settings values above was missing: the values were
@@ -394,6 +458,7 @@ class SetupPage(QWidget):
         # visibility rules to match them, so a control that should now be
         # hidden (or shown) stayed exactly as it was at construction time.
         self._update_gain_visibility(settings)
+        self._apply_lock_state(settings)
 
     def _update_gain_visibility(self, settings):
         """Show the Gain (dB) control only if the user opted in via Settings."""
@@ -1306,8 +1371,19 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        # theme defaults to "dark" (this file's original, only look) when
+        # run standalone with no theme key saved yet. espi_app writes its
+        # own light/dark choice into this same settings file before
+        # launching this window, so the two always agree.
+        settings = load_settings()
+        self._current_theme = settings.get("theme", "dark")
+        QApplication.instance().setStyleSheet(theme.build_stylesheet(self._current_theme))
+
         self.setWindowTitle("ESPI Plate Vibration — Run Experiment")
-        self.resize(1150, 820)
+        preferred_width, preferred_height = PREVIEW_SIZES.get(
+            settings.get("preview_size", "Medium"), (1150, 820)
+        )
+        self.resize(preferred_width, preferred_height)
 
         # Brand header with sidebar
         nav_widget = QWidget()
@@ -1319,11 +1395,12 @@ class MainWindow(QMainWindow):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(10, 6, 6, 18)
         header_layout.setSpacing(10)
-        brand_icon = QLabel()
-        brand_icon.setPixmap(qta.icon('mdi6.radar', color=QColor("#e0e0e0")).pixmap(22, 22))
+        icon_color = QColor(theme.icon_color(self._current_theme))
+        self._brand_icon = QLabel()
+        self._brand_icon.setPixmap(qta.icon('mdi6.radar', color=icon_color).pixmap(22, 22))
         brand_title = QLabel("ESPI Scan Mode")
         brand_title.setObjectName("BrandTitle")
-        header_layout.addWidget(brand_icon)
+        header_layout.addWidget(self._brand_icon)
         header_layout.addWidget(brand_title)
         header_layout.addStretch()
         nav_layout.addLayout(header_layout)
@@ -1333,25 +1410,25 @@ class MainWindow(QMainWindow):
         self._nav.setObjectName("NavRail")
         self._nav.setIconSize(QSize(18, 18))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.tune-variant', color=QColor("#e0e0e0")), "Setup"
+            qta.icon('mdi6.tune-variant', color=icon_color), "Setup"
         ))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.eye-outline', color=QColor("#e0e0e0")), "Preview"
+            qta.icon('mdi6.eye-outline', color=icon_color), "Preview"
         ))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.radar', color=QColor("#e0e0e0")), "Sweep"
+            qta.icon('mdi6.radar', color=icon_color), "Sweep"
         ))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.chart-line', color=QColor("#e0e0e0")), "Results"
+            qta.icon('mdi6.chart-line', color=icon_color), "Results"
         ))
         self._nav.addItem(QListWidgetItem(
-            qta.icon('mdi6.cog-outline', color=QColor("#e0e0e0")), "Settings"
+            qta.icon('mdi6.cog-outline', color=icon_color), "Settings"
         ))
         self._nav.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         nav_layout.addWidget(self._nav)
 
         nav_widget.setLayout(nav_layout)
-        
+
         self._nav.setFixedWidth(180)
         self._nav.setCurrentRow(0)
         for row in (1, 2, 3, 4):
@@ -1430,17 +1507,31 @@ class MainWindow(QMainWindow):
         if row == 0:
             self.setup_page.reload_settings()
 
-    def _start_preview(self):
-        params = self.setup_page.get_params()
-        camera_choice = self.setup_page.camera_choice()
-        settings = load_settings()
-        grayscale_method = settings.get("grayscale_method", "standard")
-        grayscale_color = settings.get("grayscale_color", "R")
-        grayscale_backend = settings.get("grayscale_backend", "numpy")
+    def _save_last_used_settings_if_enabled(self, camera_choice, params, mode_choice=None, extra=None):
+        """
+        If "Use Last Settings as Default" is on, remember whatever was
+        just used to start this Preview or Sweep as the new default for
+        next time — the counterpart to SetupPage locking those same
+        fields so they cannot be typed in by hand while this is active.
 
-        # Save current settings before proceeding
-        current_settings = load_settings()
-        current_settings.update({
+        Does nothing if the flag is off, leaving whatever defaults were
+        last explicitly configured (via the separate Settings page)
+        untouched — this used to happen unconditionally, on every single
+        Preview/Sweep, with no way to turn it off.
+
+        Args:
+            mode_choice: Only known once Preview hands off to Sweep, so
+                _start_preview() does not pass this (mode isn't saved
+                from there, matching the original, pre-existing behavior).
+            extra: Additional keys to merge in — _start_preview() uses
+                this for grayscale_method, which _start_sweep_stage()
+                never saved even before this method existed.
+        """
+        current = load_settings()
+        if not current.get("use_last_settings_as_default", False):
+            return
+
+        current.update({
             "default_camera_choice": camera_choice,
             "default_start_freq": params["start_freq"],
             "default_end_freq": params["end_freq"],
@@ -1449,9 +1540,27 @@ class MainWindow(QMainWindow):
             "default_exposure": params["exposure"],
             "default_gain": params["gain"],
             "default_gain_factor": params["gain_factor"],
-            "grayscale_method": grayscale_method,
+            "default_amplitude": params["amplitude"],
+            "default_offset": params["offset"],
+            "last_used_dashboard": "scan",
         })
-        save_settings(current_settings)
+        if mode_choice is not None:
+            current["default_mode_choice"] = mode_choice
+        if extra:
+            current.update(extra)
+        save_settings(current)
+
+    def _start_preview(self):
+        params = self.setup_page.get_params()
+        camera_choice = self.setup_page.camera_choice()
+        settings = load_settings()
+        grayscale_method = settings.get("grayscale_method", "standard")
+        grayscale_color = settings.get("grayscale_color", "R")
+        grayscale_backend = settings.get("grayscale_backend", "numpy")
+
+        self._save_last_used_settings_if_enabled(
+            camera_choice, params, extra={"grayscale_method": grayscale_method}
+        )
 
         self._set_nav_enabled(1, True)
         self._nav.setCurrentRow(1)
@@ -1465,21 +1574,9 @@ class MainWindow(QMainWindow):
         camera_choice = self.setup_page.camera_choice()
         mode_choice = self.setup_page.mode_choice()
         params = self.setup_page.get_params()
-        
-        # Save current settings before proceeding
-        current_settings = load_settings()
-        current_settings.update({
-            "default_camera_choice": camera_choice,
-            "default_start_freq": params["start_freq"],
-            "default_end_freq": params["end_freq"],
-            "default_step_size": params["step"],
-            "default_n_averages": params["n_averages"],
-            "default_exposure": params["exposure"],
-            "default_gain": params["gain"],
-            "default_gain_factor": params["gain_factor"],
-        })
-        save_settings(current_settings)
-        
+
+        self._save_last_used_settings_if_enabled(camera_choice, params, mode_choice=mode_choice)
+
         self.sweep_page.begin(camera_choice, mode_choice, params)
         self._set_nav_enabled(2, True)
         self._nav.setCurrentRow(2)
@@ -1510,6 +1607,30 @@ class MainWindow(QMainWindow):
         self._set_nav_enabled(3, False)
         self._nav.setCurrentRow(0)
         self.statusBar().showMessage("Idle")
+
+    def refresh_theme(self, theme_name):
+        """
+        Re-apply the app stylesheet and re-color this window's icons for
+        a new theme.
+
+        Called by espi_app when the user changes theme in Settings while
+        this window is already open. The stylesheet itself restyles every
+        widget automatically (Qt re-applies QSS to the whole app the
+        moment setStyleSheet() is called again) — only the qtawesome
+        icons need to be explicitly re-created, since a QIcon is a static
+        bitmap baked at one fixed color and does not follow stylesheet
+        changes on its own.
+        """
+        self._current_theme = theme_name
+        QApplication.instance().setStyleSheet(theme.build_stylesheet(theme_name))
+
+        icon_color = QColor(theme.icon_color(theme_name))
+        self._brand_icon.setPixmap(qta.icon('mdi6.radar', color=icon_color).pixmap(22, 22))
+        self._nav.item(0).setIcon(qta.icon('mdi6.tune-variant', color=icon_color))
+        self._nav.item(1).setIcon(qta.icon('mdi6.eye-outline', color=icon_color))
+        self._nav.item(2).setIcon(qta.icon('mdi6.radar', color=icon_color))
+        self._nav.item(3).setIcon(qta.icon('mdi6.chart-line', color=icon_color))
+        self._nav.item(4).setIcon(qta.icon('mdi6.cog-outline', color=icon_color))
 
     def closeEvent(self, event):
         if self.sweep_page.is_running():
@@ -1547,178 +1668,13 @@ class MainWindow(QMainWindow):
 # ==============================================================================
 # STYLESHEET
 # ==============================================================================
-# A dark, strictly monochrome theme (no color accents at all — off-blacks
-# and grays only) applied to the whole QApplication. "Elevated" surfaces
-# (QGroupBox cards, the results canvases, the nav rail's selected row) use
-# a lighter gray than the base background plus a real drop shadow (added
-# separately below via QGraphicsDropShadowEffect, since QSS itself has no
-# box-shadow) so cards read as floating panels rather than flat rectangles.
-# Primary actions and the progress bar use a near-white fill instead of a
-# color accent — the only way to signal "emphasis" without introducing a
-# hue. Kept as one embedded string (not a separate .qss file) so the app
-# has no extra non-Python asset to ship.
-
-_BASE_BG = "#1e1e1e"
-_SURFACE_BG = "#292929"
-_BORDER = "#383838"
-_TEXT_SECONDARY = "#8a8a8a"
-_TEXT_PRIMARY = "#e0e0e0"
-
-_STYLESHEET = f"""
-QMainWindow, QWidget {{
-    background-color: {_BASE_BG};
-    color: {_TEXT_PRIMARY};
-    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    font-size: 13px;
-}}
-
-QListWidget#NavRail {{
-    background-color: #171717;
-    border: none;
-    border-right: 1px solid {_BORDER};
-    padding: 12px 0px;
-    outline: 0;
-}}
-QListWidget#NavRail::item {{
-    color: {_TEXT_SECONDARY};
-    padding: 14px 22px;
-    border-left: 3px solid transparent;
-}}
-QListWidget#NavRail::item:selected {{
-    background-color: {_SURFACE_BG};
-    color: {_TEXT_PRIMARY};
-    border-left: 3px solid {_TEXT_PRIMARY};
-}}
-QListWidget#NavRail::item:disabled {{
-    color: #4a4a4a;
-}}
-
-QGroupBox {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 12px;
-    margin-top: 18px;
-    padding: 20px;
-    font-weight: 600;
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    left: 14px;
-    padding: 0 6px;
-    color: {_TEXT_SECONDARY};
-}}
-
-QLabel {{
-    color: {_TEXT_PRIMARY};
-    background-color: transparent;
-}}
-QLabel#FreqLabel {{ font-weight: 600; font-size: 14px; }}
-QLabel#WarningLabel {{
-    color: {_TEXT_PRIMARY};
-    font-size: 12px;
-    font-weight: 600;
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 10px;
-}}
-
-QPushButton {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 9px 18px;
-    color: {_TEXT_PRIMARY};
-}}
-QPushButton:hover {{ background-color: #333333; border-color: #4a4a4a; }}
-QPushButton:pressed {{ background-color: #202020; }}
-QPushButton:disabled {{ color: #5a5a5a; background-color: #232323; border-color: #2e2e2e; }}
-
-QPushButton#PrimaryButton {{
-    background-color: {_TEXT_PRIMARY};
-    border: 1px solid {_TEXT_PRIMARY};
-    color: #181818;
-    font-weight: 600;
-}}
-QPushButton#PrimaryButton:hover {{ background-color: #cfcfcf; border-color: #cfcfcf; }}
-QPushButton#PrimaryButton:pressed {{ background-color: #b0b0b0; border-color: #b0b0b0; }}
-QPushButton#PrimaryButton:disabled {{
-    background-color: #4a4a4a; border-color: #4a4a4a; color: #7a7a7a;
-}}
-
-QDoubleSpinBox, QSpinBox, QLineEdit {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 6px;
-    padding: 6px 8px;
-    color: {_TEXT_PRIMARY};
-    selection-background-color: #4a4a4a;
-    selection-color: {_TEXT_PRIMARY};
-}}
-QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{
-    border: 1px solid {_TEXT_PRIMARY};
-}}
-
-QRadioButton {{
-    spacing: 8px;
-    padding: 4px 0px;
-    background-color: transparent;
-    outline: none;
-}}
-
-QLabel#SummaryLabel {{
-    font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
-    background-color: #232323;
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 12px;
-}}
-
-QWidget#CanvasCard {{
-    background-color: {_SURFACE_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 12px;
-}}
-
-QProgressBar {{
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    background-color: #232323;
-    text-align: center;
-    height: 22px;
-    font-weight: 600;
-    color: {_TEXT_PRIMARY};
-}}
-QProgressBar::chunk {{
-    background-color: {_TEXT_PRIMARY};
-    border-radius: 7px;
-}}
-
-QPlainTextEdit#LogConsole {{
-    background-color: #141414;
-    color: #cfcfcf;
-    border: 1px solid {_BORDER};
-    border-radius: 10px;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
-    padding: 12px;
-}}
-
-QStatusBar {{
-    background-color: {_BASE_BG};
-    border-top: 1px solid {_BORDER};
-    color: {_TEXT_SECONDARY};
-}}
-
-QLabel#FeedFrame {{
-    background-color: #141414;
-    border: 1px solid {_BORDER};
-    border-radius: 12px;
-    color: {_TEXT_SECONDARY};
-    font-size: 13px;
-}}
-"""
+# The color tokens and full stylesheet now live in theme.py, shared with
+# monitor_gui.py (and, via espi_app/styles.py, espi_app's own windows) so
+# every window always matches whichever theme is selected. "Elevated"
+# surfaces (QGroupBox cards, the results canvases, the nav rail's
+# selected row) get a real drop shadow (added separately below via
+# QGraphicsDropShadowEffect, since QSS itself has no box-shadow) so cards
+# read as floating panels rather than flat rectangles.
 
 
 def _apply_card_shadow(widget, blur_radius=28, y_offset=6, alpha=140):
@@ -1737,7 +1693,8 @@ def _apply_card_shadow(widget, blur_radius=28, y_offset=6, alpha=140):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyleSheet(_STYLESHEET)
+    # MainWindow.__init__ applies the theme stylesheet itself (reading the
+    # saved theme from settings_manager), so main() does not need to here.
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

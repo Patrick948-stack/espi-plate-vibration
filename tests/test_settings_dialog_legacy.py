@@ -1,7 +1,12 @@
 """
-test_settings_dialog.py
+test_settings_dialog_legacy.py
 
-Tests for the SettingsDialog class.
+Tests for the SettingsDialog class. Renamed from test_settings_dialog.py
+(kept its content unchanged) since ESPI Full Algorithm/tests/ has its own,
+unrelated test_settings_dialog.py testing a different SettingsPage class --
+the shared basename across two separate test directories with no
+__init__.py in either caused a pytest collection error when running
+pytest from the project root.
 
 Verifies that the settings dialog can:
 - Load current settings

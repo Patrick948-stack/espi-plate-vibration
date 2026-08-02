@@ -6,5 +6,6 @@ results = frequency_sweep(
     step        = 5,
     n_averages  = 1,
     exposure_us = 40000,
+    gain        = 0.0,
     output_dir  = "/Users/patrickmulikuza/Desktop/sweep_output4",
 )

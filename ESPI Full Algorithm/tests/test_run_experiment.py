@@ -205,6 +205,75 @@ class TestRunPipelineExposureConversion:
 
 
 # ===========================================================================
+# run_pipeline() — amplitude/offset propagation
+# ===========================================================================
+# run_experiment_gui.py's SetupPage now includes amplitude/offset in
+# get_params(), so run_pipeline()'s base_params must forward them to
+# whichever sweep function is chosen, for all three cameras and both
+# subtraction modes. Read with .get(key, default) rather than indexed
+# directly, so run_experiment.py's own terminal CLI (whose
+# choose_sweep_params() does not collect these yet) keeps working
+# unchanged, falling back to the same 1.0/0.0 every pipeline function
+# already defaults to.
+
+class TestRunPipelineAmplitudeOffset:
+
+    def setup_method(self):
+        self._basler_mod = _mock_pipeline_module("complete_pipeline")
+        self._cv_mod     = _mock_pipeline_module("complete_pipeline_inclusive")
+        self._av_mod     = _mock_pipeline_module("complete_pipeline_allied_vision")
+
+    def teardown_method(self):
+        for name in ("complete_pipeline",
+                     "complete_pipeline_inclusive",
+                     "complete_pipeline_allied_vision"):
+            sys.modules.pop(name, None)
+
+    def test_basler_forwards_amplitude_and_offset(self):
+        run_experiment.run_pipeline("1", "1", _default_params(amplitude=3.3, offset=-2.0))
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(3.3)
+        assert kwargs["offset"] == pytest.approx(-2.0)
+
+    def test_basler_reference_mode_forwards_amplitude_and_offset(self):
+        run_experiment.run_pipeline("1", "2", _default_params(amplitude=4.0, offset=1.0))
+        kwargs = self._basler_mod.reference_frequency_sweep.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(4.0)
+        assert kwargs["offset"] == pytest.approx(1.0)
+
+    def test_opencv_forwards_amplitude_and_offset(self):
+        run_experiment.run_pipeline("2", "1", _default_params(amplitude=2.5, offset=0.5))
+        kwargs = self._cv_mod.frequency_sweep_inclusive.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(2.5)
+        assert kwargs["offset"] == pytest.approx(0.5)
+
+    def test_opencv_reference_mode_forwards_amplitude_and_offset(self):
+        run_experiment.run_pipeline("2", "2", _default_params(amplitude=2.5, offset=0.5))
+        kwargs = self._cv_mod.reference_frequency_sweep_inclusive.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(2.5)
+        assert kwargs["offset"] == pytest.approx(0.5)
+
+    def test_allied_forwards_amplitude_and_offset(self):
+        run_experiment.run_pipeline("3", "1", _default_params(amplitude=5.0, offset=1.5))
+        kwargs = self._av_mod.frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(5.0)
+        assert kwargs["offset"] == pytest.approx(1.5)
+
+    def test_allied_reference_mode_forwards_amplitude_and_offset(self):
+        run_experiment.run_pipeline("3", "2", _default_params(amplitude=5.0, offset=1.5))
+        kwargs = self._av_mod.reference_frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(5.0)
+        assert kwargs["offset"] == pytest.approx(1.5)
+
+    def test_missing_amplitude_and_offset_default_to_1v_and_0v(self):
+        """Terminal CLI callers whose params dict has no amplitude/offset keys yet."""
+        run_experiment.run_pipeline("1", "1", _default_params())
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["amplitude"] == pytest.approx(1.0)
+        assert kwargs["offset"] == pytest.approx(0.0)
+
+
+# ===========================================================================
 # run_pipeline() — stop_check propagation
 # ===========================================================================
 # run_experiment_gui.py's SweepWorker passes its own stop_check through

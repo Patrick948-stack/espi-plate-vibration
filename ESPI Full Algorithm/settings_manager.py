@@ -21,6 +21,7 @@ DEFAULT_SETTINGS = {
     "grayscale_backend": "numpy",
     "default_camera_choice": "2",
     "default_camera_index": 0,
+    "default_mode_choice": "1",  # "1"=pair subtraction, "2"=reference subtraction
     "show_gain": False,
     "default_start_freq": 100.0,
     "default_end_freq": 1000.0,
@@ -29,7 +30,41 @@ DEFAULT_SETTINGS = {
     "default_exposure": 0.01,
     "default_gain": 0.0,
     "default_gain_factor": 1.0,
+    "default_amplitude": 1.0,  # Vpp, matches configure_channel()'s own default
+    "default_offset": 0.0,     # Volts, matches configure_channel()'s own default
     "show_saved_image_after_capture": False,
+    "theme": "dark",  # "light" or "dark" — espi_app writes its own choice here
+    "preview_size": "Medium",  # "Small", "Medium", or "Large"
+    # monitor_gui.py's own capture defaults, kept separate from
+    # default_exposure/default_gain/default_gain_factor above (those are
+    # run_experiment_gui's) since monitor mode has always used different
+    # historical defaults (0.06s exposure vs 0.01s, for example) — sharing
+    # one key between the two would silently change one dashboard's
+    # defaults whenever the other's were bridged in.
+    "monitor_default_exposure": 0.06,
+    "monitor_default_gain": 1.0,
+    "monitor_default_gain_factor": 10.0,
+    # "Use Last Settings as Default", mirrored from espi_app's own
+    # persistence.user_last_settings_as_default. When True, monitor_gui.py
+    # and run_experiment_gui.py auto-save whatever was actually used in a
+    # session as the new default (instead of a human typing a default in
+    # manually), and lock their own default-value fields accordingly.
+    "use_last_settings_as_default": False,
+    # Which dashboard last auto-saved its settings while the flag above
+    # was True — "monitor", "scan", or None if neither has yet. Lets
+    # espi_app's own Hardware tab show the actual last-used values instead
+    # of a stale, frozen number.
+    "last_used_dashboard": None,
+}
+
+# Preview/dashboard window starting size, keyed by the same "Small",
+# "Medium", "Large" labels espi_app's Settings dialog shows. The single
+# source of truth for what each label means in pixels — espi_app imports
+# this dict rather than keeping its own separate copy.
+PREVIEW_SIZES = {
+    "Small": (640, 480),
+    "Medium": (1024, 768),
+    "Large": (1920, 1080),
 }
 
 

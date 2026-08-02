@@ -175,7 +175,7 @@ class TestReferenceFrequencySweepAVValidation:
 FAKE_FRAME  = np.zeros((50, 50), dtype=np.uint8)
 SG_SETTINGS = {
     "waveform": "sine", "frequency": 100.0,
-    "amplitude": 1.0,   "offset": 0.0, "channel output": 1,
+    "amplitude": 1.0,   "offset": 0.0,
 }
 
 
@@ -211,6 +211,62 @@ def hw(tmp_path):
          patch.object(cp, "_cleanup"), \
          patch.object(cp, "_print_sweep_summary"):
         yield {"tmp_path": tmp_path}
+
+
+class TestConfigureSignalGenerator:
+    """
+    _configure_signal_generator() is the single choke point both sweep
+    functions use to set up and enable the signal generator. It used to
+    check sg_settings.get("channel output") to decide whether the output
+    turned on. That worked fine while this file imported configure_channel()
+    from the old signal_generator_control.py (which does turn the output on
+    internally and does return that key) -- but sdg_control's own
+    configure_channel() deliberately does neither (configuring a channel and
+    enabling its output are two separate calls there), so this check would
+    have broken the moment this file's imports were migrated to sdg_control.
+    Fixed ahead of that migration by calling turn_on_output() explicitly and
+    checking its own return value instead. Every existing full-sweep test in
+    this file mocks this whole function out
+    (patch.object(cp, "_configure_signal_generator", ...)), so none of them
+    exercise this directly -- these tests call the real thing.
+    """
+
+    def test_passes_amplitude_and_offset_to_configure_channel(self):
+        instr = MagicMock()
+        with patch.object(cp, "configure_channel", return_value=SG_SETTINGS) as mock_cc, \
+             patch.object(cp, "turn_on_output", return_value=1):
+            cp._configure_signal_generator(instr, "sine", 100.0, 3.3, 1, offset=-2.0)
+        _, kwargs = mock_cc.call_args
+        assert kwargs["amplitude"] == pytest.approx(3.3)
+        assert kwargs["offset"] == pytest.approx(-2.0)
+
+    def test_calls_turn_on_output_with_the_right_channel(self):
+        instr = MagicMock()
+        with patch.object(cp, "configure_channel", return_value=SG_SETTINGS), \
+             patch.object(cp, "turn_on_output", return_value=2) as mock_on:
+            cp._configure_signal_generator(instr, "sine", 100.0, 1.0, 2)
+        mock_on.assert_called_once_with(instr, channel=2)
+
+    def test_returns_waveform_on_success(self):
+        instr = MagicMock()
+        with patch.object(cp, "configure_channel", return_value=SG_SETTINGS), \
+             patch.object(cp, "turn_on_output", return_value=1):
+            result = cp._configure_signal_generator(instr, "sine", 100.0, 1.0, 1)
+        assert result == "sine"
+
+    def test_returns_none_when_turn_on_output_fails(self):
+        instr = MagicMock()
+        with patch.object(cp, "configure_channel", return_value=SG_SETTINGS), \
+             patch.object(cp, "turn_on_output", return_value=None):
+            result = cp._configure_signal_generator(instr, "sine", 100.0, 1.0, 1)
+        assert result is None
+
+    def test_returns_none_when_configure_channel_fails(self):
+        instr = MagicMock()
+        with patch.object(cp, "configure_channel", return_value=None), \
+             patch.object(cp, "turn_on_output", return_value=1):
+            result = cp._configure_signal_generator(instr, "sine", 100.0, 1.0, 1)
+        assert result is None
 
 
 class TestFrequencySweepAVMocked:

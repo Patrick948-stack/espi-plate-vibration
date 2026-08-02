@@ -206,6 +206,139 @@ class TestSetupPage:
         assert page.output_dir_edit.text() == "output"
 
 
+class TestAmplitudeOffsetControls:
+    """
+    Signal Generator amplitude/offset controls, matching
+    complete_pipeline.py's own configure_channel() defaults (amplitude=1.0
+    Vpp, offset=0.0 V) and sdg_control/limits.py's hardware clamp ranges
+    (amplitude 0.002-20.0 Vpp, offset a static +/-10.0 V in the GUI --
+    configure_channel() clamps the *actual* legal offset dynamically based
+    on amplitude via clamp_offset(), so the spinbox itself only needs a
+    generous static bound, not a moving target tied to amplitude_spin).
+    """
+
+    def test_amplitude_spinbox_exists_with_default_and_range(self, qtbot):
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert hasattr(page, "amplitude_spin")
+        assert page.amplitude_spin.value() == pytest.approx(1.0)
+        assert page.amplitude_spin.minimum() == pytest.approx(0.002)
+        assert page.amplitude_spin.maximum() == pytest.approx(20.0)
+
+    def test_offset_spinbox_exists_with_default_and_range(self, qtbot):
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert hasattr(page, "offset_spin")
+        assert page.offset_spin.value() == pytest.approx(0.0)
+        assert page.offset_spin.minimum() == pytest.approx(-10.0)
+        assert page.offset_spin.maximum() == pytest.approx(10.0)
+
+    def test_get_params_includes_amplitude_and_offset(self, qtbot):
+        page = SetupPage()
+        qtbot.addWidget(page)
+        page.amplitude_spin.setValue(2.5)
+        page.offset_spin.setValue(1.0)
+        params = page.get_params()
+        assert params["amplitude"] == pytest.approx(2.5)
+        assert params["offset"] == pytest.approx(1.0)
+
+    def test_reload_settings_updates_amplitude_and_offset(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "default_amplitude": 3.3,
+            "default_offset": -2.0,
+        })
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert page.amplitude_spin.value() == pytest.approx(3.3)
+        assert page.offset_spin.value() == pytest.approx(-2.0)
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "default_amplitude": 4.4,
+            "default_offset": 3.0,
+        })
+        page.reload_settings()
+        assert page.amplitude_spin.value() == pytest.approx(4.4)
+        assert page.offset_spin.value() == pytest.approx(3.0)
+
+
+class TestSetupPageLockedByUseLastSettingsAsDefault:
+    """
+    While "Use Last Settings as Default" is on (set from espi_app's
+    Settings dialog, bridged into this shared settings file), camera,
+    mode, frequency sweep, and capture fields are auto-managed from
+    whatever was actually last used to start a Preview or Sweep — not
+    something to type in by hand — so those fields are disabled.
+    output_dir is not a tracked default and stays editable either way.
+    """
+
+    def test_fields_enabled_when_flag_is_off(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": False,
+        })
+
+        page = SetupPage()
+        qtbot.addWidget(page)
+
+        assert page._camera_radios["2"].isEnabled() is True
+        assert page._mode_radios["1"].isEnabled() is True
+        assert page.start_freq_spin.isEnabled() is True
+        assert page.end_freq_spin.isEnabled() is True
+        assert page.step_spin.isEnabled() is True
+        assert page.n_averages_spin.isEnabled() is True
+        assert page.exposure_spin.isEnabled() is True
+        assert page.gain_spin.isEnabled() is True
+        assert page.gain_factor_spin.isEnabled() is True
+        assert page.amplitude_spin.isEnabled() is True
+        assert page.offset_spin.isEnabled() is True
+        assert page.output_dir_edit.isEnabled() is True
+
+    def test_fields_disabled_when_flag_is_on(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+
+        page = SetupPage()
+        qtbot.addWidget(page)
+
+        for choice in ("1", "2", "3"):
+            assert page._camera_radios[choice].isEnabled() is False
+        for choice in ("1", "2"):
+            assert page._mode_radios[choice].isEnabled() is False
+        assert page.start_freq_spin.isEnabled() is False
+        assert page.end_freq_spin.isEnabled() is False
+        assert page.step_spin.isEnabled() is False
+        assert page.n_averages_spin.isEnabled() is False
+        assert page.exposure_spin.isEnabled() is False
+        assert page.gain_spin.isEnabled() is False
+        assert page.gain_factor_spin.isEnabled() is False
+        assert page.amplitude_spin.isEnabled() is False
+        assert page.offset_spin.isEnabled() is False
+        # Not a tracked default — always stays editable.
+        assert page.output_dir_edit.isEnabled() is True
+
+    def test_reload_settings_reapplies_lock_state(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": False,
+        })
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert page.exposure_spin.isEnabled() is True
+
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+        page.reload_settings()
+
+        assert page.exposure_spin.isEnabled() is False
+        assert page._camera_radios["2"].isEnabled() is False
+
+
 class TestSetupPageGainVisibility:
     """
     Regression tests for the reported bug: "Gain (dB) control shows in
@@ -1442,4 +1575,87 @@ class TestMainWindow:
         event.ignore.assert_called_once()
         event.accept.assert_not_called()
         assert window.preview_page.is_running() is True
+
+
+# ===========================================================================
+# Auto-save "last used settings" as the new default (gated by
+# use_last_settings_as_default, bridged from espi_app). Previously,
+# _start_preview/_start_sweep_stage always overwrote the saved defaults
+# unconditionally, with no toggle at all — now gated, and only through
+# _save_last_used_settings_if_enabled() rather than duplicated inline in
+# both methods.
+# ===========================================================================
+
+class TestSaveLastUsedSettingsIfEnabled:
+    """
+    Tests MainWindow._save_last_used_settings_if_enabled() directly rather
+    than through _start_preview()/_start_sweep_stage(): those methods go
+    on to start a real CameraPreviewWorker/SweepWorker QThread, which ties
+    tests to this environment's pre-existing QThread start/stop issues
+    (see the "Fix hanging worker-stop tests" follow-up task) — issues that
+    have nothing to do with the settings-saving logic being tested here.
+    """
+
+    def test_saves_defaults_and_last_used_dashboard_when_flag_is_on(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.setup_page._camera_radios["1"].setChecked(True)
+        window.setup_page._mode_radios["2"].setChecked(True)
+        window.setup_page.start_freq_spin.setValue(200.0)
+
+        window._save_last_used_settings_if_enabled(
+            window.setup_page.camera_choice(),
+            window.setup_page.get_params(),
+            mode_choice=window.setup_page.mode_choice(),
+        )
+
+        saved = settings_manager.load_settings()
+        assert saved["default_camera_choice"] == "1"
+        assert saved["default_mode_choice"] == "2"
+        assert saved["default_start_freq"] == pytest.approx(200.0)
+        assert saved["last_used_dashboard"] == "scan"
+
+    def test_does_not_save_defaults_when_flag_is_off(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": False,
+            "default_start_freq": 100.0,
+        })
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.setup_page.start_freq_spin.setValue(200.0)
+
+        window._save_last_used_settings_if_enabled(
+            window.setup_page.camera_choice(),
+            window.setup_page.get_params(),
+            mode_choice=window.setup_page.mode_choice(),
+        )
+
+        saved = settings_manager.load_settings()
+        assert saved["default_start_freq"] == pytest.approx(100.0)
+        assert saved.get("last_used_dashboard") != "scan"
+
+    def test_extra_keys_are_merged_in_when_provided(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "use_last_settings_as_default": True,
+        })
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+
+        window._save_last_used_settings_if_enabled(
+            window.setup_page.camera_choice(),
+            window.setup_page.get_params(),
+            extra={"grayscale_method": "single_channel"},
+        )
+
+        saved = settings_manager.load_settings()
+        assert saved["grayscale_method"] == "single_channel"
         window.preview_page.stop_and_wait()

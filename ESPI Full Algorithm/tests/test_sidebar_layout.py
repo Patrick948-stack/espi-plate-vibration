@@ -796,7 +796,7 @@ def _assert_bright_not_grey(name, color):
     assert diff < tolerance, (
         f"{name} icon color is {color.name()}, expected close to "
         f"{expected.name()} (bright, not grey or black).\n"
-        f"Fix: pass color=QColor(_TEXT_PRIMARY) when building this icon "
+        f"Fix: pass color=QColor(theme.icon_color(theme_name)) when building this icon "
         f"with qta.icon()."
     )
 
@@ -838,8 +838,9 @@ def test_I13_selected_row_style_covers_inactive_window_state(main_window):
     clicking into it on a real desktop, even though the item WAS correctly
     selected according to Qt's own selection model the whole time.
     """
-    stylesheet = mg._STYLESHEET if hasattr(mg, "_STYLESHEET") else None
-    assert stylesheet is not None, "Could not find _STYLESHEET to inspect"
+    # The stylesheet now lives in theme.py (shared with run_experiment_gui.py
+    # and espi_app), not a module-level _STYLESHEET constant in monitor_gui.py.
+    stylesheet = mg.theme.build_stylesheet("dark")
     assert "NavRail::item:selected" in stylesheet
     assert ":!active" in stylesheet, (
         "QListWidget#NavRail's selected-item style has no :!active rule, "

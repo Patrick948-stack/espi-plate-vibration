@@ -51,6 +51,8 @@ After the sweep, the program opens an image viewer that shows your results one f
 
 Prefer clicking over typing in a terminal? `run_experiment_gui.py` runs the exact same experiment as a PyQt6 dashboard — Setup, Preview, Sweep, and Results all in one window, with a real progress bar and a Stop button for the sweep. `monitor_gui.py` is the equivalent dashboard for just watching the live camera feed and frame subtraction, without running a full frequency sweep. Both are documented in detail, screenshots included, in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md).
 
+Don't want to remember which script does what? `espi_app/` is a single landing page that opens either dashboard from one place — Monitor Mode and Scan Mode buttons, plus Settings and Help. Run it with `python -m espi_app.main`. See [espi_app/README.md](espi_app/README.md) for details.
+
 <p align="center">
   <img src="ESPI%20Full%20Algorithm/screenshots/run_experiment_gui_setup.png" width="49%" alt="run_experiment_gui.py Setup page">
   <img src="ESPI%20Full%20Algorithm/screenshots/run_experiment_gui_sweep.png" width="49%" alt="run_experiment_gui.py Sweep page with a running sweep and Stop Sweep visible">
@@ -146,13 +148,13 @@ Physics Research/
 │   ├── camera_control_inclusive.py   ← camera functions — any USB camera
 │   ├── camera_control_allied_vision.py  ← camera functions — Allied Vision
 │   │
-│   ├── signal_generator_control.py   ← talks to the Siglent signal generator
+│   ├── sdg_control/                  ← talks to the Siglent signal generator (modular package)
 │   │
 │   ├── capture_and_display.py        ← quick preview script — Basler
 │   ├── capture_and_display_cv2.py    ← quick preview script — USB cameras
 │   ├── capture_and_display_allied.py ← quick preview script — Allied Vision
 │   │
-│   ├── tests/                        ← automated tests (435 tests, no hardware needed)
+│   ├── tests/                        ← automated tests (1000 tests, no hardware needed)
 │   │   ├── conftest.py
 │   │   ├── test_camera_control.py
 │   │   ├── test_camera_control_inclusive.py
@@ -161,16 +163,30 @@ Physics Research/
 │   │   ├── test_complete_pipeline_inclusive.py
 │   │   ├── test_complete_pipeline_allied_vision.py
 │   │   ├── test_run_experiment.py
-│   │   └── test_signal_generator_control.py
+│   │   └── test_sdg_control.py
 │   │
 │   ├── README.md                     ← detailed guide for this folder
 │   └── README_camera_control.md      ← guide for the camera library files
 │
-├── image_processing/                 ← standalone image subtraction demo
-└── learn_testing/                    ← scratch space used while learning pytest
+├── espi_app/                          ← unified landing page GUI (Monitor + Scan in one window)
+│   ├── main.py                        ← entry point: python -m espi_app.main
+│   ├── main_window.py                 ← LandingPage, launches Monitor/Scan dashboards
+│   ├── settings.py                    ← SettingsManager (~/.espi_app/settings.json)
+│   ├── settings_dialog.py             ← Settings window
+│   ├── styles.py                      ← light/dark theme stylesheets
+│   ├── tests/                         ← pytest-qt regression tests
+│   └── README.md                      ← guide for this folder
+│
+└── Learning/                          ← everything not load-bearing for the two GUIs above
+    ├── image_processing/              ← standalone image subtraction demo
+    ├── learn_testing/                 ← scratch space used while learning pytest
+    ├── camera/                        ← unused standalone camera demo, superseded by ESPI Full Algorithm/camera_control*.py
+    ├── check_basler_formats.py, debug_camera_format.py, diagnose_basler_format.py  ← ad hoc Basler debugging scripts
+    ├── DIAGNOSIS_AND_SOLUTION.md, SWEEP_TUPLE_BUG_AND_FIX.md  ← historical bug postmortems
+    └── graph.py, graph2.py            ← scratch graphing scripts
 ```
 
-Everything useful is inside `ESPI Full Algorithm/`. The other folders are earlier experiments or learning exercises.
+The working code lives in `ESPI Full Algorithm/` and `espi_app/`. Everything under `Learning/` is an earlier experiment, learning exercise, or ad hoc debugging script — none of it is imported by, or required to run, `run_experiment_gui.py`, `monitor_gui.py`, or espi_app's landing page.
 
 
 ## Key files
@@ -184,11 +200,11 @@ There is one pipeline file per camera type. Each one handles connecting the came
 **`camera_control_*.py`**
 Lower-level camera libraries. The pipeline files use these, but you can also call them directly in your own scripts if you want to do something custom. Full guide: [README_camera_control.md](ESPI%20Full%20Algorithm/README_camera_control.md)
 
-**`signal_generator_control.py`**
-Talks to the Siglent SDG signal generator over USB. Handles connecting, setting frequency and waveform, turning output on and off, and closing the connection cleanly.
+**`sdg_control/`**
+Talks to the Siglent SDG signal generator over USB. Handles connecting, setting frequency and waveform, turning output on and off, and closing the connection cleanly. A modular package (`connections.py`, `status.py`, `output.py`, `waveform.py`, `limits.py`, `constants.py`, `errors.py`) — see [sdg_control/README.md](ESPI%20Full%20Algorithm/sdg_control/README.md).
 
 **`tests/`**
-435 automated tests covering every function in every file. None of them require a real camera or signal generator — all hardware is replaced with fakes during testing. To run them:
+1000 automated tests covering every function in every file. None of them require a real camera or signal generator — all hardware is replaced with fakes during testing. To run them:
 
 ```bash
 cd "ESPI Full Algorithm"
