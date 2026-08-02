@@ -305,7 +305,7 @@ This prints which VISA backend was used, how long it took to find the device, an
 
 Download and install the free NI-VISA runtime from National Instruments (ni.com). It installs its own driver and its own VISA backend.
 
-Note: on Windows, this project's `get_resource_manager()` (used everywhere, through `discover_instruments()` and `open_connection()`) tries the OS's native VISA backend first — which only works if NI-VISA (or another VISA runtime) is installed — and falls back to `@py` if that fails to start. On at least one earlier development machine, NI-VISA didn't fail to start; it started fine but reported the signal generator under the wrong resource address (a serial/ASRL address instead of its real USB address), which made every command time out silently instead of raising an error. That specific failure is now handled too: `discover_instruments()` checks whether anything in the list of found resources actually looks like a USB instrument (its address starts with `USB`); if the native backend didn't report one, it doesn't trust that result and rescans with `@py` instead. You should not need to force `@py` by hand anymore. If you still see slow or timed-out commands after installing NI-VISA, please open an issue — that would mean this check needs revisiting. Mac and Linux are unaffected either way — they always use `@py`.
+Note: on Windows, this project's `get_resource_manager()` (used everywhere, through `discover_instruments()` and `open_connection()`) tries the OS's native VISA backend first, which only works if NI-VISA (or another VISA runtime) is installed, and falls back to `@py` if that fails to start. On at least one earlier development machine, NI-VISA didn't fail to start; it started fine but reported the signal generator under the wrong resource address (a serial/ASRL address instead of its real USB address), which made every command time out silently instead of raising an error. That specific failure is now handled too: `discover_instruments()` checks whether anything in the list of found resources actually looks like a USB instrument (its address starts with `USB`); if the native backend didn't report one, it doesn't trust that result and rescans with `@py` instead. You should not need to force `@py` by hand anymore. If you still see slow or timed-out commands after installing NI-VISA, please open an issue: that would mean this check needs revisiting. Mac and Linux are unaffected either way: they always use `@py`.
 
 Zadig remains the simpler default choice for this project if you don't already need NI-VISA for another instrument: it is a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux.
 
@@ -411,7 +411,7 @@ The program will ask you which camera you are using, which subtraction mode you 
 
 ### Graphical version (`run_experiment_gui.py`)
 
-Prefer clicking over typing in a terminal? `run_experiment_gui.py` is a PyQt6 dashboard covering the exact same four stages as `run_experiment.py` — Setup, Preview, Sweep, Results — as one window with a left-hand navigation rail, instead of typed terminal questions and separate popup windows.
+Prefer clicking over typing in a terminal? `run_experiment_gui.py` is a PyQt6 dashboard covering the exact same four stages as `run_experiment.py` (Setup, Preview, Sweep, Results) as one window with a left-hand navigation rail, instead of typed terminal questions and separate popup windows.
 
 ```
 python run_experiment_gui.py
@@ -425,15 +425,15 @@ python run_experiment_gui.py
   <img src="screenshots/run_experiment_gui_results.png" width="70%" alt="run_experiment_gui.py Results page showing the sweep results grid">
 </p>
 
-**Setup** — camera, subtraction mode, and every sweep parameter (frequency range, frames per frequency, exposure, gain, gain_factor, signal generator amplitude and DC offset, output folder) on one page, arranged as five cards. Amplitude and offset reach the signal generator through the same `configure_channel()` call used everywhere else in this project — the hardware clamps them to safe ranges (2 mVpp - 20 Vpp for amplitude, +/-10V minus half the amplitude swing for offset) regardless of what is typed here. Click "Continue to Preview" when ready.
+**Setup**: camera, subtraction mode, and every sweep parameter (frequency range, frames per frequency, exposure, gain, gain_factor, signal generator amplitude and DC offset, output folder) on one page, arranged as five cards. Amplitude and offset reach the signal generator through the same `configure_channel()` call used everywhere else in this project: the hardware clamps them to safe ranges (2 mVpp - 20 Vpp for amplitude, +/-10V minus half the amplitude swing for offset) regardless of what is typed here. Click "Continue to Preview" when ready.
 
-**Preview** — the live camera feed embedded directly in the window, using the exact exposure and gain you just set. Click "Lock in settings & continue" once the plate is in frame and focused.
+**Preview**: the live camera feed embedded directly in the window, using the exact exposure and gain you just set. Click "Lock in settings & continue" once the plate is in frame and focused.
 
-**Sweep** — a summary of everything about to run, a real progress bar ("Frequency i of N"), and a live log console showing the sweep's own output as it happens. Click "Start Sweep" to begin, and "Stop Sweep" to end it early — a confirmation dialog explains what happens: the sweep finishes measuring whatever frequency it is currently on, then stops safely, so it never interrupts the camera or signal generator mid-measurement. Whatever frequencies were already measured are still saved and shown on the Results page. Closing the window during a running sweep asks the same question.
+**Sweep**: a summary of everything about to run, a real progress bar ("Frequency i of N"), and a live log console showing the sweep's own output as it happens. Click "Start Sweep" to begin, and "Stop Sweep" to end it early. A confirmation dialog explains what happens: the sweep finishes measuring whatever frequency it is currently on, then stops safely, so it never interrupts the camera or signal generator mid-measurement. Whatever frequencies were already measured are still saved and shown on the Results page. Closing the window during a running sweep asks the same question.
 
-**Results** — the same results grid `run_experiment.py`'s terminal viewer saves to disk, embedded in the window, plus a single-image view with Previous/Next buttons and arrow-key navigation. "Open output folder" jumps straight to your saved images, and "Run another sweep" returns to Setup with your previous settings still filled in.
+**Results**: the same results grid `run_experiment.py`'s terminal viewer saves to disk, embedded in the window, plus a single-image view with Previous/Next buttons and arrow-key navigation. "Open output folder" jumps straight to your saved images, and "Run another sweep" returns to Setup with your previous settings still filled in.
 
-It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, camera choice, or sweep parameter — and the entire sweep itself — comes straight from `run_experiment.py` and `complete_pipeline*.py`, so the two entry points can never give you a different result for the same settings.
+It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, camera choice, or sweep parameter, and the entire sweep itself, comes straight from `run_experiment.py` and `complete_pipeline*.py`, so the two entry points can never give you a different result for the same settings.
 
 ## Running an experiment (quick reference for returning users)
 
@@ -497,9 +497,9 @@ python monitor_gui.py
   <img src="screenshots/monitor_gui_live_monitor.png" width="49%" alt="monitor_gui.py Live Monitor page showing Live Feed and Frame Subtraction">
 </p>
 
-**Setup page** — the same hardware settings as `monitor.py` (camera + index, exposure, gain, gain_factor), collected as radio buttons and spin boxes instead of typed answers, with a live-updating summary. Click "Start Monitor" to switch to the Live Monitor page.
+**Setup page**: the same hardware settings as `monitor.py` (camera + index, exposure, gain, gain_factor), collected as radio buttons and spin boxes instead of typed answers, with a live-updating summary. Click "Start Monitor" to switch to the Live Monitor page.
 
-**Settings page** (accessible via gear icon at bottom of nav) — configure processing strategy without stopping the live monitor:
+**Settings page** (accessible via gear icon at bottom of nav): configure processing strategy without stopping the live monitor:
 - **Grayscale conversion method**: Choose between Standard Full-RGB grayscale (default) or Single-Channel Extraction (extract one color channel: Red, Green, or Blue). When Single-Channel is selected, pick an algorithm backend: NumPy slicing (fastest, default), Pillow Image library, or OpenCV channel splitting (cv2.split). All three backends return identical channel intensities; they differ only in which library performs the split.
 - **Frame averaging method**: "Average of differences" (less noisy differences) or "Difference of averages" (classic approach).
 - **Intensity graph type**: Histogram, Log Histogram (LabVIEW style), 3D surface, or None (no graph, fastest).
@@ -507,9 +507,9 @@ python monitor_gui.py
 
 Each of the four groups above has its own **Learn More** button that opens a plain language explanation of every option in that group (what it does and the reasoning behind it), for anyone unfamiliar with terms like CLAHE or gamma correction. This is separate from the short one line tooltip already on each radio button.
 
-**Live Monitor page** — Live Feed and Frame Subtraction side by side, plus the chosen intensity graph beneath them if you picked one, all updating live. A "Compare Amplification Methods" button (enabled once the first diff frame is available) opens a popup showing every amplification method run on the same diff frame side by side, with processing time and a contrast number for each, so you can pick a method by comparing results instead of restarting the monitor five times. A "Compare Grayscale Methods" button (enabled once the first frame is available) does the same for Standard Full-RGB versus all three single-channel backends, using whichever color channel is currently selected in Settings, with processing time and average brightness for each. Click "Stop Monitor" to end the session and return to Setup; closing the window while a session is running asks you to confirm first.
+**Live Monitor page**: Live Feed and Frame Subtraction side by side, plus the chosen intensity graph beneath them if you picked one, all updating live. A "Compare Amplification Methods" button (enabled once the first diff frame is available) opens a popup showing every amplification method run on the same diff frame side by side, with processing time and a contrast number for each, so you can pick a method by comparing results instead of restarting the monitor five times. A "Compare Grayscale Methods" button (enabled once the first frame is available) does the same for Standard Full-RGB versus all three single-channel backends, using whichever color channel is currently selected in Settings, with processing time and average brightness for each. Click "Stop Monitor" to end the session and return to Setup; closing the window while a session is running asks you to confirm first.
 
-It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, gain_factor, camera choice, or graph type comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices — this dashboard only composes the same lower-level camera functions (`camera_control*.py`) and graph classes (`live_graphs.py`) that `monitor.py` and `capture_and_display*.py` are themselves built from, wired to Qt widgets instead of terminal prompts and OpenCV/matplotlib windows.
+It requires PyQt6 and matplotlib (`pip install -r requirements.txt` already covers both). Every rule about what counts as a valid exposure, gain_factor, camera choice, or graph type comes straight from `monitor.py`, so the two entry points can never give you a different answer for the same choices: this dashboard only composes the same lower-level camera functions (`camera_control*.py`) and graph classes (`live_graphs.py`) that `monitor.py` and `capture_and_display*.py` are themselves built from, wired to Qt widgets instead of terminal prompts and OpenCV/matplotlib windows.
 
 ## Live pixel intensity graph
 
@@ -641,19 +641,19 @@ All three functions also accept a `skip_live_feed=True` argument if you want to 
 
 ## The signal generator
 
-`sdg_control/` handles talking to a Siglent SDG signal generator over USB — a modular package (`connections.py`, `status.py`, `output.py`, `waveform.py`, `limits.py`, `constants.py`, `errors.py`), replacing what used to be one monolithic `signal_generator_control.py` file.
+`sdg_control/` handles talking to a Siglent SDG signal generator over USB: a modular package (`connections.py`, `status.py`, `output.py`, `waveform.py`, `limits.py`, `constants.py`, `errors.py`), replacing what used to be one monolithic `signal_generator_control.py` file.
 
 | Function | What it does |
 |---|---|
 | `open_connection()` | Finds and connects to the signal generator |
 | `get_identity(instr)` | Returns the device name and serial number |
-| `configure_channel(instr, waveform, frequency, amplitude, offset, channel)` | Sets waveform, frequency, amplitude, and offset — does **not** turn the output on itself |
-| `turn_on_output(instr, channel)` | Turns the output on — always call this after `configure_channel()` |
+| `configure_channel(instr, waveform, frequency, amplitude, offset, channel)` | Sets waveform, frequency, amplitude, and offset: does **not** turn the output on itself |
+| `turn_on_output(instr, channel)` | Turns the output on: always call this after `configure_channel()` |
 | `set_frequency(instr, freq, channel, waveform)` | Changes frequency during a sweep |
 | `turn_off_output(instr, channel)` | Turns the output off |
 | `close_connection(instr)` | Closes the connection cleanly |
 
-Every function above accepts `instr=None` and a bad/disconnected instrument gracefully — it prints a specific, actionable message (including Windows-specific Zadig driver hints where relevant) and returns `None` instead of crashing with a raw `AttributeError` or `pyvisa.VisaIOError`.
+Every function above accepts `instr=None` and a bad/disconnected instrument gracefully: it prints a specific, actionable message (including Windows-specific Zadig driver hints where relevant) and returns `None` instead of crashing with a raw `AttributeError` or `pyvisa.VisaIOError`.
 
 If you ask for a frequency outside the instrument's allowed range for a given waveform, the value gets clamped automatically to the nearest allowed value, and a warning is printed so you know it happened.
 
@@ -716,6 +716,120 @@ python -m pytest tests/ -v
 | `test_capture_and_display.py` | Basler live preview script |
 | `test_capture_and_display_cv2.py` | USB or OpenCV live preview script |
 | `test_capture_and_display_allied.py` | Allied Vision live preview script |
+
+## What a Successful Setup Looks Like
+
+This project does not currently ship screenshots of the terminal itself
+(only of the GUIs, throughout this file), so this section shows real,
+copy-checked terminal output instead, captured on Mac. Windows output
+looks the same except for the prompt style and the `python` versus
+`python3` command name noted throughout this guide.
+
+**Stage 1, Python version check:**
+
+```
+$ python3 --version
+Python 3.14.6
+```
+
+Any `Python 3.10.x` or newer satisfies Stage 1's check; the exact
+version number on your machine will likely differ from the one above.
+
+**Stage 5, after activating the virtual environment:**
+
+```
+$ source venv_physics/bin/activate
+(venv_physics) $
+```
+
+The important part is the `(venv_physics)` that now appears at the very
+start of the line, before your username or prompt symbol. Windows shows
+the same prefix in Command Prompt or PowerShell after running
+`venv_physics\Scripts\activate`.
+
+**Stage 7, after the test suite finishes:**
+
+```
+$ python -m pytest tests/ -v
+...
+======================= 947 passed, 21 skipped in 23.44s =======================
+```
+
+The exact numbers on your machine may differ slightly from the example
+above as the project grows, and that is expected; what matters is that
+the line says `passed` with zero `failed`, and that it appears at all
+(if the run never reaches a summary line, see "Common Issues" below).
+Skipped tests are normal too. They mark checks that only apply to a
+camera type or platform you do not have.
+
+## Common Issues
+
+This section reflects behavior actually observed while preparing this
+README, not a generic guess.
+
+**The test suite reaches about 80 to 90 percent and then never finishes**
+
+A small number of tests in `tests/test_run_experiment_gui.py`, inside
+`TestMainWindow`, simulate a full Setup to Results flow or a window
+close while a sweep or preview is still "running" (with the camera and
+signal generator faked out). On at least one machine with a real
+display attached, these tests can hang indefinitely instead of passing
+or failing, most likely because a `QMessageBox` confirmation dialog or
+a worker thread's stop-and-join does not behave identically with a real
+window server compared to how it behaves in CI. This did not happen for
+every test in that class, only a handful, and it did not affect any
+other test file.
+
+If a test run seems stuck for more than a minute or two with no new
+output, press Ctrl+C, then re-run with the platform forced to a
+headless backend, which is unaffected:
+
+Mac and Linux:
+```
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
+```
+
+Windows (PowerShell):
+```
+$env:QT_QPA_PLATFORM = "offscreen"
+python -m pytest tests/ -v
+```
+
+If it still hangs on the same test name under `offscreen`, that specific
+test can be skipped with `--deselect path/to/test_file.py::ClassName::test_name`
+so you can keep working while it gets investigated; the rest of the
+suite is unaffected.
+
+**"ModuleNotFoundError" during the test run itself, not during setup**
+
+This almost always means Stage 6's `pip install -r requirements.txt`
+did not fully complete, or you are running `pytest` with a different
+Python than the one `venv_physics` created (for example, a system wide
+`pytest` command instead of the one inside your activated environment).
+Re-check Stage 5's `(venv_physics)` prompt prefix, then re-run Stage 6.
+
+**A camera specific test file fails to even collect (an `ImportError` before any test runs)**
+
+This means that camera's SDK is not installed in this environment, most
+often `pypylon` for the Basler tests. This is expected if you have not
+done Stage 8 for that camera yet, and does not affect the other camera's
+tests, since each `test_camera_control*.py` file only imports the one
+SDK it needs. You do not need every camera's SDK installed to work on
+this project. Only install the one for the hardware you actually have.
+
+## Report Bugs
+
+If you find a bug that is not covered above, please report it:
+
+1. Go to the project's page on GitHub.
+2. Click "Issues" at the top.
+3. Click "New Issue".
+4. Describe what you were doing, what you expected, and what happened
+   instead. Paste the exact error message or terminal output if you
+   have one.
+
+Please do not include personal email addresses in an issue; GitHub
+Issues is the right place for all bug reports on this project.
 
 Patrick Mulikuza
 Professor Hoffman's Lab, Whitman College

@@ -1,16 +1,48 @@
-# sdg_control — Siglent SDG1015 Signal Generator Control
+# sdg_control: Siglent SDG1015 Signal Generator Control
+
+## New to Signal Generators?
+
+A signal generator is an instrument that outputs an electrical signal,
+a sine wave, square wave, or similar shape, at whatever frequency and
+voltage you tell it to. In this project, the signal generator drives a
+speaker that vibrates the plate being studied. Stepping the frequency up
+in small increments and photographing the plate's speckle pattern at
+each step is what a frequency sweep actually is.
+
+The instrument in this lab is a Siglent SDG1015, and it is controlled
+over USB using a standard called VISA (Virtual Instrument Software
+Architecture), a common way for lab equipment from many manufacturers to
+talk to a computer using the same underlying commands. `sdg_control` is
+the Python code that speaks that language for you: connect to the
+instrument, set a waveform and frequency, turn the output on and off,
+and disconnect. You never have to write a raw VISA command yourself.
 
 ## Overview
 
 This package provides a clean, modular Python interface to the Siglent
 SDG1015 function generator. It handles connection management, waveform
-control, safety clamping, and error handling — everything needed to run
+control, safety clamping, and error handling: everything needed to run
 frequency sweeps or other automated measurements.
 
 It replaces what used to be one monolithic `signal_generator_control.py`
 file, split into focused modules with matching error-handling behavior
 (graceful `None`-instrument handling, translated VISA error messages,
 Windows Zadig driver hints) so nothing was lost in the split.
+
+## Tech Stack
+
+**Language:** Python 3.10 or newer.
+
+**Core library:** PyVISA, the Python wrapper around the VISA standard
+mentioned above, with `pyvisa-py` as the pure Python backend that talks
+to the instrument's USB interface directly (no separate VISA driver
+install required on Mac or Linux).
+
+**Why these matter:** VISA is an industry standard, not something
+specific to Siglent, so the same PyVISA-based approach in this package
+would also work for many other brands of lab instrument with only small
+changes. Sticking to a standard interface instead of writing raw USB
+code means this package stays short and readable.
 
 ## Quick Start
 
@@ -59,50 +91,75 @@ turn_off_output(instr, channel=1)
 close_connection(instr)
 ```
 
+### Connecting After an Instrument Restart
+
+Signal generators do not remember any settings from `configure_channel()`
+or `set_frequency()` across a power cycle (see Notes below), so after
+unplugging the instrument, or turning it off and back on, just open a
+fresh connection and configure it again from scratch. There is no
+special "reconnect" call, `open_connection()` always does a full scan:
+
+```python
+from sdg_control import open_connection, configure_channel, turn_on_output, close_connection
+
+instr = open_connection(index=0)
+if instr is None:
+    print("Still not found. Check the USB cable and that the instrument is powered on.")
+    exit(1)
+
+# Every setting from before the restart is gone, so configure again:
+configure_channel(instr, waveform="sine", frequency=1000, amplitude=1.0)
+turn_on_output(instr, channel=1)
+
+# ... continue the experiment ...
+
+close_connection(instr)
+```
+
 ## Module Organization
 
 ### connections.py
 Connection management: discovering, opening, and closing VISA sessions.
 
-* `get_resource_manager()` — Create a PyVISA resource manager, choosing
+* `get_resource_manager()`: Create a PyVISA resource manager, choosing
   the right backend for the OS (falls back to `@py` on Windows if the
   native VISA backend fails to start)
-* `discover_instruments()` — Scan for instruments, retrying with `@py`
+* `discover_instruments()`: Scan for instruments, retrying with `@py`
   if the native backend reported no USB-looking resource
-* `find_instruments(rm)` — List every VISA-visible instrument
-* `connect_instrument(rm, instrs, index)` — Open a session with one
+* `find_instruments(rm)`: List every VISA-visible instrument
+* `connect_instrument(rm, instrs, index)`: Open a session with one
   instrument from the list
-* `open_connection(index)` — One-call convenience wrapper: discover, then
+* `open_connection(index)`: One-call convenience wrapper: discover, then
   connect
-* `close_connection(instr)` — Close the session cleanly
+* `close_connection(instr)`: Close the session cleanly
 
 ### status.py
-Read-only queries — never change instrument settings.
+Read-only queries: never change instrument settings.
 
-* `get_identity(instr)` — Query `*IDN?`
-* `get_output_status(instr, channel)` — Raw ON/OFF status string
-* `get_wave_status(instr, channel)` — Full waveform-settings string
+* `get_identity(instr)`: Query `*IDN?`
+* `get_output_status(instr, channel)`: Raw ON/OFF status string
+* `get_wave_status(instr, channel)`: Full waveform-settings string
 
 ### output.py
 Turn the physical output relay on and off.
 
-* `turn_on_output(instr, channel)` — Enable output. Returns the channel
+* `turn_on_output(instr, channel)`: Enable output. Returns the channel
   number on success, `None` on failure.
-* `turn_off_output(instr, channel)` — Disable output. Same return
+* `turn_off_output(instr, channel)`: Disable output. Same return
   convention.
 
 ### waveform.py
 Set waveform type, frequency, amplitude, and offset.
 
-* `set_waveform(instr, waveform, channel)` — Change waveform type
-* `set_frequency(instr, frequency, channel, waveform)` — Change frequency
+* `set_waveform(instr, waveform, channel)`: Change waveform type
+* `set_frequency(instr, frequency, channel, waveform)`: Change frequency
   (clamped to the waveform's legal range)
-* `set_amplitude(instr, amplitude, channel)` — Change amplitude (clamped
+* `set_amplitude(instr, amplitude, channel)`: Change amplitude (clamped
   to 2 mVpp – 20 Vpp)
-* `set_offset(instr, offset, amplitude, channel)` — Change DC offset
+* `set_offset(instr, offset, amplitude, channel)`: Change DC offset
   (clamped to keep the waveform's peaks within the ±10V rail)
-* `configure_channel(instr, waveform, frequency, amplitude, offset, channel)`
-  — Set all four in one call. **Does not turn the output on** — call
+* `configure_channel(instr, waveform, frequency, amplitude, offset, channel)`:
+  Set all four in one call. **Does not turn the output on**, call
   `turn_on_output()` afterward. This is a deliberate difference from the
   old `signal_generator_control.py`'s `configure_channel()`, which did
   both; here, configuring a channel and enabling its output are kept as
@@ -111,22 +168,22 @@ Set waveform type, frequency, amplitude, and offset.
 ### limits.py
 Hardware safety: automatic clamping of out-of-range values.
 
-* `clamp_frequency(frequency, waveform)` — Snap frequency into the legal
+* `clamp_frequency(frequency, waveform)`: Snap frequency into the legal
   range for the given waveform type (varies: 300 kHz max for ramp, 15 MHz
   for sine/square, etc.)
-* `clamp_amplitude(amplitude)` — Snap amplitude into 2 mVpp – 20 Vpp
-* `clamp_offset(offset, amplitude)` — Snap offset to stay within the
+* `clamp_amplitude(amplitude)`: Snap amplitude into 2 mVpp – 20 Vpp
+* `clamp_offset(offset, amplitude)`: Snap offset to stay within the
   ±10V rail, given the current amplitude (the legal range narrows as
   amplitude grows)
 
 ### errors.py
 Shared error-diagnostics helpers used by every other module.
 
-* `describe_visa_error(e)` — Turn a `pyvisa.VisaIOError` into a specific,
+* `describe_visa_error(e)`: Turn a `pyvisa.VisaIOError` into a specific,
   actionable sentence (e.g. "did not respond in time... unplug and
   replug the USB cable") instead of pyvisa's generic description. Falls
   back to `e.description` for any error code not in the lookup table.
-* `require_instrument(instr, action)` — Returns `True` if `instr` looks
+* `require_instrument(instr, action)`: Returns `True` if `instr` looks
   like an open connection; if `instr` is `None`, prints a specific
   message explaining that `open_connection()` probably returned `None`
   and returns `False`, instead of letting the caller's next line crash
@@ -135,10 +192,10 @@ Shared error-diagnostics helpers used by every other module.
 ### constants.py
 Hardware timing constants.
 
-* `COMMAND_SETTLE_S` (0.2s) — Time to wait after a waveform parameter
+* `COMMAND_SETTLE_S` (0.2s): Time to wait after a waveform parameter
   change before querying to confirm
-* `OUTPUT_SETTLE_S` (0.5s) — Time to wait after toggling output before
-  querying — longer than `COMMAND_SETTLE_S` because a physical relay
+* `OUTPUT_SETTLE_S` (0.5s): Time to wait after toggling output before
+  querying: longer than `COMMAND_SETTLE_S` because a physical relay
   takes longer to settle than an electronic parameter change
 
 ## Common Tasks
@@ -179,7 +236,7 @@ close_connection(instr)
 ### Handle Errors
 
 Every function accepts `instr=None` and communication failures
-gracefully — it prints a `[ERROR]` message explaining what happened and
+gracefully: it prints a `[ERROR]` message explaining what happened and
 returns `None` (or `False` for `require_instrument()`) instead of
 crashing.
 
@@ -216,7 +273,7 @@ else:
 
 ## Notes
 
-* Always call `turn_on_output()` after `configure_channel()` — the
+* Always call `turn_on_output()` after `configure_channel()`: the
   latter does not enable the output itself
 * Always call `close_connection()` when finished, to release the VISA
   session
@@ -224,3 +281,17 @@ else:
   instruments)
 * On Windows, first-time setup requires the Zadig driver (see the
   project root's `README.md`)
+
+## Found a Bug?
+
+If something here does not work the way this README describes, please
+report it on GitHub:
+
+1. Go to the project's page on GitHub.
+2. Click "Issues" at the top.
+3. Click "New Issue".
+4. Describe what you were doing, what you expected, and what happened
+   instead. Paste the exact error message if you have one.
+
+Please use GitHub Issues rather than a personal email; it keeps a
+record other students on this project can search later.

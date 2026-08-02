@@ -40,14 +40,10 @@ function main():
     close_connection(instr)
 ```
 
-## A problem worth flagging
+## History
 
-This script imports everything it needs from the `sdg_control` package.
-As documented in `sdg_control_package.md`, that package currently has a
-broken import (`__init__.py` looks for a file named `connection.py`, but the
-folder actually contains `connections.py`) and an empty `output.py` file
-that is missing the functions `__init__.py` expects to find in it. Because
-of this, running `examples/basic_usage.py` as written will currently fail
-with an import error before it ever reaches the signal generator. The same
-four-step pattern (connect, configure, turn on, turn off, close) works today
-if the functions are imported from `signal_generator_control.py` instead.
+An earlier version of the `sdg_control` package had a broken import
+(`__init__.py` looked for a file named `connection.py`, but the folder
+actually contained `connections.py`) and an empty `output.py` file, so
+this script could not actually run yet. Both were fixed since; see
+`sdg_control.md` for the package as it stands now.

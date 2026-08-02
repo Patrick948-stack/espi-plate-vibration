@@ -1,4 +1,4 @@
-# ESPI Plate Vibration — Whitman College
+# ESPI Plate Vibration: Whitman College
 
 **A Python project for studying how musical instrument soundboards and plates vibrate, built at Professor Hoffman's lab at Whitman College.**
 
@@ -7,16 +7,16 @@ This is an active research project. We are still adding things and fixing things
 
 ## What is this project actually about?
 
-When you play a musical instrument, a wooden plate vibrates — the top plate of a guitar, the soundboard of a piano, or any similar resonating surface. Depending on the frequency of the note, different parts of the plate move — some parts swing back and forth a lot, others barely move at all. The spots that don't move are called nodes, and the full pattern is called a vibrational mode shape.
+When you play a musical instrument, a wooden plate vibrates: the top plate of a guitar, the soundboard of a piano, or any similar resonating surface. Depending on the frequency of the note, different parts of the plate move: some parts swing back and forth a lot, others barely move at all. The spots that don't move are called nodes, and the full pattern is called a vibrational mode shape.
 
 What's interesting is that vibrating plates actually behave very similarly to quantum systems. The same wave equations that describe how an electron moves in a box also describe how a plate vibrates. So studying an instrument's plate is genuinely useful for understanding physics beyond just acoustics.
 
-The technique we use to see these patterns is called ESPI — Electronic Speckle Pattern Interferometry. Here is the short version of how it works:
+The technique we use to see these patterns is called ESPI: Electronic Speckle Pattern Interferometry. Here is the short version of how it works:
 
-1. You shine a laser on the plate. Laser light is special because all its waves are in sync — this creates a grainy texture on the surface called a speckle pattern.
+1. You shine a laser on the plate. Laser light is special because all its waves are in sync: this creates a grainy texture on the surface called a speckle pattern.
 2. You drive a speaker near the plate at a chosen frequency. The plate vibrates.
 3. You take two photos. The parts that moved between the two photos look different. The parts that stayed still look the same.
-4. You subtract the two photos. Where the plate moved, you get bright patches. Where it didn't move, you get black. The result is a fringe pattern — a picture of the vibration.
+4. You subtract the two photos. Where the plate moved, you get bright patches. Where it didn't move, you get black. The result is a fringe pattern: a picture of the vibration.
 
 By stepping through many frequencies and saving a fringe image at each one, you build a full map of how the plate behaves across its acoustic range.
 
@@ -27,9 +27,9 @@ This project is replacing an older LabVIEW setup with open Python code that anyo
 
 Three devices work together:
 
-1. **Signal generator** — sends an electrical signal to a speaker at the chosen frequency
-2. **Speaker** — vibrates the plate without touching it
-3. **Camera** — photographs the speckle pattern on the plate's surface
+1. **Signal generator**: sends an electrical signal to a speaker at the chosen frequency
+2. **Speaker**: vibrates the plate without touching it
+3. **Camera**: photographs the speckle pattern on the plate's surface
 
 The software connects to both the signal generator and the camera, steps through a range of frequencies, and saves an image at each step.
 
@@ -45,13 +45,13 @@ It asks you four questions:
 * What frequency range and camera settings do you want?
 * Does everything look right? Start?
 
-Then it opens a live camera preview so you can aim and focus. After that, you can adjust any settings as many times as you need — the program shows you the live feed again after each change so you can see the effect. When you are happy, you confirm and it runs the sweep.
+Then it opens a live camera preview so you can aim and focus. After that, you can adjust any settings as many times as you need: the program shows you the live feed again after each change so you can see the effect. When you are happy, you confirm and it runs the sweep.
 
 After the sweep, the program opens an image viewer that shows your results one frequency at a time. Use the left and right arrow keys to move between images, and press Escape to close the viewer. A grid image with all frequencies is also saved to your output folder automatically.
 
-Prefer clicking over typing in a terminal? `run_experiment_gui.py` runs the exact same experiment as a PyQt6 dashboard — Setup, Preview, Sweep, and Results all in one window, with a real progress bar and a Stop button for the sweep. `monitor_gui.py` is the equivalent dashboard for just watching the live camera feed and frame subtraction, without running a full frequency sweep. Both are documented in detail, screenshots included, in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md).
+Prefer clicking over typing in a terminal? `run_experiment_gui.py` runs the exact same experiment as a PyQt6 dashboard: Setup, Preview, Sweep, and Results all in one window, with a real progress bar and a Stop button for the sweep. `monitor_gui.py` is the equivalent dashboard for just watching the live camera feed and frame subtraction, without running a full frequency sweep. Both are documented in detail, screenshots included, in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md).
 
-Don't want to remember which script does what? `espi_app/` is a single landing page that opens either dashboard from one place — Monitor Mode and Scan Mode buttons, plus Settings and Help. Run it with `python -m espi_app.main`. See [espi_app/README.md](espi_app/README.md) for details.
+Don't want to remember which script does what? `espi_app/` is a single landing page that opens either dashboard from one place: Monitor Mode and Scan Mode buttons, plus Settings and Help. Run it with `python -m espi_app.main`. See [espi_app/README.md](espi_app/README.md) for details.
 
 <p align="center">
   <img src="ESPI%20Full%20Algorithm/screenshots/run_experiment_gui_setup.png" width="49%" alt="run_experiment_gui.py Setup page">
@@ -62,13 +62,22 @@ Don't want to remember which script does what? `espi_app/` is a single landing p
   <img src="ESPI%20Full%20Algorithm/screenshots/monitor_gui_live_monitor.png" width="49%" alt="monitor_gui.py Live Monitor page showing Live Feed and Frame Subtraction">
 </p>
 
+`espi_app/`'s own landing page, in light and dark mode:
+
+<p align="center">
+  <img src="espi_app/screenshots/landing_page_light.png" width="49%" alt="espi_app landing page, light mode">
+  <img src="espi_app/screenshots/landing_page_dark.png" width="49%" alt="espi_app landing page, dark mode">
+</p>
+
+More screenshots, including the Settings dialog and both dashboards opened from the landing page in both themes, are in [espi_app/README.md](espi_app/README.md).
+
 
 ## Two subtraction modes
 
 | Mode | What it does | When to use it |
 |---|---|---|
 | Pair subtraction | Two frames are grabbed at each frequency and subtracted from each other | High-frequency vibration |
-| Reference subtraction | One frame is captured with the plate at rest — every measurement frame is then compared to that baseline | Low-amplitude or slow vibration |
+| Reference subtraction | One frame is captured with the plate at rest: every measurement frame is then compared to that baseline | Low-amplitude or slow vibration |
 
 
 ## Three supported cameras
@@ -86,13 +95,13 @@ You only need one camera. The program detects which one you chose and handles ev
 
 The full setup guide with Mac and Windows instructions and step-by-step verification is in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md). The short version is below.
 
-**Step 1 — go into the code folder**
+**Step 1: go into the code folder**
 
 ```
 cd "ESPI Full Algorithm"
 ```
 
-**Step 2 — create and activate a virtual environment**
+**Step 2: create and activate a virtual environment**
 
 Mac:
 ```
@@ -106,13 +115,13 @@ python -m venv venv_physics
 venv_physics\Scripts\activate
 ```
 
-**Step 3 — install all packages**
+**Step 3: install all packages**
 
 ```
 pip install -r requirements.txt
 ```
 
-**Step 4 — run the tests to confirm everything works**
+**Step 4: run the tests to confirm everything works**
 
 ```
 python -m pytest tests/ -v
@@ -120,7 +129,7 @@ python -m pytest tests/ -v
 
 All 435 tests should pass. No hardware needed for this step.
 
-**Step 5 — run the experiment**
+**Step 5: run the experiment**
 
 ```
 python run_experiment.py
@@ -140,19 +149,19 @@ Physics Research/
 │   │
 │   ├── run_experiment.py             ← the one file you run to do an experiment
 │   │
-│   ├── complete_pipeline.py          ← sweep logic — Basler camera
-│   ├── complete_pipeline_inclusive.py       ← sweep logic — any USB camera
-│   ├── complete_pipeline_allied_vision.py   ← sweep logic — Allied Vision
+│   ├── complete_pipeline.py          ← sweep logic: Basler camera
+│   ├── complete_pipeline_inclusive.py       ← sweep logic: any USB camera
+│   ├── complete_pipeline_allied_vision.py   ← sweep logic: Allied Vision
 │   │
-│   ├── camera_control.py             ← camera functions — Basler
-│   ├── camera_control_inclusive.py   ← camera functions — any USB camera
-│   ├── camera_control_allied_vision.py  ← camera functions — Allied Vision
+│   ├── camera_control.py             ← camera functions: Basler
+│   ├── camera_control_inclusive.py   ← camera functions: any USB camera
+│   ├── camera_control_allied_vision.py  ← camera functions: Allied Vision
 │   │
 │   ├── sdg_control/                  ← talks to the Siglent signal generator (modular package)
 │   │
-│   ├── capture_and_display.py        ← quick preview script — Basler
-│   ├── capture_and_display_cv2.py    ← quick preview script — USB cameras
-│   ├── capture_and_display_allied.py ← quick preview script — Allied Vision
+│   ├── capture_and_display.py        ← quick preview script: Basler
+│   ├── capture_and_display_cv2.py    ← quick preview script: USB cameras
+│   ├── capture_and_display_allied.py ← quick preview script: Allied Vision
 │   │
 │   ├── tests/                        ← automated tests (1000 tests, no hardware needed)
 │   │   ├── conftest.py
@@ -186,7 +195,7 @@ Physics Research/
     └── graph.py, graph2.py            ← scratch graphing scripts
 ```
 
-The working code lives in `ESPI Full Algorithm/` and `espi_app/`. Everything under `Learning/` is an earlier experiment, learning exercise, or ad hoc debugging script — none of it is imported by, or required to run, `run_experiment_gui.py`, `monitor_gui.py`, or espi_app's landing page.
+The working code lives in `ESPI Full Algorithm/` and `espi_app/`. Everything under `Learning/` is an earlier experiment, learning exercise, or ad hoc debugging script: none of it is imported by, or required to run, `run_experiment_gui.py`, `monitor_gui.py`, or espi_app's landing page.
 
 
 ## Key files
@@ -201,10 +210,10 @@ There is one pipeline file per camera type. Each one handles connecting the came
 Lower-level camera libraries. The pipeline files use these, but you can also call them directly in your own scripts if you want to do something custom. Full guide: [README_camera_control.md](ESPI%20Full%20Algorithm/README_camera_control.md)
 
 **`sdg_control/`**
-Talks to the Siglent SDG signal generator over USB. Handles connecting, setting frequency and waveform, turning output on and off, and closing the connection cleanly. A modular package (`connections.py`, `status.py`, `output.py`, `waveform.py`, `limits.py`, `constants.py`, `errors.py`) — see [sdg_control/README.md](ESPI%20Full%20Algorithm/sdg_control/README.md).
+Talks to the Siglent SDG signal generator over USB. Handles connecting, setting frequency and waveform, turning output on and off, and closing the connection cleanly. A modular package (`connections.py`, `status.py`, `output.py`, `waveform.py`, `limits.py`, `constants.py`, `errors.py`): see [sdg_control/README.md](ESPI%20Full%20Algorithm/sdg_control/README.md).
 
 **`tests/`**
-1000 automated tests covering every function in every file. None of them require a real camera or signal generator — all hardware is replaced with fakes during testing. To run them:
+1000 automated tests covering every function in every file. None of them require a real camera or signal generator: all hardware is replaced with fakes during testing. To run them:
 
 ```bash
 cd "ESPI Full Algorithm"
@@ -228,8 +237,8 @@ Before the signal generator is turned on, the camera captures one photo of the r
 
 The core pipeline works end to end for all three camera types. Things still in progress:
 
-* **Node detection** — functions exist (`detect_nodes`, `has_nodes`) but the logic inside is not written yet
-* **Analysis and classification** — using machine learning to automatically identify mode shapes is planned but not in the code yet
+* **Node detection**: functions exist (`detect_nodes`, `has_nodes`) but the logic inside is not written yet
+* **Analysis and classification**: using machine learning to automatically identify mode shapes is planned but not in the code yet
 
 
 ## Dependencies
@@ -245,7 +254,26 @@ vmbpy            install from wheel            (Allied Vision cameras only)
                  https://github.com/alliedvision/VmbPy
 ```
 
-Standard library modules (`os`, `json`, `math`, `time`, `datetime`) come with Python — nothing to install.
+Standard library modules (`os`, `json`, `math`, `time`, `datetime`) come with Python: nothing to install.
+
+
+## Getting Help
+
+Stuck on something this README does not answer? Start with the guide
+for whichever part of the project you are working in:
+
+* [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md): the full Mac and Windows setup guide, camera and signal generator troubleshooting, and every dashboard explained in detail.
+* [espi_app/README.md](espi_app/README.md): the unified landing page GUI, its own setup steps, and its Troubleshooting section.
+* [ESPI Full Algorithm/sdg_control/README.md](ESPI%20Full%20Algorithm/sdg_control/README.md): everything about talking to the signal generator, including a Troubleshooting section for connection problems.
+
+If none of those cover what you are seeing, please open an issue:
+
+1. Go to the project's page on GitHub.
+2. Click "Issues" at the top.
+3. Click "New Issue".
+4. Describe what you were doing, what you expected to happen, and what happened instead. Paste the exact error message if you have one.
+
+Please use GitHub Issues rather than a personal email for bug reports and questions; it keeps a record other students on this project can search later.
 
 
 Patrick Mulikuza
