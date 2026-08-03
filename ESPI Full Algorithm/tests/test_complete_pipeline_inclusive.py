@@ -123,7 +123,6 @@ def _hw_patches(tmp_path, *, include_reference_grab=False):
         patch("complete_pipeline_inclusive.grab_n_frames",           return_value=[FAKE_FRAME, FAKE_FRAME]),
         patch("complete_pipeline_inclusive.substract_frames",        return_value=FAKE_FRAME),
         patch("complete_pipeline_inclusive.average_img",             return_value=FAKE_FRAME),
-        patch("complete_pipeline_inclusive.amplify_difference",      return_value=FAKE_FRAME),
         patch("complete_pipeline_inclusive.save_image",              return_value=str(tmp_path / "img.png")),
         patch("complete_pipeline_inclusive.save_session_log"),
         patch("complete_pipeline_inclusive.cv2.imshow"),

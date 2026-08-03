@@ -116,13 +116,13 @@ function frequency_sweep_inclusive(start_freq, end_freq, step, n_averages,
             averaged = average_img(difference_images)
             if averaged is nothing: record freq as failed, skip to next
 
-            # save TWO files: a raw version for analysis and a
-            # contrast-amplified version for easy viewing on screen
+            # averaged is already gain_factor-scaled (see the frame-pair
+            # loop above), so the same array is both saved and shown live,
+            # a copy() of it (cv2.putText draws in place)
             save_image(averaged, output_dir, freq, exposure, step="espi_raw")
-            amplified = amplify_difference(averaged)
 
             results[freq] = averaged
-            show amplified in a "Last Result" window
+            show averaged.copy() in a "Last Result" window
 
     except the user pressing Ctrl+C:
         print that the sweep was interrupted, fall through to clean-up

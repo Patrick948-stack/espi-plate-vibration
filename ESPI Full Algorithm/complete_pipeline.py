@@ -333,7 +333,10 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
         # Store the result in memory so the caller can use it directly.
         results[freq] = averaged
 
-        disp = amplify_difference(averaged)
+        # .copy() because cv2.putText draws in place, and averaged is also
+        # what got stored in results[freq] and saved to disk above — drawing
+        # directly onto it would corrupt the saved result.
+        disp = averaged.copy()
         cv2.putText(disp, f"Last: {freq:g} Hz", (10, 34),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, 200, 2, cv2.LINE_AA)
         cv2.imshow("ESPI Sweep — Last Result", disp)
@@ -546,7 +549,10 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
 
         results[freq] = averaged
 
-        disp = amplify_difference(averaged)
+        # .copy() because cv2.putText draws in place, and averaged is also
+        # what got stored in results[freq] and saved to disk above — drawing
+        # directly onto it would corrupt the saved result.
+        disp = averaged.copy()
         cv2.putText(disp, f"Last: {freq:g} Hz", (10, 34),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, 200, 2, cv2.LINE_AA)
         cv2.imshow("ESPI Sweep — Last Result", disp)

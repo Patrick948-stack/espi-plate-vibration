@@ -679,9 +679,9 @@ def grab_reference_frame(camera):
 #   reference = grab_reference_frame(camera)
 #   live      = grab_single_frame(camera)
 #
-#   diff      = substract_frames(reference, live)   # Step 1: compute difference
-#   amplified = amplify_difference(diff)             # Step 2: stretch contrast
-#   binary, _ = binarize_diff(amplified)             # Step 3: threshold to mask
+#   diff      = substract_frames(reference, live)                  # Step 1: compute difference
+#   amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)        # Step 2: amplify (gain_factor=1.0 for none)
+#   binary, _ = binarize_diff(amplified)                            # Step 3: threshold to mask
 #
 #   OR use the shortcut that does all three at once:
 #
@@ -713,35 +713,6 @@ def substract_frames(previous: np.ndarray, current: np.ndarray) -> np.ndarray:
         f"Frame shapes must match: {previous.shape} vs {current.shape}"
     )
     return cv2.absdiff(previous, current)
-
-
-def amplify_difference(diff: np.ndarray) -> np.ndarray:
-    """
-    Stretch the contrast of a difference image so fringes are clearly visible.
-
-    The raw difference image often has very small pixel values (dark overall)
-    because most pixels changed only slightly.  This function rescales so the
-    darkest pixel becomes 0 and the brightest becomes 255.
-
-    Args:
-        diff : greyscale difference image (numpy array, uint8)
-
-    Returns a uint8 numpy array with the same shape, full contrast range.
-
-    Example:
-        amplified = amplify_difference(diff)
-    """
-    # NORM_MINMAX stretches the contrast so the interference pattern is
-    # clearly visible even when raw pixel differences are small.
-    amplified = cv2.normalize(
-        src=diff,
-        dst=None,
-        alpha=0,
-        beta=255,
-        norm_type=cv2.NORM_MINMAX,
-        dtype=cv2.CV_8U
-    )
-    return amplified
 
 
 def binarize_diff(diff: np.ndarray, method: str = "otsu") -> tuple:
@@ -806,32 +777,36 @@ def show_diff(diff: np.ndarray, amplified: np.ndarray, binary: np.ndarray = None
     cv2.destroyAllWindows()
 
 
-def run_espi_pipeline(reference: np.ndarray, live: np.ndarray) -> dict:
+def run_espi_pipeline(reference: np.ndarray, live: np.ndarray, gain_factor: float = 1.0) -> dict:
     """
     Run the full ESPI pipeline on a reference and a live frame in one call.
 
     This is the shortcut function — it calls substract_frames,
-    amplify_difference, and binarize_diff for you, then also applies a
-    false-colour map so the fringe pattern is easy to read visually.
+    amplifies the difference with gain_factor, and calls binarize_diff for
+    you, then also applies a false-colour map so the fringe pattern is easy
+    to read visually.
 
     Args:
-        reference : the baseline frame grabbed before excitation
-        live      : the frame grabbed during excitation
+        reference   : the baseline frame grabbed before excitation
+        live        : the frame grabbed during excitation
+        gain_factor : multiplies the difference before thresholding/coloring.
+                      1.0 (the default) leaves it unchanged, matching this
+                      project's "gain factor or no amplification" policy.
 
     Returns a dictionary with these keys:
         'diff'      — raw absolute difference image       (uint8 numpy array)
-        'amplified' — contrast-stretched difference image (uint8 numpy array)
+        'amplified' — gain_factor-scaled difference image (uint8 numpy array)
         'binary'    — Otsu-thresholded mask               (uint8 numpy array)
         'colored'   — false-colour amplified image        (uint8 BGR numpy array)
         'threshold' — the Otsu threshold value that was used (float)
 
     Example:
-        result = run_espi_pipeline(reference_frame, live_frame)
+        result = run_espi_pipeline(reference_frame, live_frame, gain_factor=10.0)
         save_image(result["colored"], "output/fringe_pattern.png")
         show_diff(result["diff"], result["amplified"], result["binary"])
     """
     diff      = substract_frames(reference, live)
-    amplified = amplify_difference(diff)
+    amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
     binary, threshold = binarize_diff(amplified, method="otsu")
 
     # Apply a false-colour map so the fringe pattern is easier to read visually.
@@ -1315,7 +1290,6 @@ __all__ = [
 
     # Section 5: ESPI Processing
     "substract_frames",
-    "amplify_difference",
     "binarize_diff",
     "show_diff",
     "run_espi_pipeline",

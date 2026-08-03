@@ -520,7 +520,7 @@ class TestShowPreviewFeed:
     def test_calls_feed_and_disconnects_on_success(self):
         mock_cam = MagicMock()
         mock_lib = MagicMock()
-        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.connect_camera.return_value = (mock_cam, {"hardware_format": "Mono8"})
         with patch("importlib.import_module", return_value=mock_lib):
             run_experiment._show_preview_feed("3")
         mock_lib.show_live_feed_from_camera.assert_called_once_with(mock_cam)
@@ -531,7 +531,7 @@ class TestShowPreviewFeed:
         # microseconds, the same as run_pipeline() does for the real sweep.
         mock_cam = MagicMock()
         mock_lib = MagicMock()
-        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.connect_camera.return_value = (mock_cam, {"hardware_format": "Mono8"})
         with patch("importlib.import_module", return_value=mock_lib):
             run_experiment._show_preview_feed("3", exposure_s=0.01, gain=2.0)
         mock_lib.set_exposure_manual.assert_called_once_with(mock_cam, pytest.approx(10_000.0))
@@ -540,7 +540,7 @@ class TestShowPreviewFeed:
     def test_applies_exposure_using_log2_scale_for_webcam(self):
         mock_cam = MagicMock()
         mock_lib = MagicMock()
-        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.connect_camera.return_value = (mock_cam, {"hardware_format": "Mono8"})
         with patch("importlib.import_module", return_value=mock_lib):
             run_experiment._show_preview_feed("2", exposure_s=0.015625, gain=0.0)
         mock_lib.set_exposure_manual.assert_called_once_with(mock_cam, pytest.approx(-6.0, abs=0.01))
@@ -548,7 +548,7 @@ class TestShowPreviewFeed:
     def test_no_exposure_or_gain_given_skips_applying_settings(self):
         mock_cam = MagicMock()
         mock_lib = MagicMock()
-        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.connect_camera.return_value = (mock_cam, {"hardware_format": "Mono8"})
         with patch("importlib.import_module", return_value=mock_lib):
             run_experiment._show_preview_feed("3")  # exposure_s/gain default to None
         mock_lib.set_exposure_manual.assert_not_called()
@@ -557,7 +557,7 @@ class TestShowPreviewFeed:
     def test_failure_applying_settings_is_caught_and_feed_still_shows(self, capsys):
         mock_cam = MagicMock()
         mock_lib = MagicMock()
-        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.connect_camera.return_value = (mock_cam, {"hardware_format": "Mono8"})
         mock_lib.set_exposure_manual.side_effect = RuntimeError("camera busy")
         with patch("importlib.import_module", return_value=mock_lib):
             run_experiment._show_preview_feed("3", exposure_s=0.01, gain=0.0)
@@ -572,7 +572,7 @@ class TestShowPreviewFeed:
         # used to re-raise and crash run_experiment.py entirely.
         mock_cam = MagicMock()
         mock_lib = MagicMock()
-        mock_lib.connect_camera.return_value = mock_cam
+        mock_lib.connect_camera.return_value = (mock_cam, {"hardware_format": "Mono8"})
         mock_lib.show_live_feed_from_camera.side_effect = RuntimeError("crash")
         with patch("importlib.import_module", return_value=mock_lib):
             run_experiment._show_preview_feed("2")  # must not raise

@@ -5,7 +5,7 @@ Tests for camera_control.py (Basler / pypylon).
 Sections covered
 ----------------
   Pure functions (no camera required):
-    substract_frames, amplify_difference, binarize_diff, average_img,
+    substract_frames, binarize_diff, average_img,
     run_espi_pipeline, build_filename, save_image, save_session_log,
     log_frame_metadata
 
@@ -18,6 +18,7 @@ import sys
 import os
 import csv
 
+import cv2
 import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch, call
@@ -67,32 +68,6 @@ class TestSubstractFrames:
         small = np.zeros((50, 50), dtype=np.uint8)
         with pytest.raises(AssertionError):
             cc.substract_frames(gray_100x100, small)
-
-
-class TestAmplifyDifference:
-    def test_output_is_uint8(self, gray_100x100, gray_100x100_b):
-        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
-        amplified = cc.amplify_difference(diff)
-        assert amplified.dtype == np.uint8
-
-    def test_output_range_is_0_to_255(self, gray_100x100, gray_100x100_b):
-        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
-        amplified = cc.amplify_difference(diff)
-        assert int(amplified.min()) == 0
-        assert int(amplified.max()) == 255
-
-    def test_output_shape_unchanged(self, gray_100x100, gray_100x100_b):
-        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
-        amplified = cc.amplify_difference(diff)
-        assert amplified.shape == diff.shape
-
-    def test_uniform_input_produces_uniform_output(self, uniform_gray):
-        amplified = cc.amplify_difference(uniform_gray)
-        assert amplified.dtype == np.uint8
-
-    def test_all_zero_input_stays_all_zero(self, black_image):
-        amplified = cc.amplify_difference(black_image)
-        assert np.all(amplified == 0)
 
 
 class TestBinarizeDiff:
@@ -181,6 +156,34 @@ class TestRunEspiPipeline:
     def test_threshold_is_a_number(self, gray_100x100, gray_100x100_b):
         result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b)
         assert isinstance(result["threshold"], (int, float))
+
+
+class TestRunEspiPipelineGainFactor:
+    """
+    run_espi_pipeline() used to amplify its 'amplified' key with
+    amplify_difference() (contrast normalization). That function is gone;
+    amplification is now gain_factor only, applied the same way monitor_gui.py
+    and the complete_pipeline*.py sweeps do it: cv2.convertScaleAbs.
+    """
+
+    def test_default_gain_factor_is_a_no_op(self, gray_100x100, gray_100x100_b):
+        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
+        result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b)
+        assert np.array_equal(result["amplified"], diff)
+
+    def test_gain_factor_scales_the_difference(self, gray_100x100, gray_100x100_b):
+        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
+        result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b, gain_factor=3.0)
+        expected = cv2.convertScaleAbs(diff, alpha=3.0)
+        assert np.array_equal(result["amplified"], expected)
+
+    def test_gain_factor_saturates_instead_of_wrapping(self, gray_100x100, gray_100x100_b):
+        result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b, gain_factor=1000.0)
+        assert result["amplified"].dtype == np.uint8
+        assert int(result["amplified"].max()) == 255
+
+    def test_amplify_difference_no_longer_exists(self):
+        assert not hasattr(cc, "amplify_difference")
 
 
 # ===========================================================================

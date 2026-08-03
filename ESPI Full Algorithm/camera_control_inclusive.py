@@ -693,9 +693,9 @@ def discard_warmup_frames(camera, n: int = 5):
 #   frame_a = grab_single_frame(camera)   # first frame
 #   frame_b = grab_single_frame(camera)   # second frame (plate has moved slightly)
 #
-#   diff      = substract_frames(frame_a, frame_b)   # Step 1: difference
-#   amplified = amplify_difference(diff)              # Step 2: stretch contrast
-#   binary, _ = binarize_diff(amplified)              # Step 3: threshold to mask
+#   diff      = substract_frames(frame_a, frame_b)                 # Step 1: difference
+#   amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)        # Step 2: amplify (gain_factor=1.0 for none)
+#   binary, _ = binarize_diff(amplified)                            # Step 3: threshold to mask
 #
 #   OR use the shortcut that does all three at once:
 #
@@ -730,33 +730,6 @@ def substract_frames(previous: np.ndarray, current: np.ndarray):
               f"({previous.shape} vs {current.shape}) — returning None.")
         return None
     return cv2.absdiff(previous, current)
-
-
-def amplify_difference(diff: np.ndarray) -> np.ndarray:
-    """
-    Stretch the contrast of a difference image so fringes are clearly visible.
-
-    The raw difference image is usually very dark because most pixels changed
-    only slightly.  This function rescales so the darkest pixel becomes 0 and
-    the brightest becomes 255 — making the fringe pattern easy to see.
-
-    Args:
-        diff : greyscale difference image (numpy array, uint8)
-
-    Returns a uint8 numpy array with the same shape, full contrast range.
-
-    Example:
-        amplified = amplify_difference(diff)
-    """
-    amplified = cv2.normalize(
-        src=diff,
-        dst=None,
-        alpha=0,
-        beta=255,
-        norm_type=cv2.NORM_MINMAX,
-        dtype=cv2.CV_8U
-    )
-    return amplified
 
 
 def binarize_diff(diff: np.ndarray, method: str = "otsu") -> tuple:
@@ -817,30 +790,33 @@ def show_diff(diff: np.ndarray, amplified: np.ndarray, binary: np.ndarray = None
     cv2.destroyAllWindows()
 
 
-def run_espi_pipeline(reference: np.ndarray, live: np.ndarray) -> dict:
+def run_espi_pipeline(reference: np.ndarray, live: np.ndarray, gain_factor: float = 1.0) -> dict:
     """
     Run the full ESPI pipeline on two frames in one call.
 
-    Calls substract_frames, amplify_difference, and binarize_diff for you,
-    then also applies a false-colour map so the fringe pattern is easy to read.
+    Calls substract_frames, amplifies the difference with gain_factor, and
+    calls binarize_diff for you, then also applies a false-colour map so the
+    fringe pattern is easy to read.
 
     Args:
-        reference : first frame (or baseline frame)
-        live      : second frame (captured slightly later)
+        reference   : first frame (or baseline frame)
+        live        : second frame (captured slightly later)
+        gain_factor : multiplies the difference before thresholding/coloring.
+                      1.0 (the default) leaves it unchanged.
 
     Returns a dictionary with keys:
         'diff'      — raw absolute difference image       (uint8 numpy array)
-        'amplified' — contrast-stretched difference image (uint8 numpy array)
+        'amplified' — gain_factor-scaled difference image (uint8 numpy array)
         'binary'    — Otsu-thresholded mask               (uint8 numpy array)
         'colored'   — false-colour amplified image        (uint8 BGR numpy array)
         'threshold' — the Otsu threshold value that was used (float)
 
     Example:
-        result = run_espi_pipeline(frame_a, frame_b)
+        result = run_espi_pipeline(frame_a, frame_b, gain_factor=10.0)
         save_image(result["colored"], "output/fringe_pattern.png")
     """
     diff      = substract_frames(reference, live)
-    amplified = amplify_difference(diff)
+    amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
     binary, threshold = binarize_diff(amplified, method="otsu")
 
     # COLORMAP_JET: blue = low displacement, red = high displacement.
@@ -1412,7 +1388,6 @@ __all__ = [
 
     # Section 5: ESPI Processing
     "substract_frames",
-    "amplify_difference",
     "binarize_diff",
     "show_diff",
     "run_espi_pipeline",

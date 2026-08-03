@@ -125,20 +125,6 @@ def _frame_to_pixmap(frame: np.ndarray) -> QPixmap:
     return QPixmap.fromImage(image.copy())
 
 
-def _amplify_for_display(diff: np.ndarray) -> np.ndarray:
-    """
-    Contrast-stretch a raw averaged-difference frame for on-screen preview
-    only. A real ESPI difference image has such a small pixel value range
-    that displayed literally it reads as solid black; this is the same
-    cv2.normalize stretch camera_control.py's amplify_difference() and
-    camera_control_inclusive.py's / camera_control_allied_vision.py's
-    identical copies apply, kept as a local copy here instead of importing
-    one of those modules so this file never depends on a specific camera
-    SDK (e.g. pypylon) being installed just to preview a saved sweep image.
-    """
-    return cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-
 def _total_sweep_steps(params):
     """
     Same frequency-count formula every complete_pipeline*.py sweep loop
@@ -1167,14 +1153,12 @@ class SweepPage(QWidget):
         if raw is None:
             return
 
-        # The saved file holds the raw averaged difference image, not a
-        # contrast-stretched one -- correct for measurement (nothing about
-        # the actual saved data changes), but a real ESPI difference frame
-        # has such a small pixel value range that displayed literally, on
-        # screen, it reads as solid black. _amplify_for_display() stretches
-        # it to the full 0-255 range for this preview only.
-        display_frame = _amplify_for_display(raw)
-        pixmap = _frame_to_pixmap(display_frame)
+        # The saved file already holds the gain_factor-amplified difference
+        # image (see complete_pipeline*.py's use of cv2.convertScaleAbs), so
+        # it is shown exactly as saved -- same gain_factor-or-none policy
+        # this project uses everywhere else, no separate contrast stretch
+        # applied just for this thumbnail.
+        pixmap = _frame_to_pixmap(raw)
         if pixmap.isNull():
             return
         scaled = pixmap.scaled(

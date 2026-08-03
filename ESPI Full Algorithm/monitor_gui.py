@@ -307,7 +307,7 @@ def _compare_grayscale_difference_methods(
         diff = cv2.absdiff(gray1, gray2)
         # Apply amplification to make difference visible
         if cam_lib and amplification_method != "none":
-            diff = _apply_diff_amplification(cam_lib, diff, amplification_method, gain_factor)
+            diff = _apply_diff_amplification(diff, amplification_method, gain_factor)
         elapsed = time.perf_counter() - start
         results[method] = (diff, elapsed, float(np.mean(diff)))
     return results
@@ -320,107 +320,32 @@ def _compare_grayscale_difference_methods(
 # (raw_diff / raw_change in MonitorWorker), never on the live feed frame. See
 # _apply_diff_amplification's docstring for why that split matters.
 
-def _apply_clahe(gray: np.ndarray, clip_limit: float = 2.0, tile_grid_size: tuple = (8, 8)) -> np.ndarray:
-    """
-    Contrast Limited Adaptive Histogram Equalization.
-
-    Equalizes contrast within local tiles instead of over the whole image, so
-    faint fringes in a dim region get boosted without blowing out a bright
-    region elsewhere in the same frame. clip_limit caps how much any single
-    tile's histogram can be stretched, which is what keeps sensor noise in
-    dark tiles from being amplified into speckle.
-
-    Args:
-        gray: 2D uint8 array (the diff frame)
-        clip_limit: contrast limiting threshold, 0.5-10.0 (higher = more contrast, more noise)
-        tile_grid_size: (rows, cols) of tiles to equalize independently
-
-    Time: O(width * height), Space: O(width * height) for the output.
-    """
-    gray = np.ascontiguousarray(gray).astype(np.uint8, copy=False)
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-    return clahe.apply(gray)
-
-
-def _apply_gamma_correction(gray: np.ndarray, gamma: float = 0.5) -> np.ndarray:
-    """
-    Non-linear brightness remapping via a precomputed lookup table (LUT).
-
-    Uses the standard power-law form output = 255 * (input / 255) ** gamma.
-    gamma < 1 brightens dark and mid-tone pixels (a fractional power pulls
-    values up towards 255) without touching pixels already at 0 or 255,
-    which is what lets faint fringes in a mostly-dark diff image become
-    visible without clipping the few bright pixels that are already at full
-    contrast. gamma > 1 does the opposite and darkens.
-
-    NOTE: a common version of this snippet (e.g. the widely copied
-    pyimagesearch "adjust_gamma") instead raises to the power of 1/gamma.
-    That inverts the direction above, so gamma=0.5 would darken instead of
-    brighten, which contradicts its own docstring in every copy of it found
-    while building this. Verified numerically before picking a direction:
-    only the un-inverted exponent used here brightens at the gamma=0.5
-    default this project asked for.
-
-    Args:
-        gray: 2D uint8 array (the diff frame)
-        gamma: 0.1-3.0. Values below 1.0 brighten, above 1.0 darken.
-
-    Time: O(256) to build the LUT + O(width * height) for cv2.LUT's pass over
-    every pixel, Space: O(width * height) for the output.
-    """
-    gray = np.ascontiguousarray(gray).astype(np.uint8, copy=False)
-    lut = np.array(
-        [((i / 255.0) ** gamma) * 255 for i in range(256)]
-    ).astype(np.uint8)
-    return cv2.LUT(gray, lut)
-
-
-_AMPLIFICATION_METHODS = ("none", "normalize", "gain_factor", "clahe", "gamma")
+_AMPLIFICATION_METHODS = ("none", "gain_factor")
 
 
 def _apply_diff_amplification(
-    cam_lib,
     raw_diff: np.ndarray,
     method: str,
     gain_factor: float,
-    clahe_clip_limit: float = 2.0,
-    clahe_tile_grid_size: tuple = (8, 8),
-    gamma: float = 0.5,
 ) -> np.ndarray:
     """
-    Apply the selected contrast amplification to a raw difference frame.
+    Apply the selected amplification to a raw difference frame.
 
     Callers must only ever pass the post-averaging diff array here (see
     MonitorWorker._run_frame_averaging / _run_averaged_differences), never
     the raw or averaged live feed frame, since amplification is meant to make
     the subtracted fringe pattern visible, not to alter what the live feed
     shows the operator.
-
-    "normalize" is delegated to cam_lib.amplify_difference() rather than
-    implemented locally, since it is camera-library-specific (each
-    camera_control*.py module owns its own copy). CLAHE and gamma are plain
-    OpenCV/NumPy operations with no camera-specific behavior, so they live
-    here instead.
     """
-    if method == "normalize":
-        return cam_lib.amplify_difference(raw_diff)
-    elif method == "gain_factor":
+    if method == "gain_factor":
         return cv2.convertScaleAbs(raw_diff, alpha=gain_factor)
-    elif method == "clahe":
-        return _apply_clahe(raw_diff, clahe_clip_limit, clahe_tile_grid_size)
-    elif method == "gamma":
-        return _apply_gamma_correction(raw_diff, gamma)
     else:  # "none"
         return raw_diff
 
 
 def _compare_amplification_methods(
-    cam_lib,
     raw_diff: np.ndarray,
     gain_factor: float,
-    clahe_clip_limit: float = 2.0,
-    clahe_tile_grid_size: tuple = (8, 8),
-    gamma: float = 0.5,
 ) -> dict:
     """
     Run every amplification method on the same raw diff frame, so their
@@ -438,10 +363,7 @@ def _compare_amplification_methods(
     results = {}
     for method in _AMPLIFICATION_METHODS:
         start = time.perf_counter()
-        result = _apply_diff_amplification(
-            cam_lib, raw_diff, method, gain_factor,
-            clahe_clip_limit, clahe_tile_grid_size, gamma,
-        )
+        result = _apply_diff_amplification(raw_diff, method, gain_factor)
         elapsed = time.perf_counter() - start
         results[method] = (result, elapsed, float(np.std(result)))
     return results
@@ -687,9 +609,6 @@ class MonitorWorker(QThread):
         self._grayscale_method = settings.get("grayscale_method", "standard")
         self._grayscale_color = settings.get("grayscale_color", "R")
         self._grayscale_backend = settings.get("grayscale_backend", "numpy")
-        self._clahe_clip_limit = settings.get("clahe_clip_limit", 2.0)
-        self._clahe_tile_grid_size = settings.get("clahe_tile_grid_size", (8, 8))
-        self._gamma = settings.get("gamma", 0.5)
         self._frame_grab_retry_delay_s = settings.get(
             "frame_grab_retry_delay_s", DEFAULT_FRAME_GRAB_RETRY_DELAY_S
         )
@@ -845,8 +764,7 @@ class MonitorWorker(QThread):
                     raw_diff = cam_lib.substract_frames(prev_averaged, averaged)
                     self.raw_diff_ready.emit(raw_diff)
                     diff = _apply_diff_amplification(
-                        cam_lib, raw_diff, self._diff_amplification, gain_factor,
-                        self._clahe_clip_limit, self._clahe_tile_grid_size, self._gamma,
+                        raw_diff, self._diff_amplification, gain_factor,
                     )
 
                 prev_averaged = averaged
@@ -912,8 +830,7 @@ class MonitorWorker(QThread):
                     raw_change = cam_lib.substract_frames(prev_averaged_diff, averaged_diff)
                     self.raw_diff_ready.emit(raw_change)
                     current_diff = _apply_diff_amplification(
-                        cam_lib, raw_change, self._diff_amplification, gain_factor,
-                        self._clahe_clip_limit, self._clahe_tile_grid_size, self._gamma,
+                        raw_change, self._diff_amplification, gain_factor,
                     )
 
                 prev_averaged_diff = averaged_diff
@@ -925,37 +842,26 @@ class MonitorWorker(QThread):
 
 class AmplificationComparisonDialog(QDialog):
     """
-    Shows every diff amplification method (none, normalize, gain_factor,
-    CLAHE, gamma) applied to the same raw diff frame, side by side, so their
-    effect can be compared visually without restarting the monitor with a
-    different setting each time.
+    Shows every diff amplification method (none, gain_factor) applied to the
+    same raw diff frame, side by side, so their effect can be compared
+    visually without restarting the monitor with a different setting.
     """
 
     _LABELS = {
         "none": "No amplification",
-        "normalize": "Normalize contrast",
         "gain_factor": "Gain factor",
-        "clahe": "CLAHE",
-        "gamma": "Gamma correction",
     }
 
     def __init__(
         self,
-        cam_lib,
         raw_diff,
         gain_factor,
-        clahe_clip_limit=2.0,
-        clahe_tile_grid_size=(8, 8),
-        gamma=0.5,
         parent=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Compare Amplification Methods")
 
-        results = _compare_amplification_methods(
-            cam_lib, raw_diff, gain_factor,
-            clahe_clip_limit, clahe_tile_grid_size, gamma,
-        )
+        results = _compare_amplification_methods(raw_diff, gain_factor)
 
         grid = QGridLayout()
         for column, method in enumerate(_AMPLIFICATION_METHODS):
@@ -1255,16 +1161,9 @@ class LiveMonitorPage(QWidget):
         if self._last_raw_diff is None or self._worker is None:
             return
 
-        module_name = _CAMERA_CONTROL_MODULES[self._worker._camera_choice]
-        cam_lib = importlib.import_module(module_name)
-
         dialog = AmplificationComparisonDialog(
-            cam_lib,
             self._last_raw_diff,
             self._settings["gain_factor"],
-            self._settings.get("clahe_clip_limit", 2.0),
-            self._settings.get("clahe_tile_grid_size", (8, 8)),
-            self._settings.get("gamma", 0.5),
             parent=self,
         )
         dialog.exec()
@@ -1429,33 +1328,13 @@ or the raw camera data.</p>
 tiny changes and all. Useful as a baseline, but usually too dark to read at
 a glance.</p>
 
-<p><b>Normalize contrast</b> finds the darkest and brightest pixels
-currently in the difference image and stretches everything between them to
-fill the full 0 to 255 range. Simple and effective, though one stray very
-bright pixel can eat up range that would otherwise go to the real fringe
-pattern.</p>
-
 <p><b>Gain factor</b> multiplies every pixel by a fixed number you choose in
 the capture settings. Straightforward and predictable, but pick a number too
 large and bright areas get clipped to solid white, losing detail there.</p>
 
-<p><b>CLAHE</b> (Contrast Limited Adaptive Histogram Equalization) divides
-the image into a grid of small tiles and boosts contrast within each tile
-separately, instead of stretching the whole image the same way. A clip limit
-controls how aggressively any single tile can be stretched. This helps
-bring out faint fringes in dim corners of the image without also amplifying
-camera sensor noise into fake looking speckle, which is what tends to happen
-if a global stretch is pushed too hard.</p>
-
-<p><b>Gamma correction</b> reshapes brightness using a curve instead of a
-straight stretch, brightening dark and mid range pixels more than pixels
-that are already bright. A gamma value below 1.0 brightens; above 1.0
-darkens. Pixels already at pure black or pure white are left alone either
-way, so the brightest fringe detail is never lost to clipping.</p>
-
 <p>Not sure which to pick? The <b>Compare Amplification Methods</b> button
-on the Live Monitor page runs all five side by side on the same frame, so
-you can look at the results instead of guessing.</p>
+on the Live Monitor page runs both side by side on the same frame, so you
+can look at the results instead of guessing.</p>
 """
 
 
@@ -1622,17 +1501,11 @@ class SettingsPage(QWidget):
         self._amp_radios = {}
         amp_tooltips = {
             "none": "Display raw pixel differences without any amplification.",
-            "normalize": "Stretch contrast to full 0-255 range using OpenCV NORM_MINMAX.",
             "gain_factor": "Multiply pixel values by the gain_factor from capture settings.",
-            "clahe": "Contrast Limited Adaptive Histogram Equalization: boosts faint fringes tile by tile without amplifying noise in dark regions.",
-            "gamma": "Non-linear brightness remapping via a lookup table: brightens dark/mid-tones without clipping bright pixels.",
         }
         amp_labels = {
             "none": "No amplification",
-            "normalize": "Normalize contrast",
             "gain_factor": "Gain factor only",
-            "clahe": "CLAHE",
-            "gamma": "Gamma correction",
         }
         for choice in amp_tooltips.keys():
             radio = QRadioButton(amp_labels[choice])
@@ -1641,61 +1514,11 @@ class SettingsPage(QWidget):
             self._amp_radios[choice] = radio
             amp_layout.addWidget(radio)
 
-        # CLAHE parameter controls (only shown when "clahe" is selected)
-        self._clahe_clip_label = QLabel("Clip Limit:")
-        self._clahe_clip_spin = QDoubleSpinBox()
-        self._clahe_clip_spin.setDecimals(2)
-        self._clahe_clip_spin.setRange(0.5, 10.0)
-        self._clahe_clip_spin.setValue(2.0)
-
-        clip_layout = QHBoxLayout()
-        clip_layout.addWidget(self._clahe_clip_label)
-        clip_layout.addWidget(self._clahe_clip_spin)
-        clip_layout.addStretch()
-        amp_layout.addLayout(clip_layout)
-
-        self._tile_grid_label = QLabel("Tile Grid Size (rows x cols):")
-        self._tile_rows_spin = QSpinBox()
-        self._tile_rows_spin.setRange(2, 64)
-        self._tile_rows_spin.setValue(8)
-        self._tile_cols_spin = QSpinBox()
-        self._tile_cols_spin.setRange(2, 64)
-        self._tile_cols_spin.setValue(8)
-
-        tile_layout = QHBoxLayout()
-        self._tile_x_label = QLabel("x")
-
-        tile_layout.addWidget(self._tile_grid_label)
-        tile_layout.addWidget(self._tile_rows_spin)
-        tile_layout.addWidget(self._tile_x_label)
-        tile_layout.addWidget(self._tile_cols_spin)
-        tile_layout.addStretch()
-        amp_layout.addLayout(tile_layout)
-
-        # Gamma parameter control (only shown when "gamma" is selected)
-        self._gamma_label = QLabel("Gamma:")
-        self._gamma_spin = QDoubleSpinBox()
-        self._gamma_spin.setDecimals(2)
-        self._gamma_spin.setRange(0.1, 3.0)
-        self._gamma_spin.setValue(0.5)
-
-        gamma_layout = QHBoxLayout()
-        gamma_layout.addWidget(self._gamma_label)
-        gamma_layout.addWidget(self._gamma_spin)
-        gamma_layout.addStretch()
-        amp_layout.addLayout(gamma_layout)
-
         amp_layout.addStretch()
         amp_group.setLayout(amp_layout)
         layout.addWidget(amp_group)
 
-        # Wire amplification radio changes to update CLAHE/gamma param visibility
-        # (must be connected before setting the default, same reasoning as grayscale above)
-        for radio in self._amp_radios.values():
-            radio.toggled.connect(self._update_amplification_ui_visibility)
-
         self._amp_radios["gain_factor"].setChecked(True)
-        self._update_amplification_ui_visibility()
 
         layout.addStretch()
 
@@ -1714,21 +1537,6 @@ class SettingsPage(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(scroll_area)
         self.setLayout(main_layout)
-
-    def _update_amplification_ui_visibility(self):
-        """Show/hide CLAHE and gamma param controls based on amplification method selection."""
-        is_clahe = self._amp_radios["clahe"].isChecked()
-        is_gamma = self._amp_radios["gamma"].isChecked()
-
-        self._clahe_clip_label.setVisible(is_clahe)
-        self._clahe_clip_spin.setVisible(is_clahe)
-        self._tile_grid_label.setVisible(is_clahe)
-        self._tile_rows_spin.setVisible(is_clahe)
-        self._tile_x_label.setVisible(is_clahe)
-        self._tile_cols_spin.setVisible(is_clahe)
-
-        self._gamma_label.setVisible(is_gamma)
-        self._gamma_spin.setVisible(is_gamma)
 
     def _make_learn_more_button(self, title, html_content):
         """
@@ -1803,17 +1611,6 @@ class SettingsPage(QWidget):
                 return choice
         return "gain_factor"
 
-    def clahe_clip_limit(self):
-        """Get the configured CLAHE clip limit (0.5-10.0)."""
-        return self._clahe_clip_spin.value()
-
-    def clahe_tile_grid_size(self):
-        """Get the configured CLAHE tile grid size as (rows, cols)."""
-        return (self._tile_rows_spin.value(), self._tile_cols_spin.value())
-
-    def gamma_value(self):
-        """Get the configured gamma correction value (0.1-3.0)."""
-        return self._gamma_spin.value()
 
 # ==============================================================================
 # MAIN WINDOW
@@ -2021,9 +1818,6 @@ class MainWindow(QMainWindow):
         settings["grayscale_method"] = self.settings_page.grayscale_method()
         settings["grayscale_color"] = self.settings_page.grayscale_color()
         settings["grayscale_backend"] = self.settings_page.grayscale_backend()
-        settings["clahe_clip_limit"] = self.settings_page.clahe_clip_limit()
-        settings["clahe_tile_grid_size"] = self.settings_page.clahe_tile_grid_size()
-        settings["gamma"] = self.settings_page.gamma_value()
 
         self.live_monitor_page.start_monitor(camera_choice, camera_index, settings)
 

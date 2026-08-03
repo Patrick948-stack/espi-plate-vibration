@@ -9,7 +9,7 @@ test is imported. This lets us test all logic paths without physical hardware.
 Sections covered
 ----------------
   Pure functions (no camera required):
-    substract_frames, amplify_difference, binarize_diff, average_img,
+    substract_frames, binarize_diff, average_img,
     run_espi_pipeline, build_filename, save_image, save_session_log,
     log_frame_metadata
 
@@ -25,6 +25,7 @@ import os
 import types
 import csv
 
+import cv2
 import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
@@ -131,18 +132,6 @@ class TestSubstractFrames:
         assert diff.shape == gray_100x100.shape
 
 
-class TestAmplifyDifference:
-    def test_output_is_uint8_full_range(self, gray_100x100, gray_100x100_b):
-        diff = cc_av.substract_frames(gray_100x100, gray_100x100_b)
-        amp = cc_av.amplify_difference(diff)
-        assert amp.dtype == np.uint8
-        assert int(amp.min()) == 0
-        assert int(amp.max()) == 255
-
-    def test_all_zero_stays_zero(self, black_image):
-        assert np.all(cc_av.amplify_difference(black_image) == 0)
-
-
 class TestBinarizeDiff:
     def test_output_only_contains_0_and_255(self, gray_100x100):
         binary, _ = cc_av.binarize_diff(gray_100x100)
@@ -181,6 +170,27 @@ class TestRunEspiPipeline:
     def test_colored_is_3_channel(self, gray_100x100, gray_100x100_b):
         result = cc_av.run_espi_pipeline(gray_100x100, gray_100x100_b)
         assert result["colored"].ndim == 3
+
+
+class TestRunEspiPipelineGainFactor:
+    """
+    amplify_difference() (contrast normalization) is gone. Amplification is
+    now gain_factor only, applied with cv2.convertScaleAbs.
+    """
+
+    def test_default_gain_factor_is_a_no_op(self, gray_100x100, gray_100x100_b):
+        diff = cc_av.substract_frames(gray_100x100, gray_100x100_b)
+        result = cc_av.run_espi_pipeline(gray_100x100, gray_100x100_b)
+        assert np.array_equal(result["amplified"], diff)
+
+    def test_gain_factor_scales_the_difference(self, gray_100x100, gray_100x100_b):
+        diff = cc_av.substract_frames(gray_100x100, gray_100x100_b)
+        result = cc_av.run_espi_pipeline(gray_100x100, gray_100x100_b, gain_factor=3.0)
+        expected = cv2.convertScaleAbs(diff, alpha=3.0)
+        assert np.array_equal(result["amplified"], expected)
+
+    def test_amplify_difference_no_longer_exists(self):
+        assert not hasattr(cc_av, "amplify_difference")
 
 
 # ===========================================================================

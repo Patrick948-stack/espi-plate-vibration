@@ -8,13 +8,13 @@ A PyQt6 dashboard for real-time live monitoring of camera frames and frame diffe
 
 **SetupPage** - Configuration interface for hardware capture settings: camera selection, exposure, gain, gain_factor, and frames to average.
 
-**SettingsPage** - Processing strategy configuration where users choose frame-averaging method, intensity graph type, and difference amplification approach (including CLAHE and gamma correction, each with their own parameter controls) via radio buttons with hover tooltips.
+**SettingsPage** - Processing strategy configuration where users choose frame-averaging method, intensity graph type, and difference amplification approach (none, or gain_factor) via radio buttons with hover tooltips.
 
 **MonitorWorker** - Background thread that grabs frames from the camera, applies the chosen averaging strategy, and emits frame-ready signals to update the GUI. Also emits the raw, pre-amplification diff frame on its own signal so the Compare dialog can reuse it.
 
 **LiveMonitorPage** - Displays the live camera feed and frame subtraction side by side, plus an optional intensity graph, plus a Compare Amplification Methods button and a Compare Grayscale Methods button, each opening a side by side comparison of every method in its own category.
 
-**AmplificationComparisonDialog** - A popup window that runs every amplification method (none, normalize, gain_factor, CLAHE, gamma) on the same raw diff frame and displays them side by side with timing and contrast numbers, so the operator can pick a method by comparing outcomes instead of guessing and restarting the monitor.
+**AmplificationComparisonDialog** - A popup window that runs every amplification method (none, gain_factor) on the same raw diff frame and displays them side by side with timing and contrast numbers, so the operator can pick a method by comparing outcomes instead of guessing and restarting the monitor. Normalize contrast, CLAHE, and gamma correction used to be options here too; they were removed along with camera_control*.py's amplify_difference() so the project has exactly one amplification story (gain_factor or none) everywhere.
 
 **MainWindow** - Navigation shell with Setup and Live Monitor pages, plus a Settings page (accessed via button at bottom of nav rail).
 
@@ -56,7 +56,7 @@ Hardware capture configuration panel. Only shows settings that affect camera I/O
 
 Processing strategy configuration panel. Lets users choose grayscale conversion method, frame-averaging method, intensity graph type, and difference amplification via radio buttons and combo boxes with hover tooltips. Each of the four groups also has a Learn More button that opens a plain language explanation of every option in that group, for someone who is not familiar with these algorithms.
 
-The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A QStackedWidget must be big enough to show every page it holds, even ones not currently visible, so an unscrolled SettingsPage's own minimum height (948px once Learn More buttons and CLAHE/gamma controls were added) was forcing the whole window, and every other page, to be at least that tall too. That is what cropped the Settings button and the Live Monitor page's control row off the bottom of a real screen. See tests/test_sidebar_layout.py (rules I10 and I11).
+The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A QStackedWidget must be big enough to show every page it holds, even ones not currently visible, so an unscrolled SettingsPage's own minimum height was forcing the whole window, and every other page, to be at least that tall too. That is what cropped the Settings button and the Live Monitor page's control row off the bottom of a real screen. See tests/test_sidebar_layout.py (rules I10 and I11).
 
 **What it does:**
 
@@ -80,19 +80,15 @@ The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A
    - None: no graph (fastest)
    - Each radio has a tooltip describing performance and output
 
-4. Difference amplification method (radio buttons, default is now Gain factor, was Normalize contrast)
+4. Difference amplification method (radio buttons, default Gain factor)
    - No amplification: show raw pixel differences
-   - Normalize contrast: use OpenCV NORM_MINMAX to stretch contrast
    - Gain factor: multiply by gain_factor from SetupPage (default selection)
-   - CLAHE: contrast limited adaptive histogram equalization, tile by tile
-     - When selected, shows two additional controls:
-       - Clip Limit: 0.5 to 10.0, default 2.0
-       - Tile Grid Size: two spin boxes for rows and columns, default 8 by 8
-   - Gamma correction: non-linear brightness remapping via a lookup table
-     - When selected, shows one additional control:
-       - Gamma: 0.1 to 3.0, default 0.5
    - Each radio has a tooltip explaining its effect
-   - Only one parameter group is visible at a time, matching whichever amplification method is selected
+   - Normalize contrast, CLAHE, and gamma correction used to be options here, each with
+     its own parameter controls (Clip Limit, Tile Grid Size, Gamma). They were removed,
+     along with camera_control*.py's amplify_difference() (which "normalize" delegated
+     to), so this project has exactly one amplification story everywhere: gain_factor
+     or none.
 
 **Methods:**
 
@@ -101,18 +97,14 @@ The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A
 - `grayscale_backend()`: return "numpy", "pillow", or "opencv_hsv" (only used when single_channel is selected)
 - `averaging_method()`: return "averaged_differences" or "frame_averaging"
 - `graph_type()`: return "histogram", "log_histogram", "3d", or None
-- `diff_amplification()`: return "none", "normalize", "gain_factor", "clahe", or "gamma"
-- `clahe_clip_limit()`: return the configured CLAHE clip limit (0.5 to 10.0)
-- `clahe_tile_grid_size()`: return the configured CLAHE tile grid as (rows, cols)
-- `gamma_value()`: return the configured gamma value (0.1 to 3.0)
+- `diff_amplification()`: return "none" or "gain_factor"
 - `_update_grayscale_ui_visibility()`: show/hide color and backend controls based on grayscale method selection
-- `_update_amplification_ui_visibility()`: show/hide CLAHE or gamma parameter controls based on amplification method selection
 - `_make_learn_more_button(title, html_content)`: build one Learn More button wired to open a LearnMoreDialog with the given title and content
 - `_learn_more_row(button)`: right align a Learn More button in its own row above a group's radio buttons
 
 **Learn More buttons:**
 
-Each of the four groups (Grayscale Conversion Method, Frame Averaging Strategy, Intensity Graph, Difference Amplification) has its own Learn More button at the top of the group, above the radio buttons. Clicking one opens a `LearnMoreDialog` containing a plain language explanation of every option in that group, written for whoever is operating the monitor, not for someone reading the source code. This is separate from the short hover tooltips already on each radio button: tooltips are a one line reminder, the Learn More dialog is a full explanation of what the option does and the reasoning behind it, useful the first time someone encounters an unfamiliar term like CLAHE or gamma correction.
+Each of the four groups (Grayscale Conversion Method, Frame Averaging Strategy, Intensity Graph, Difference Amplification) has its own Learn More button at the top of the group, above the radio buttons. Clicking one opens a `LearnMoreDialog` containing a plain language explanation of every option in that group, written for whoever is operating the monitor, not for someone reading the source code. This is separate from the short hover tooltips already on each radio button: tooltips are a one line reminder, the Learn More dialog is a full explanation of what the option does and the reasoning behind it.
 
 `LearnMoreDialog` is a small `QDialog` wrapping a `QTextBrowser`, chosen over a plain `QLabel` because the explanations are long enough to need scrolling and because `QTextBrowser` can render simple HTML (headings, bold text, paragraphs) without needing a separate widget for every line.
 
@@ -174,37 +166,19 @@ The NumPy and Pillow backends are equivalent (both return raw channel intensitie
 
 Helper functions that make a subtracted diff frame easier to see. Every one of these is only ever called on the post-averaging diff array (raw_diff or raw_change inside MonitorWorker), never on the live feed frame, since the point is to make the fringe pattern visible without changing what the operator sees in the live feed.
 
+Normalize contrast, CLAHE, and gamma correction used to live here too (`_apply_clahe`, `_apply_gamma_correction`, plus the extra parameters they needed on every function below). They were removed, along with `camera_control*.py`'s `amplify_difference()` (which "normalize" delegated to). This project now has exactly one amplification story everywhere: gain_factor or none.
+
 **What they do:**
 
-1. `_apply_clahe(gray, clip_limit, tile_grid_size)`: contrast limited adaptive histogram equalization
-   - Splits the frame into tiles and equalizes contrast within each tile independently
-   - clip_limit caps how much any one tile's histogram can be stretched, which keeps sensor noise in dark tiles from turning into fake speckle
-   - Boosts faint fringes in a dim region without blowing out a bright region elsewhere in the same frame
-   - Time: O(H×W), Space: O(H×W)
-
-2. `_apply_gamma_correction(gray, gamma)`: non-linear brightness remapping through a lookup table
-   - Builds a 256-entry lookup table once, then applies it to every pixel with cv2.LUT
-   - Formula: output = 255 times (input divided by 255) raised to the power of gamma
-   - gamma below 1.0 brightens dark and mid-tone pixels; gamma above 1.0 darkens them
-   - Pixels already at 0 or 255 are never changed, so bright fringes never get clipped
-   - Time: O(256) to build the table plus O(H×W) to apply it, Space: O(H×W)
-
-3. `_apply_diff_amplification(cam_lib, raw_diff, method, gain_factor, clahe_clip_limit, clahe_tile_grid_size, gamma)`: single dispatcher for every amplification method
+1. `_apply_diff_amplification(raw_diff, method, gain_factor)`: single dispatcher for every amplification method
    - "none" returns the raw diff unchanged
-   - "normalize" delegates to cam_lib.amplify_difference(), since normalization is camera-library-specific (each camera_control*.py module owns its own copy)
    - "gain_factor" calls cv2.convertScaleAbs with the configured gain factor
-   - "clahe" calls _apply_clahe with the configured clip limit and tile grid size
-   - "gamma" calls _apply_gamma_correction with the configured gamma
    - Both MonitorWorker capture strategies call this same function instead of repeating the if/elif chain, so adding a new amplification method only means adding one branch here
 
-4. `_compare_amplification_methods(cam_lib, raw_diff, gain_factor, clahe_clip_limit, clahe_tile_grid_size, gamma)`: runs every method on the same raw diff frame
+2. `_compare_amplification_methods(raw_diff, gain_factor)`: runs every method on the same raw diff frame
    - Loops over every amplification method, times each call, and records the result's standard deviation as a rough contrast number
    - Returns a dict mapping method name to (result_image, elapsed_seconds, contrast_std)
    - Backs the Compare Amplification Methods button on LiveMonitorPage
-
-**A bug found and fixed while building gamma correction:**
-
-The gamma formula pattern that gets copied around online (raise to the power of 1 divided by gamma) actually inverts the direction its own comments usually claim. Checked numerically before picking a direction: with that inverted formula, gamma=0.5 (the requested default) darkens a mid-tone pixel from 128 down to 64, the opposite of "brighten faint fringes". This project's `_apply_gamma_correction` uses the plain power-law form (raise to the power of gamma, not its reciprocal) instead, which brightens at gamma=0.5 as intended.
 
 ### MonitorWorker
 
@@ -232,9 +206,8 @@ The worker stores the grayscale settings from SettingsPage:
 
 **Amplification Integration:**
 
-The worker also stores the amplification settings from SettingsPage:
-- `_diff_amplification`: "none", "normalize", "gain_factor", "clahe", or "gamma" (default is now "gain_factor")
-- `_clahe_clip_limit`, `_clahe_tile_grid_size`, `_gamma`: parameters for the CLAHE and gamma methods
+The worker also stores the amplification setting from SettingsPage:
+- `_diff_amplification`: "none" or "gain_factor" (default "gain_factor")
 
 Every raw diff frame is emitted on `raw_diff_ready` before amplification is applied, then passed through `_apply_diff_amplification()` to get the frame that actually gets shown. The Compare dialog listens to `raw_diff_ready` so it always compares methods against the same underlying data the live diff view is currently based on.
 
@@ -280,7 +253,7 @@ For Allied Vision cameras, this also resets the "stale format memory" bug that o
    - Clear frame_buffer
    - If there's a previous averaged frame, compute difference
    - Emit raw_diff_ready with the raw difference (pre-amplification)
-   - Apply amplification (none, normalize, gain_factor, clahe, or gamma) via _apply_diff_amplification()
+   - Apply amplification (none or gain_factor) via _apply_diff_amplification()
    - Emit frame_ready with both the averaged frame and the amplified difference
 
 #### Averaged Differences (New)
@@ -294,7 +267,7 @@ For Allied Vision cameras, this also resets the "stale format memory" bug that o
    - Clear diff_buffer
    - If there's a previous averaged difference, compute change
    - Emit raw_diff_ready with the raw change (pre-amplification)
-   - Apply amplification (none, normalize, gain_factor, clahe, or gamma) via _apply_diff_amplification()
+   - Apply amplification (none or gain_factor) via _apply_diff_amplification()
    - Emit frame_ready with both the averaged difference and the amplified change
 
 **Why two strategies?**
@@ -341,30 +314,30 @@ The display panel showing live results.
 
 1. Disabled at startup and immediately after Stop Monitor, since there is no diff frame yet
 2. `_on_raw_diff(raw_diff)` stores the latest raw diff and enables the button the first time one arrives
-3. Clicking the button resolves the same camera_control*.py module the running worker is using (via `_CAMERA_CONTROL_MODULES` and the worker's camera choice), then opens an `AmplificationComparisonDialog` built from the stored raw diff and the current gain_factor, CLAHE, and gamma settings
+3. Clicking the button opens an `AmplificationComparisonDialog` built from the stored raw diff and the current gain_factor
 4. This is a manual, on-demand comparison rather than an always-on panel, so it costs nothing while the operator is not using it
 
 ### AmplificationComparisonDialog
 
-A modal popup that answers "which amplification method should I actually use" without restarting the monitor five times.
+A modal popup that answers "which amplification method should I actually use" without restarting the monitor.
 
 **What it does:**
 
-1. Take the same raw diff frame, gain_factor, CLAHE params, and gamma value the live monitor is currently configured with
-2. Call `_compare_amplification_methods()` to run all five methods against that one frame
+1. Take the same raw diff frame and gain_factor the live monitor is currently configured with
+2. Call `_compare_amplification_methods()` to run both methods against that one frame
 3. Lay out one column per method: the resulting image, plus a caption with elapsed time in milliseconds and the result's standard deviation as a quick contrast number
 4. A Close button dismisses the dialog; nothing here mutates the running monitor's settings
 
 **Why a modal dialog instead of a permanently visible panel:**
 
-Running five image-processing passes on every single frame just in case the operator wants to compare would waste CPU on every frame the vast majority of the time nobody is looking. A button that runs the comparison once, on demand, keeps the live monitor loop exactly as fast as before for everyone who never clicks it.
+Running every image-processing pass on every single frame just in case the operator wants to compare would waste CPU on every frame the vast majority of the time nobody is looking. A button that runs the comparison once, on demand, keeps the live monitor loop exactly as fast as before for everyone who never clicks it.
 
 **Compare Grayscale Methods button:**
 
 1. Disabled at startup and immediately after Stop Monitor, since there are not yet two raw frames to compare
 2. `_on_raw_frame(raw_frame)` keeps a rolling list of the last 2 pre-grayscale-conversion frames and enables the button once 2 frames are available
 3. Clicking the button opens a `GrayscaleDifferenceComparisonDialog` built from the stored frame pair and whichever color channel (Red, Green, or Blue) is currently selected in Settings
-4. The dialog applies the same amplification method (gain_factor, normalize, CLAHE, gamma, or none) and parameters that the main monitor is using, so all four grayscale methods can be fairly compared
+4. The dialog applies the same amplification method (gain_factor or none) that the main monitor is using, so all four grayscale methods can be fairly compared
 5. Same on-demand, no cost when unused design as the Compare Amplification Methods button
 
 ### GrayscaleComparisonDialog
@@ -388,7 +361,7 @@ A modal popup that answers "which grayscale method produces the clearest differe
 2. For each grayscale method (Standard, NumPy, Pillow, OpenCV HSV):
    - Convert both frames using that method
    - Compute the absolute pixel-wise difference between them
-   - Apply the same amplification (gain_factor, normalize, CLAHE, gamma, or none) that the monitor is currently using
+   - Apply the same amplification (gain_factor or none) that the monitor is currently using
 3. Lay out one column per method: the resulting difference image, plus timing and average intensity metrics
 4. A Close button dismisses the dialog; nothing here mutates the running monitor's settings
 5. The amplification visibility is critical: raw differences are nearly black (pixel values 0-50), so without amplification all four methods look equally dim and useless; applying the same amplification the monitor uses makes the differences visible and comparable
@@ -480,11 +453,11 @@ SetupPage.settings() → MonitorWorker.__init__() → stored in _settings → re
 
 ### Amplification Only Touches the Diff, Never the Live Feed
 
-`_apply_diff_amplification()` is only ever called with `raw_diff` or `raw_change`, the arrays computed after averaging and subtraction. The live feed frame (`averaged` in frame averaging, `frame2` in averaged differences) is emitted through `frame_ready` completely untouched by whichever amplification method is selected. This holds for CLAHE and gamma the same way it already held for normalize and gain_factor, since all five methods are dispatched from the same single call site in each strategy method.
+`_apply_diff_amplification()` is only ever called with `raw_diff` or `raw_change`, the arrays computed after averaging and subtraction. The live feed frame (`averaged` in frame averaging, `frame2` in averaged differences) is emitted through `frame_ready` completely untouched by whichever amplification method is selected. This holds for gain_factor the same way it held for the methods since removed (normalize, CLAHE, gamma), since both remaining methods are dispatched from the same single call site in each strategy method.
 
 ### One Dispatcher Instead of a Repeated if/elif
 
-Before CLAHE and gamma were added, both `_run_frame_averaging` and `_run_averaged_differences` had their own copy of the same `if method == "normalize": ... elif method == "gain_factor": ... else: ...` block. Adding two more methods to two separate copies would have meant four edits to keep in sync instead of one. Pulling that block into `_apply_diff_amplification()` means both strategy methods now call the exact same function, so a bug fix or a new method only needs to change in one place.
+Both `_run_frame_averaging` and `_run_averaged_differences` call the same `_apply_diff_amplification()` instead of each keeping their own copy of the `if method == "gain_factor": ... else: ...` block, so a bug fix or a new method only needs to change in one place.
 
 ## Why This Design
 
@@ -494,7 +467,7 @@ Before CLAHE and gamma were added, both `_run_frame_averaging` and `_run_average
 4. **Settings dict** keeps configuration flowing one direction (Setup → Worker) without tight coupling.
 5. **Signal-based updates** keep camera I/O off the main Qt thread while safely updating the GUI.
 6. **Navigation gating** prevents invalid states (e.g., viewing Live Monitor when no monitor is running).
-7. **CLAHE and gamma live in monitor_gui.py, not camera_control*.py**, because they are plain OpenCV/NumPy operations with no camera-specific behavior, unlike normalize which stays delegated to each camera_control*.py module's own amplify_difference().
+7. **Only gain_factor or none**: normalize contrast (which delegated to each camera_control*.py module's own amplify_difference()), CLAHE, and gamma correction were removed to keep exactly one amplification story across the whole project.
 8. **Compare Amplification Methods is a button, not an always-on panel**, so comparing costs CPU only when the operator actually asks for it, not on every frame for everyone.
 
 ## Related Files

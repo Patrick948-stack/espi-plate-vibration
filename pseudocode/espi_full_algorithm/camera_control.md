@@ -230,19 +230,6 @@ Subtracts a reference image from the current frame to highlight changes.
 
 **Purpose:** Shows only the vibration, not the static background.
 
-### amplify_differences(image, gain_factor)
-
-Multiplies pixel values to make small changes more visible.
-
-**What it does:**
-1. Convert image to float
-2. Multiply all pixels by gain_factor
-3. Clamp to valid range (0 to 255 for Mono8)
-4. Convert back to uint8
-5. Return amplified image
-
-**Example:** gain_factor=2.0 makes differences twice as bright
-
 ### apply_threshold(image, threshold_value)
 
 Turns an image into pure black and white (binary).
@@ -340,7 +327,7 @@ Saves an image to disk AND displays it.
 3. Capture reference: `ref = grab_single_frame(camera)`
 4. Capture measurements: `frames = grab_continuous(camera, 30)`
 5. Process each frame: `diff = subtract_background(ref, frame)`
-6. Amplify: `bright = amplify_differences(diff, 2.0)`
+6. Amplify: `bright = cv2.convertScaleAbs(diff, alpha=gain_factor)`
 7. Threshold: `binary = apply_threshold(bright, 128)`
 8. Analyze: `nodes = detect_node_regions(binary)`
 9. Log results: `save_measurement_log(...)`

@@ -1223,13 +1223,15 @@ class TestSweepPage:
 
         assert page._saved_image_display.pixmap().isNull()
 
-    def test_saved_image_is_contrast_stretched_not_shown_literally(self, qtbot, tmp_path):
+    def test_saved_image_is_shown_exactly_as_saved(self, qtbot, tmp_path):
         """
-        Regression test for a real bug: the saved file holds the raw
-        averaged difference image, whose pixel values are so small that
-        displaying it literally reads as solid black even though the file
-        has real, visible content once contrast-stretched (exactly what
-        the Results page already does when rendering the same data).
+        The saved file already holds the gain_factor-amplified difference
+        image (complete_pipeline*.py applies gain_factor before saving), so
+        the preview thumbnail must show that data as is -- no separate
+        contrast stretch layered on top of it. This project only ever
+        amplifies via gain_factor or not at all, in run_experiment_gui.py
+        the same as in monitor_gui.py, so a saved pixel value maps to the
+        exact same on-screen brightness here.
         """
         settings_manager.save_settings({
             **settings_manager.DEFAULT_SETTINGS,
@@ -1240,8 +1242,8 @@ class TestSweepPage:
         page.begin("1", "1", _sweep_params(output_dir=str(tmp_path)))
         page._sweep_start_time = time.time()
 
-        # A real raw difference frame: mostly low values with a small
-        # bright region -- visually black until normalized to 0-255.
+        # A gain_factor-scaled difference frame: mostly low values with a
+        # small bright region, saved by the pipeline exactly like this.
         raw = np.full((20, 20), 5, dtype=np.uint8)
         raw[5:10, 5:10] = 20
         cv2.imwrite(str(tmp_path / "espi_sweep_2026-01-01_00100.0Hz_010000us.png"), raw)
@@ -1251,15 +1253,16 @@ class TestSweepPage:
         pixmap = page._saved_image_display.pixmap()
         assert not pixmap.isNull()
         image = pixmap.toImage()
-        # After stretching 5..20 to 0..255, the brightest pixel should
-        # read close to white -- literal (unstretched) values could never
-        # get anywhere near this bright.
+        # No amplification is applied here beyond what the pipeline already
+        # baked into the saved file, so the brightest pixel on screen must
+        # match the brightest saved pixel value (20), not a stretched value
+        # anywhere close to white.
         brightest = max(
             QColor(image.pixel(x, y)).lightness()
             for x in range(image.width())
             for y in range(image.height())
         )
-        assert brightest > 200
+        assert brightest < 50
 
     def test_on_progress_updates_bar_and_label(self, qtbot):
         # Calls _on_progress() directly rather than racing a real worker

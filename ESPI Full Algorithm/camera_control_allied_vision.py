@@ -905,19 +905,6 @@ def substract_frames(previous: np.ndarray,
     return cv2.absdiff(previous, current)
 
 
-def amplify_difference(diff: np.ndarray) -> np.ndarray:
-    """
-    Stretch contrast so the darkest pixel becomes 0 and the brightest becomes 255.
-
-    Raw ESPI difference images are usually very dark — the plate barely moves
-    so the pixel changes are tiny. This makes the fringe pattern visible.
-
-    Example:
-        amplified = amplify_difference(diff)
-    """
-    return cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-
 def binarize_diff(diff: np.ndarray, method: str = "otsu") -> tuple:
     """
     Threshold the difference image to produce a black-and-white mask.
@@ -957,19 +944,22 @@ def show_diff(diff: np.ndarray, amplified: np.ndarray,
     cv2.destroyAllWindows()
 
 
-def run_espi_pipeline(reference: np.ndarray, live: np.ndarray) -> dict:
+def run_espi_pipeline(reference: np.ndarray, live: np.ndarray, gain_factor: float = 1.0) -> dict:
     """
     Run the full ESPI pipeline on two frames in one call.
+
+    gain_factor multiplies the difference before thresholding/coloring; 1.0
+    (the default) leaves it unchanged.
 
     Returns a dictionary with keys:
         'diff', 'amplified', 'binary', 'colored', 'threshold'
 
     Example:
-        result = run_espi_pipeline(frame_a, frame_b)
+        result = run_espi_pipeline(frame_a, frame_b, gain_factor=10.0)
         save_image(result["amplified"], "output/", 440.0, 10000, "test")
     """
     diff      = substract_frames(reference, live)
-    amplified = amplify_difference(diff)
+    amplified = cv2.convertScaleAbs(diff, alpha=gain_factor)
     binary, threshold = binarize_diff(amplified, method="otsu")
     colored = cv2.applyColorMap(amplified, cv2.COLORMAP_JET)
 
@@ -1412,7 +1402,6 @@ __all__ = [
 
     # Section 5: ESPI Processing
     "substract_frames",
-    "amplify_difference",
     "binarize_diff",
     "show_diff",
     "run_espi_pipeline",

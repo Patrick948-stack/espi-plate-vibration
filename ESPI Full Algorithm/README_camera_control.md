@@ -223,10 +223,9 @@ These functions turn two camera frames into an ESPI fringe image.
 | Function | What it does |
 |---|---|
 | `substract_frames(frame_a, frame_b)` | Pixel-by-pixel absolute difference between two frames |
-| `amplify_difference(diff)` | Stretches the contrast so faint fringes become visible |
 | `binarize_diff(diff)` | Converts the grey image to pure black and white |
 | `average_img(list_of_images)` | Averages a list of images together to reduce noise |
-| `run_espi_pipeline(reference, live)` | Does subtract + amplify + binarize all in one call |
+| `run_espi_pipeline(reference, live, gain_factor=1.0)` | Does subtract + amplify (via gain_factor) + binarize all in one call |
 | `show_diff(diff, amplified, binary)` | Opens preview windows on screen |
 | `save_diff(diff, path)` | Saves a difference image to a file path |
 

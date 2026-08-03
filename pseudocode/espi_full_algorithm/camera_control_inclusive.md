@@ -134,7 +134,7 @@ function discard_warmup_frames(camera, n = 5):
 
 Identical logic to `camera_control.py` — these functions only operate on
 numpy arrays and do not depend on which camera produced them:
-`substract_frames`, `amplify_difference`, `binarize_diff`, `show_diff`,
+`substract_frames`, `binarize_diff`, `show_diff`,
 `run_espi_pipeline`, `save_diff`, `average_img`. See `camera_control.md`
 Section 5 for the pseudocode; the only difference here is that
 `substract_frames` returns nothing (instead of raising an error) if the two

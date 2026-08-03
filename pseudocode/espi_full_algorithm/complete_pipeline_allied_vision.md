@@ -122,9 +122,8 @@ function frequency_sweep_allied_vision(start_freq, end_freq, step,
 
             save_image(averaged, output_dir, freq, exposure_us,
                        step="espi_av_raw")
-            amplified = amplify_difference(averaged)
             results[freq] = averaged
-            show amplified in a "Last Result" window
+            show averaged.copy() in a "Last Result" window
 
     except Ctrl+C: print that the sweep was interrupted
     except any other error: print the full traceback, re-raise after clean-up

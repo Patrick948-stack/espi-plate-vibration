@@ -509,16 +509,11 @@ def frequency_sweep_inclusive(
                 continue
 
             # ------------------------------------------------------------------
-            # 8f. Save images to disk.
+            # 8f. Save the averaged difference image to disk.
             #
-            #     We save two versions:
-            #       "espi_raw"       — the averaged difference, already scaled by
-            #                          gain_factor (default 1, saturating so it
-            #                          cannot wrap around). Not the untouched
-            #                          camera data — see gain_factor above.
-            #       "espi_amplified" — contrast-stretched on top of that so the
-            #                          fringe pattern fills the full 0-255 range.
-            #                          Use this to visually inspect the mode shape.
+            #     "espi_raw" is already scaled by gain_factor (default 1,
+            #     saturating so it cannot wrap around) — not the untouched
+            #     camera data, see gain_factor above.
             # ------------------------------------------------------------------
             saved_raw = save_image(
                 averaged,
@@ -530,11 +525,11 @@ def frequency_sweep_inclusive(
             if saved_raw:
                 print(f"  Saved (raw):       {os.path.basename(saved_raw)}")
 
-            amplified = amplify_difference(averaged)
-
             results[freq] = averaged
 
-            disp = amplified.copy()
+            # .copy() because cv2.putText draws in place, and averaged is also
+            # what got stored in results[freq] and saved to disk above.
+            disp = averaged.copy()
             cv2.putText(disp, f"Last: {freq:g} Hz", (10, 34),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, 200, 2, cv2.LINE_AA)
             cv2.imshow("ESPI Sweep — Last Result", disp)
@@ -898,11 +893,11 @@ def reference_frequency_sweep_inclusive(
             if saved_raw:
                 print(f"  Saved (raw):       {os.path.basename(saved_raw)}")
 
-            amplified = amplify_difference(averaged)
-
             results[freq] = averaged
 
-            disp = amplified.copy()
+            # .copy() because cv2.putText draws in place, and averaged is also
+            # what got stored in results[freq] and saved to disk above.
+            disp = averaged.copy()
             cv2.putText(disp, f"Last: {freq:g} Hz", (10, 34),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, 200, 2, cv2.LINE_AA)
             cv2.imshow("ESPI Sweep — Last Result", disp)

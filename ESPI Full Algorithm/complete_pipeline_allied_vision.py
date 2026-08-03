@@ -479,7 +479,6 @@ def frequency_sweep_allied_vision(
                 failed_frequencies.append(freq)
                 continue
 
-            # Save both a raw and a contrast-amplified version of the result.
             # "espi_av_raw" is already scaled by gain_factor (see docstring);
             # it is not the untouched camera data.
             saved_raw = save_image(averaged, output_dir=output_dir,
@@ -488,12 +487,12 @@ def frequency_sweep_allied_vision(
             if saved_raw:
                 print(f"  Saved (raw):       {os.path.basename(saved_raw)}")
 
-            amplified = amplify_difference(averaged)
-
             results[freq] = averaged
 
-            # Show the amplified result as a quick visual check.
-            disp = amplified.copy()
+            # Show the gain_factor-scaled result as a quick visual check.
+            # .copy() because cv2.putText draws in place, and averaged is also
+            # what got stored in results[freq] and saved to disk above.
+            disp = averaged.copy()
             cv2.putText(disp, f"Last: {freq:g} Hz", (10, 34),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, 200, 2, cv2.LINE_AA)
             cv2.imshow("ESPI Sweep — Last Result", disp)
@@ -669,11 +668,11 @@ def reference_frequency_sweep_allied_vision(
             if saved_raw:
                 print(f"  Saved (raw):       {os.path.basename(saved_raw)}")
 
-            amplified = amplify_difference(averaged)
-
             results[freq] = averaged
 
-            disp = amplified.copy()
+            # .copy() because cv2.putText draws in place, and averaged is also
+            # what got stored in results[freq] and saved to disk above.
+            disp = averaged.copy()
             cv2.putText(disp, f"Last: {freq:g} Hz", (10, 34),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, 200, 2, cv2.LINE_AA)
             cv2.imshow("ESPI Sweep — Last Result", disp)

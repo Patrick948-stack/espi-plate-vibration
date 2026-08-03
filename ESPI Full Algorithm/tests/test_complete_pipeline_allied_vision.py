@@ -206,7 +206,6 @@ def hw(tmp_path):
                       return_value=[FAKE_FRAME, FAKE_FRAME]), \
          patch.object(cp, "substract_frames",  return_value=FAKE_FRAME), \
          patch.object(cp, "average_img",        return_value=FAKE_FRAME), \
-         patch.object(cp, "amplify_difference", return_value=FAKE_FRAME), \
          patch.object(cp, "save_image",         return_value=str(tmp_path / "img.png")), \
          patch.object(cp, "_cleanup"), \
          patch.object(cp, "_print_sweep_summary"):
@@ -324,7 +323,6 @@ class TestReferenceFrequencySweepAVMocked:
                           return_value=[FAKE_FRAME]), \
              patch.object(cp, "substract_frames",  return_value=FAKE_FRAME), \
              patch.object(cp, "average_img",        return_value=FAKE_FRAME), \
-             patch.object(cp, "amplify_difference", return_value=FAKE_FRAME), \
              patch.object(cp, "save_image",         return_value=str(tmp_path / "img.png")), \
              patch.object(cp, "_cleanup"), \
              patch.object(cp, "_print_sweep_summary"):

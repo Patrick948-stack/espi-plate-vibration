@@ -5,7 +5,7 @@ Tests for camera_control_inclusive.py (any OpenCV-supported camera).
 Sections covered
 ----------------
   Pure functions (no camera required):
-    substract_frames, amplify_difference, binarize_diff, average_img,
+    substract_frames, binarize_diff, average_img,
     run_espi_pipeline, build_filename, save_image, save_session_log,
     log_frame_metadata
 
@@ -67,27 +67,6 @@ class TestSubstractFrames:
         assert diff.shape == gray_100x100.shape
 
 
-class TestAmplifyDifference:
-    def test_output_is_uint8(self, gray_100x100, gray_100x100_b):
-        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
-        amp = cc.amplify_difference(diff)
-        assert amp.dtype == np.uint8
-
-    def test_output_range_full(self, gray_100x100, gray_100x100_b):
-        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
-        amp = cc.amplify_difference(diff)
-        assert int(amp.min()) == 0
-        assert int(amp.max()) == 255
-
-    def test_all_zero_stays_zero(self, black_image):
-        amp = cc.amplify_difference(black_image)
-        assert np.all(amp == 0)
-
-    def test_shape_preserved(self, gray_100x100, gray_100x100_b):
-        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
-        amp = cc.amplify_difference(diff)
-        assert amp.shape == diff.shape
-
 
 class TestBinarizeDiff:
     def test_returns_tuple_of_two(self, gray_100x100):
@@ -147,6 +126,27 @@ class TestRunEspiPipeline:
     def test_binary_is_only_0_and_255(self, gray_100x100, gray_100x100_b):
         result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b)
         assert set(np.unique(result["binary"])).issubset({0, 255})
+
+
+class TestRunEspiPipelineGainFactor:
+    """
+    amplify_difference() (contrast normalization) is gone. Amplification is
+    now gain_factor only, applied with cv2.convertScaleAbs.
+    """
+
+    def test_default_gain_factor_is_a_no_op(self, gray_100x100, gray_100x100_b):
+        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
+        result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b)
+        assert np.array_equal(result["amplified"], diff)
+
+    def test_gain_factor_scales_the_difference(self, gray_100x100, gray_100x100_b):
+        diff = cc.substract_frames(gray_100x100, gray_100x100_b)
+        result = cc.run_espi_pipeline(gray_100x100, gray_100x100_b, gain_factor=3.0)
+        expected = cv2.convertScaleAbs(diff, alpha=3.0)
+        assert np.array_equal(result["amplified"], expected)
+
+    def test_amplify_difference_no_longer_exists(self):
+        assert not hasattr(cc, "amplify_difference")
 
 
 # ===========================================================================

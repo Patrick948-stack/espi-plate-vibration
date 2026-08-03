@@ -150,7 +150,7 @@ function discard_warmup_frames(camera, n = 5):
 ## Section 5 — ESPI image processing
 
 Identical logic to `camera_control.py`: `substract_frames`,
-`amplify_difference`, `binarize_diff`, `show_diff`, `run_espi_pipeline`,
+`binarize_diff`, `show_diff`, `run_espi_pipeline`,
 `save_diff`, `average_img`. These functions only operate on numpy arrays and
 have no camera-specific code — see `camera_control.md` Section 5 for the
 pseudocode.
