@@ -13,7 +13,7 @@ All settings are loaded from and saved to disk via settings_manager.
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QRadioButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QRadioButton,
     QButtonGroup, QComboBox, QCheckBox, QDoubleSpinBox, QSpinBox, QPushButton,
     QDialog, QTextBrowser, QScrollArea, QSizePolicy, QApplication,
 )
@@ -76,6 +76,9 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        grid = QGridLayout()
+        grid.setSpacing(16)
 
         # ========== Group 1: Grayscale Conversion Method ==========
         grayscale_group = QGroupBox("Grayscale Conversion Method")
@@ -140,7 +143,7 @@ class SettingsPage(QWidget):
 
         grayscale_layout.addStretch()
         grayscale_group.setLayout(grayscale_layout)
-        layout.addWidget(grayscale_group)
+        grid.addWidget(grayscale_group, 0, 0)
 
         # Wire visibility updates BEFORE setting initial state
         for radio in self._grayscale_radios.values():
@@ -200,7 +203,7 @@ class SettingsPage(QWidget):
 
         camera_layout.addStretch()
         camera_group.setLayout(camera_layout)
-        layout.addWidget(camera_group)
+        grid.addWidget(camera_group, 0, 1)
 
         # Wire camera visibility updates (will be called at end of __init__)
         for radio in self._camera_radios.values():
@@ -285,7 +288,7 @@ class SettingsPage(QWidget):
 
         capture_layout.addStretch()
         capture_group.setLayout(capture_layout)
-        layout.addWidget(capture_group)
+        grid.addWidget(capture_group, 1, 0)
 
 
 
@@ -318,7 +321,9 @@ class SettingsPage(QWidget):
 
         live_layout.addStretch()
         live_group.setLayout(live_layout)
-        layout.addWidget(live_group)
+        grid.addWidget(live_group, 1, 1)
+
+        layout.addLayout(grid)
 
         # ========== Save control ==========
         # This is the missing piece that caused the reported "settings

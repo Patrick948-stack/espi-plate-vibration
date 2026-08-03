@@ -1370,6 +1370,9 @@ class SettingsPage(QWidget):
         self._setup_page = setup_page
         layout = QVBoxLayout()
 
+        grid = QGridLayout()
+        grid.setSpacing(16)
+
         # Grayscale conversion method group
         grayscale_group = QGroupBox("Grayscale Conversion Method")
         grayscale_layout = QVBoxLayout()
@@ -1428,7 +1431,7 @@ class SettingsPage(QWidget):
 
         grayscale_layout.addStretch()
         grayscale_group.setLayout(grayscale_layout)
-        layout.addWidget(grayscale_group)
+        grid.addWidget(grayscale_group, 0, 0)
 
         # Wire grayscale method radio button changes to update visibility
         # (Must be connected before setting initial state to ensure visibility is correct)
@@ -1468,7 +1471,7 @@ class SettingsPage(QWidget):
         self._averaging_radios["averaged_differences"].setChecked(True)
         avg_layout.addStretch()
         avg_group.setLayout(avg_layout)
-        layout.addWidget(avg_group)
+        grid.addWidget(avg_group, 0, 1)
 
         # Intensity graph group
         graph_group = QGroupBox("Intensity Graph")
@@ -1503,7 +1506,7 @@ class SettingsPage(QWidget):
         self._graph_radios["4"].setChecked(True)
         graph_layout.addStretch()
         graph_group.setLayout(graph_layout)
-        layout.addWidget(graph_group)
+        grid.addWidget(graph_group, 1, 0)
 
         # Difference amplification group
         amp_group = QGroupBox("Difference Amplification")
@@ -1533,7 +1536,7 @@ class SettingsPage(QWidget):
 
         amp_layout.addStretch()
         amp_group.setLayout(amp_layout)
-        layout.addWidget(amp_group)
+        grid.addWidget(amp_group, 1, 1)
 
         self._amp_radios["gain_factor"].setChecked(True)
 
@@ -1550,7 +1553,9 @@ class SettingsPage(QWidget):
         advanced_layout.addWidget(self._show_gain_checkbox)
 
         advanced_group.setLayout(advanced_layout)
-        layout.addWidget(advanced_group)
+        grid.addWidget(advanced_group, 2, 0, 1, 2)
+
+        layout.addLayout(grid)
 
         layout.addStretch()
 
