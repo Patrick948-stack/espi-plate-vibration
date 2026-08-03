@@ -6,7 +6,7 @@ A complete pseudocode folder documenting every major file in the ESPI Camera Con
 
 ### Files Created
 
-**27 pseudocode files in plain English:**
+**28 pseudocode files in plain English:**
 
 #### Application Framework (espi_app/)
 - main.md - Application entry point
@@ -14,6 +14,7 @@ A complete pseudocode folder documenting every major file in the ESPI Camera Con
 - main_window.md - Landing page GUI
 - mode_card.md - The clickable mode selection card widget
 - logo.md - The ESPI logo widget
+- background_decoration.md - Subtle corner dot decoration painted behind the landing page
 - settings_dialog.md - Settings interface (Hardware, UI tabs)
 - styles.md - Theme and styling system
 
@@ -43,7 +44,7 @@ A complete pseudocode folder documenting every major file in the ESPI Camera Con
 
 All major modules in the project are now documented:
 
-- 7 espi_app files (PyQt6 GUI framework)
+- 8 espi_app files (PyQt6 GUI framework)
 - 19 espi_full_algorithm files (core ESPI measurement, all three camera types plus the signal generator package)
 - 1 camera file (a low-level learning exercise, not part of either GUI)
 
@@ -70,6 +71,7 @@ pseudocode/
 │   ├── main_window.md
 │   ├── mode_card.md
 │   ├── logo.md
+│   ├── background_decoration.md
 │   ├── settings_dialog.md
 │   └── styles.md
 ├── espi_full_algorithm/

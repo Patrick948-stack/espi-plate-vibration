@@ -33,6 +33,7 @@ from espi_app.settings_dialog import SettingsDialog
 from espi_app.styles import apply_theme, icon_color, landing_accent_colors, text_secondary_color
 from espi_app.logo import ESPILogo
 from espi_app.mode_card import ModeCard
+from espi_app.background_decoration import LandingBackground
 import qtawesome as qta
 
 # Below this window width, the mode cards stack vertically instead of
@@ -96,15 +97,18 @@ class LandingPage(QMainWindow):
         self.setWindowTitle("ESPI Camera Control")
         self._restore_or_default_geometry()
 
-        # Central widget — everything goes here
-        central = QWidget()
-        layout = QVBoxLayout()
-        layout.setSpacing(16)  # Space between elements
-        layout.setContentsMargins(32, 32, 32, 32)  # Padding around edges
-
         current_theme = self.settings_manager.get("ui.theme")
         current_icon_color = icon_color(current_theme)
         accents = landing_accent_colors(current_theme)
+
+        # Central widget — everything goes here. LandingBackground paints
+        # the shared theme background plus a subtle corner dot decoration
+        # behind every widget added to it below.
+        central = LandingBackground(current_theme, current_icon_color)
+        self._background = central
+        layout = QVBoxLayout()
+        layout.setSpacing(16)  # Space between elements
+        layout.setContentsMargins(32, 32, 32, 32)  # Padding around edges
 
         # --- Logo ---
         self.logo = ESPILogo(current_theme, size_px=100)
@@ -471,6 +475,7 @@ class LandingPage(QMainWindow):
         current_icon_color = icon_color(theme_name)
         self.settings_button.setIcon(qta.icon('mdi.cog', color=current_icon_color))
         self.help_button.setIcon(qta.icon('mdi.help-circle-outline', color=current_icon_color))
+        self._background.set_theme(theme_name, current_icon_color)
 
         accents = landing_accent_colors(theme_name)
         self.logo.set_theme(theme_name)

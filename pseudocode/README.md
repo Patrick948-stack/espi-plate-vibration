@@ -32,6 +32,7 @@ pseudocode/
 │   ├── main_window.md - Landing page and mode selection
 │   ├── mode_card.md - The clickable mode selection card widget
 │   ├── logo.md - The ESPI logo widget
+│   ├── background_decoration.md - Subtle corner dot decoration painted behind the landing page
 │   ├── settings_dialog.md - Settings UI dialog (Hardware, UI tabs)
 │   └── styles.md - Theme and styling system
 ├── espi_full_algorithm/

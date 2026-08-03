@@ -373,6 +373,9 @@ only.
   big buttons on the landing page
 * `logo.py`: `ESPILogo`, renders `logo.svg` for the landing page and
   Monitor/Scan title bars
+* `background_decoration.py`: `LandingBackground`, the landing page's
+  central widget, paints a subtle corner dot decoration behind the logo
+  and mode cards
 * `espi_logo_viewer.py`: a standalone script (`python3
   espi_app/espi_logo_viewer.py`) for previewing the logo at multiple
   sizes on both backgrounds, not used by the main app

@@ -24,6 +24,7 @@ The modern GUI application that users interact with, the unified landing page. E
 | [espi_app/main_window.md](espi_app/main_window.md) | Landing page with mode selection (Monitor vs. Scan) |
 | [espi_app/mode_card.md](espi_app/mode_card.md) | The clickable mode selection card widget behind the two landing page buttons |
 | [espi_app/logo.md](espi_app/logo.md) | The ESPI logo widget, rendered from logo.svg |
+| [espi_app/background_decoration.md](espi_app/background_decoration.md) | Subtle corner dot decoration painted behind the landing page |
 | [espi_app/settings_dialog.md](espi_app/settings_dialog.md) | Settings dialog with Hardware and UI tabs |
 | [espi_app/styles.md](espi_app/styles.md) | Light and dark themes, shared with ESPI Full Algorithm/theme.py |
 
