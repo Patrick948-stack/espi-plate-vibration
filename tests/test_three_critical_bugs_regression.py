@@ -142,51 +142,6 @@ class TestBug2CameraLockDuringSweep:
     - No camera lock errors
     """
 
-    def test_sweep_does_not_start_monitoring_worker_that_competes_for_camera(self, qtbot):
-        """
-        Verify that SweepPage._start_sweep() does NOT create LiveMonitoringWorker.
-
-        BEFORE FIX: Would create monitoring worker that tries to connect to camera
-        AFTER FIX: Monitoring worker disabled to prevent camera lock
-        """
-        from run_experiment_gui import SweepPage
-
-        page = SweepPage()
-        qtbot.addWidget(page)
-
-        # Set up minimal params
-        page.begin(
-            camera_choice="2",  # USB camera
-            mode_choice="1",
-            params={
-                "start_freq": 100.0,
-                "end_freq": 200.0,
-                "step": 50.0,
-                "n_averages": 2,
-                "exposure": 0.01,
-                "gain": 0.0,
-                "gain_factor": 1.0,
-                "output_dir": "output",
-            }
-        )
-
-        # Mock the SweepWorker to avoid actually connecting
-        with patch("run_experiment_gui.SweepWorker") as mock_sweep:
-            mock_worker = MagicMock()
-            mock_sweep.return_value = mock_worker
-
-            # Call _start_sweep
-            page._start_sweep()
-
-            # VERIFY: monitoring_worker should NOT be created
-            # BEFORE FIX: page._monitoring_worker would be a LiveMonitoringWorker instance
-            # AFTER FIX: page._monitoring_worker is None and monitoring_group is hidden
-            assert page._monitoring_worker is None, \
-                "BUG 2: LiveMonitoringWorker should not be created (it competes for camera)"
-
-            assert not page._monitoring_group.isVisible(), \
-                "BUG 2: Monitoring group should be hidden when disabled"
-
     def test_sweep_worker_created_without_competing_monitoring_worker(self, qtbot):
         """
         Verify SweepWorker is created and started when _start_sweep is called.

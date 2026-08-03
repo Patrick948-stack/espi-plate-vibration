@@ -35,6 +35,7 @@ class TestDefaultSettings:
             "grayscale_backend",
             "default_camera_choice",
             "default_camera_index",
+            "default_mode_choice",
             "show_gain",
             "default_start_freq",
             "default_end_freq",
@@ -43,8 +44,16 @@ class TestDefaultSettings:
             "default_exposure",
             "default_gain",
             "default_gain_factor",
-            "show_live_feed_during_sweep",
+            "default_amplitude",
+            "default_offset",
             "show_saved_image_after_capture",
+            "theme",
+            "preview_size",
+            "monitor_default_exposure",
+            "monitor_default_gain",
+            "monitor_default_gain_factor",
+            "use_last_settings_as_default",
+            "last_used_dashboard",
         }
         assert set(DEFAULT_SETTINGS.keys()) == required_keys
 

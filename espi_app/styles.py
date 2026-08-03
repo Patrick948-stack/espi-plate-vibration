@@ -60,3 +60,43 @@ def icon_color(theme_name: str) -> str:
 
     normalized = "dark" if theme_name.lower() == "dark" else "light"
     return theme.icon_color(normalized)
+
+
+# Landing page mode-card colors. Deliberately kept out of the shared
+# ESPI Full Algorithm/theme.py (used by monitor_gui.py and
+# run_experiment_gui.py too) -- these are scoped to espi_app's landing
+# page alone. Monochrome throughout (matching the approved mockup): the
+# icon badge is just a subtle circle a shade different from the card
+# background, and icons/logo use the same primary text color as
+# everything else, not a distinct accent color.
+LANDING_ACCENTS = {
+    "dark": {
+        "card_bg": "#232323",
+        "card_border": "#383838",
+        "card_hover_bg": "#2e2e2e",
+        "icon_badge_bg": "#2e2e2e",
+        "divider_color": "#4a4a4a",
+    },
+    "light": {
+        "card_bg": "#f5f5f7",
+        "card_border": "#d8d8dc",
+        "card_hover_bg": "#ececf0",
+        "icon_badge_bg": "#ececf0",
+        "divider_color": "#c4c4c4",
+    },
+}
+
+
+def landing_accent_colors(theme_name: str) -> dict:
+    """Return the landing page's own accent color tokens for a theme."""
+    normalized = "dark" if theme_name.lower() == "dark" else "light"
+    return LANDING_ACCENTS[normalized]
+
+
+def text_secondary_color(theme_name: str) -> str:
+    """Return the shared theme's muted/secondary text color for a theme."""
+    _ensure_espi_algorithm_on_path()
+    import theme
+
+    normalized = "dark" if theme_name.lower() == "dark" else "light"
+    return theme.colors(normalized)["text_secondary"]

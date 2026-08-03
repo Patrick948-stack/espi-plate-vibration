@@ -26,15 +26,15 @@ from espi_app.styles import apply_theme
 # ===========================================================================
 
 class TestMonitorModeLaunch:
-    def test_monitor_button_opens_a_real_monitor_window(self, qtbot):
+    def test_monitor_card_opens_a_real_monitor_window(self, qtbot):
         window = LandingPage()
         qtbot.addWidget(window)
 
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
 
         assert window._monitor_window is not None
         assert window._monitor_window.isVisible()
-        assert not window.monitor_button.isEnabled()
+        assert not window.monitor_card.isEnabled()
 
         window._monitor_window.close()
         qtbot.waitUntil(lambda: window._monitor_window is None, timeout=2000)
@@ -43,20 +43,20 @@ class TestMonitorModeLaunch:
         window = LandingPage()
         qtbot.addWidget(window)
 
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
         window._monitor_window.close()
         # WA_DeleteOnClose defers the actual C++ deletion (and the
         # destroyed signal) to the next event loop tick, so it will not
         # have happened yet immediately after close() returns.
         qtbot.waitUntil(lambda: window._monitor_window is None, timeout=2000)
 
-        assert window.monitor_button.isEnabled()
+        assert window.monitor_card.isEnabled()
 
     def test_clicking_monitor_twice_does_not_open_a_second_window(self, qtbot):
         window = LandingPage()
         qtbot.addWidget(window)
 
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
         first_window = window._monitor_window
 
         # The button is disabled after the first click, so a real second
@@ -87,10 +87,10 @@ class TestMonitorModeLaunch:
 
         monkeypatch.setattr(QMessageBox, "critical", staticmethod(_fake_critical))
 
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
 
         assert window._monitor_window is None
-        assert window.monitor_button.isEnabled()
+        assert window.monitor_card.isEnabled()
         assert "no camera SDK installed" in captured["text"]
 
     def test_monitor_window_keeps_the_current_app_theme(self, qtbot):
@@ -110,7 +110,7 @@ class TestMonitorModeLaunch:
         apply_theme(app, "dark")
         dark_stylesheet = app.styleSheet()
 
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
         assert app.styleSheet().startswith(dark_stylesheet)
 
         window._monitor_window.close()
@@ -122,15 +122,15 @@ class TestMonitorModeLaunch:
 # ===========================================================================
 
 class TestScanModeLaunch:
-    def test_scan_button_opens_a_real_scan_window(self, qtbot):
+    def test_scan_card_opens_a_real_scan_window(self, qtbot):
         window = LandingPage()
         qtbot.addWidget(window)
 
-        qtbot.mouseClick(window.scan_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.scan_card, Qt.MouseButton.LeftButton)
 
         assert window._scan_window is not None
         assert window._scan_window.isVisible()
-        assert not window.scan_button.isEnabled()
+        assert not window.scan_card.isEnabled()
 
         window._scan_window.close()
         qtbot.waitUntil(lambda: window._scan_window is None, timeout=2000)
@@ -139,17 +139,17 @@ class TestScanModeLaunch:
         window = LandingPage()
         qtbot.addWidget(window)
 
-        qtbot.mouseClick(window.scan_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.scan_card, Qt.MouseButton.LeftButton)
         window._scan_window.close()
         qtbot.waitUntil(lambda: window._scan_window is None, timeout=2000)
 
-        assert window.scan_button.isEnabled()
+        assert window.scan_card.isEnabled()
 
     def test_clicking_scan_twice_does_not_open_a_second_window(self, qtbot):
         window = LandingPage()
         qtbot.addWidget(window)
 
-        qtbot.mouseClick(window.scan_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.scan_card, Qt.MouseButton.LeftButton)
         first_window = window._scan_window
 
         window._on_scan_clicked()
@@ -166,7 +166,7 @@ class TestScanModeLaunch:
         apply_theme(app, "light")
         light_stylesheet = app.styleSheet()
 
-        qtbot.mouseClick(window.scan_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.scan_card, Qt.MouseButton.LeftButton)
         assert app.styleSheet() == light_stylesheet
 
         window._scan_window.close()
@@ -305,7 +305,7 @@ class TestThemeBridge:
         qtbot.addWidget(window)
         window.settings_manager.set("hardware.default_camera_choice", "1")
 
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
 
         assert espi_settings_manager.load_settings()["default_camera_choice"] == "3"
         window._monitor_window.close()
@@ -376,18 +376,18 @@ class TestLiveThemeRefresh:
         window = LandingPage()
         qtbot.addWidget(window)
 
-        before = window.monitor_button.icon()
+        before = window.monitor_card.icon_badge.pixmap()
         window._on_theme_changed("dark")
-        after = window.monitor_button.icon()
+        after = window.monitor_card.icon_badge.pixmap()
 
-        # QIcon has no equality by color, but a real re-creation produces
-        # a new QIcon object distinct from the one built at construction.
+        # QPixmap has no equality by color, but a real re-creation produces
+        # a new pixmap distinct from the one built at construction.
         assert before.cacheKey() != after.cacheKey()
 
     def test_changing_theme_refreshes_an_already_open_monitor_window(self, qtbot):
         window = LandingPage()
         qtbot.addWidget(window)
-        qtbot.mouseClick(window.monitor_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.monitor_card, Qt.MouseButton.LeftButton)
 
         window._on_theme_changed("dark")
 
@@ -399,7 +399,7 @@ class TestLiveThemeRefresh:
     def test_changing_theme_refreshes_an_already_open_scan_window(self, qtbot):
         window = LandingPage()
         qtbot.addWidget(window)
-        qtbot.mouseClick(window.scan_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(window.scan_card, Qt.MouseButton.LeftButton)
 
         window._on_theme_changed("light")
 
@@ -437,8 +437,8 @@ class TestWindowGeometryAndTooltips:
         window = LandingPage()
         qtbot.addWidget(window)
 
-        assert window.monitor_button.toolTip() != ""
-        assert window.scan_button.toolTip() != ""
+        assert window.monitor_card.toolTip() != ""
+        assert window.scan_card.toolTip() != ""
 
     def test_tooltips_cleared_when_show_tooltips_disabled(self, qtbot):
         mgr = SettingsManager()
@@ -448,5 +448,103 @@ class TestWindowGeometryAndTooltips:
         window = LandingPage()
         qtbot.addWidget(window)
 
-        assert window.monitor_button.toolTip() == ""
-        assert window.scan_button.toolTip() == ""
+        assert window.monitor_card.toolTip() == ""
+        assert window.scan_card.toolTip() == ""
+
+
+# ===========================================================================
+# Landing page visual refresh: logo, mode cards, responsive layout
+# ===========================================================================
+# Regression tests for the UI redesign memo: concentric-circle logo,
+# icon+title+description mode cards (replacing plain icon+text buttons,
+# since a QPushButton can't show a separate description line), and cards
+# that stack vertically on a narrow window instead of side by side.
+
+from PyQt6.QtWidgets import QBoxLayout
+from espi_app.mode_card import ModeCard
+from espi_app.logo import ESPILogo
+
+
+class TestModeCardWidget:
+    def test_click_emits_signal_on_press_then_release_inside(self, qtbot):
+        card = ModeCard('mdi.eye-outline', "Title", "Description", "#000000", "#eeeeee", "#cccccc")
+        qtbot.addWidget(card)
+        card.resize(240, 240)
+
+        with qtbot.waitSignal(card.clicked, timeout=1000):
+            qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=card.rect().center())
+            qtbot.mouseRelease(card, Qt.MouseButton.LeftButton, pos=card.rect().center())
+
+    def test_disabled_card_does_not_emit_clicked(self, qtbot):
+        card = ModeCard('mdi.eye-outline', "Title", "Description", "#000000", "#eeeeee", "#cccccc")
+        qtbot.addWidget(card)
+        card.resize(240, 240)
+        card.setEnabled(False)
+
+        received = []
+        card.clicked.connect(lambda: received.append(True))
+        qtbot.mouseClick(card, Qt.MouseButton.LeftButton)
+
+        assert received == []
+
+    def test_set_colors_updates_icon_and_badge(self, qtbot):
+        card = ModeCard('mdi.eye-outline', "Title", "Description", "#000000", "#eeeeee", "#cccccc")
+        qtbot.addWidget(card)
+        before = card.icon_badge.pixmap()
+
+        card.set_colors("#ffffff", "#333333")
+        after = card.icon_badge.pixmap()
+
+        assert before.cacheKey() != after.cacheKey()
+
+
+class TestESPILogo:
+    def test_logo_is_a_fixed_square(self, qtbot):
+        logo = ESPILogo("dark", size_px=100)
+        qtbot.addWidget(logo)
+        assert logo.width() == 100
+        assert logo.height() == 100
+
+    def test_set_theme_does_not_raise(self, qtbot):
+        logo = ESPILogo("dark", size_px=100)
+        qtbot.addWidget(logo)
+        logo.set_theme("light")  # must not raise
+
+    def test_dark_and_light_pixmaps_are_different(self, qtbot):
+        # logo.svg is inverted for dark theme (see logo.py's own docstring
+        # for why a plain QSvgWidget can't do this) -- confirm switching
+        # themes actually swaps to a different rendered pixmap, not a no-op.
+        logo = ESPILogo("light", size_px=100)
+        qtbot.addWidget(logo)
+        light_pixmap = logo.pixmap()
+
+        logo.set_theme("dark")
+        dark_pixmap = logo.pixmap()
+
+        assert light_pixmap.cacheKey() != dark_pixmap.cacheKey()
+
+
+class TestResponsiveLayout:
+    """
+    resizeEvent() does not reliably fire for a top-level window that is
+    never shown (as in these offscreen tests), so these call
+    _apply_responsive_layout() directly after resize() rather than
+    relying on the event -- resizeEvent() itself is a one-line wrapper
+    around the same method, so this still exercises the real logic.
+    """
+
+    def test_wide_window_shows_cards_side_by_side(self, qtbot):
+        window = LandingPage()
+        qtbot.addWidget(window)
+        window.resize(1000, 700)
+        window._apply_responsive_layout()
+
+        assert window._card_layout.direction() == QBoxLayout.Direction.LeftToRight
+
+    def test_narrow_window_stacks_cards_vertically(self, qtbot):
+        window = LandingPage()
+        qtbot.addWidget(window)
+        window.resize(600, 700)
+        window._apply_responsive_layout()
+
+        assert window._card_layout.direction() == QBoxLayout.Direction.TopToBottom

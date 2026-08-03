@@ -52,9 +52,9 @@ def test_settings_creates_default_on_first_run(temp_config_dir):
     mgr = SettingsManager()
 
     # Verify defaults are loaded
-    assert mgr.get("hardware.exposure_ms") == 5.0
+    assert mgr.get("hardware.exposure_s") == 0.05
     assert mgr.get("ui.theme") == "light"
-    assert mgr.get("visualization.show_histogram") is True
+    assert mgr.get("persistence.user_last_settings_as_default") is False
 
 
 def test_settings_get_with_dot_notation(temp_config_dir):
@@ -66,8 +66,8 @@ def test_settings_get_with_dot_notation(temp_config_dir):
     mgr = SettingsManager()
 
     # Get nested values
-    exposure = mgr.get("hardware.exposure_ms")
-    assert exposure == 5.0
+    exposure = mgr.get("hardware.exposure_s")
+    assert exposure == 0.05
 
     theme = mgr.get("ui.theme")
     assert theme == "light"
@@ -82,10 +82,10 @@ def test_settings_set_with_dot_notation(temp_config_dir):
     mgr = SettingsManager()
 
     # Set a value
-    mgr.set("hardware.exposure_ms", 15.0)
+    mgr.set("hardware.exposure_s", 15.0)
 
     # Verify it changed
-    assert mgr.get("hardware.exposure_ms") == 15.0
+    assert mgr.get("hardware.exposure_s") == 15.0
 
     # Verify other values weren't affected
     assert mgr.get("ui.theme") == "light"
@@ -100,7 +100,7 @@ def test_settings_save_and_load(temp_config_dir):
     """
     # Create first manager and modify a setting
     mgr1 = SettingsManager()
-    mgr1.set("hardware.exposure_ms", 20.0)
+    mgr1.set("hardware.exposure_s", 20.0)
     mgr1.set("ui.theme", "dark")
     mgr1.save()
     # Now settings.json should exist with these values
@@ -109,7 +109,7 @@ def test_settings_save_and_load(temp_config_dir):
     mgr2 = SettingsManager()
 
     # Verify the settings were loaded
-    assert mgr2.get("hardware.exposure_ms") == 20.0
+    assert mgr2.get("hardware.exposure_s") == 20.0
     assert mgr2.get("ui.theme") == "dark"
 
 
@@ -121,7 +121,7 @@ def test_settings_file_is_valid_json(temp_config_dir):
     We should make sure it's formatted nicely and parseable.
     """
     mgr = SettingsManager()
-    mgr.set("hardware.exposure_ms", 12.5)
+    mgr.set("hardware.exposure_s", 12.5)
     mgr.save()
 
     # Read the file directly
@@ -132,7 +132,7 @@ def test_settings_file_is_valid_json(temp_config_dir):
     data = json.loads(content)
 
     # Verify the value is there
-    assert data["hardware"]["exposure_ms"] == 12.5
+    assert data["hardware"]["exposure_s"] == 12.5
 
 
 def test_settings_multiple_sets_before_save(temp_config_dir):
@@ -144,23 +144,23 @@ def test_settings_multiple_sets_before_save(temp_config_dir):
     mgr = SettingsManager()
 
     # Make multiple changes
-    mgr.set("hardware.exposure_ms", 10.0)
-    mgr.set("hardware.frame_rate_fps", 60)
+    mgr.set("hardware.exposure_s", 10.0)
+    mgr.set("hardware.control_gain", True)
     mgr.set("ui.theme", "dark")
-    mgr.set("visualization.show_histogram", False)
+    mgr.set("persistence.default_gain", 25)
 
     # All should be in memory
-    assert mgr.get("hardware.exposure_ms") == 10.0
-    assert mgr.get("hardware.frame_rate_fps") == 60
+    assert mgr.get("hardware.exposure_s") == 10.0
+    assert mgr.get("hardware.control_gain") is True
     assert mgr.get("ui.theme") == "dark"
-    assert mgr.get("visualization.show_histogram") is False
+    assert mgr.get("persistence.default_gain") == 25
 
     # Save once
     mgr.save()
 
     # New manager should have all changes
     mgr2 = SettingsManager()
-    assert mgr2.get("hardware.exposure_ms") == 10.0
+    assert mgr2.get("hardware.exposure_s") == 10.0
     assert mgr2.get("ui.theme") == "dark"
 
 
