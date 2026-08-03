@@ -273,8 +273,8 @@ If none of those cover what you are seeing, please open an issue:
 3. Click "New Issue".
 4. Describe what you were doing, what you expected to happen, and what happened instead. Paste the exact error message if you have one.
 
-Please use GitHub Issues rather than a personal email for bug reports and questions; it keeps a record other students on this project can search later.
 
 
 Patrick Mulikuza
+
 Professor Hoffman's Lab, Whitman College
