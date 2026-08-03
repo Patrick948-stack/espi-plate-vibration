@@ -55,6 +55,7 @@ from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -455,12 +456,19 @@ class SetupPage(QWidget):
         self.exposure_spin.setValue(settings.get("monitor_default_exposure", 0.06))
         settings_layout.addWidget(self.exposure_spin)
 
-        settings_layout.addWidget(QLabel("Gain (dB):"))
+        # Gain (dB) is an advanced control most users leave alone; hidden by
+        # default until "Show Gain (dB) control" is checked on the Settings
+        # page (mirrors run_experiment_gui.py's own checkbox of the same
+        # name, sharing the same show_gain settings key so the choice is
+        # remembered, and shared, across both dashboards).
+        self._gain_label = QLabel("Gain (dB):")
+        settings_layout.addWidget(self._gain_label)
         self.gain_spin = QDoubleSpinBox()
         self.gain_spin.setDecimals(2)
         self.gain_spin.setRange(-20.0, 50.0)  # 0 dB and negative values are valid
         self.gain_spin.setValue(settings.get("monitor_default_gain", 1.0))
         settings_layout.addWidget(self.gain_spin)
+        self.set_gain_visible(settings.get("show_gain", False))
 
         settings_layout.addWidget(QLabel("gain_factor (subtraction display amplifier):"))
         self.gain_factor_spin = QDoubleSpinBox()
@@ -534,6 +542,15 @@ class SetupPage(QWidget):
         is_basler = self._radios["1"].isChecked()
         self._index_label.setVisible(not is_basler)
         self._index_spin.setVisible(not is_basler)
+
+    def set_gain_visible(self, visible: bool):
+        """
+        Show or hide the Gain (dB) control. Called once at construction with
+        whatever show_gain was saved, and again live by SettingsPage's own
+        "Show Gain (dB) control" checkbox whenever it is toggled.
+        """
+        self._gain_label.setVisible(visible)
+        self.gain_spin.setVisible(visible)
 
     def camera_choice(self):
         for choice, radio in self._radios.items():
@@ -1520,6 +1537,21 @@ class SettingsPage(QWidget):
 
         self._amp_radios["gain_factor"].setChecked(True)
 
+        # Advanced group: capture-hardware controls a typical user does not
+        # need to see. Same idea as run_experiment_gui.py's own "Show Gain
+        # (dB) control" checkbox, and the same shared show_gain settings
+        # key, so the choice is remembered and shared across both dashboards.
+        advanced_group = QGroupBox("Advanced")
+        advanced_layout = QVBoxLayout()
+
+        self._show_gain_checkbox = QCheckBox("Show Gain (dB) control")
+        self._show_gain_checkbox.setChecked(settings_manager.load_settings().get("show_gain", False))
+        self._show_gain_checkbox.toggled.connect(self._on_show_gain_toggled)
+        advanced_layout.addWidget(self._show_gain_checkbox)
+
+        advanced_group.setLayout(advanced_layout)
+        layout.addWidget(advanced_group)
+
         layout.addStretch()
 
         # Wrap in a scroll area so the page is scrollable when it gets tall,
@@ -1610,6 +1642,19 @@ class SettingsPage(QWidget):
             if radio.isChecked():
                 return choice
         return "gain_factor"
+
+    def _on_show_gain_toggled(self, checked):
+        """
+        Apply the new visibility immediately on the live Setup page, and
+        persist it to the shared settings file so the choice is remembered
+        next time, and shared with run_experiment_gui.py's own "Show Gain
+        (dB) control" checkbox, which reads and writes this exact same
+        show_gain key.
+        """
+        self._setup_page.set_gain_visible(checked)
+        current = settings_manager.load_settings()
+        current["show_gain"] = checked
+        settings_manager.save_settings(current)
 
 
 # ==============================================================================

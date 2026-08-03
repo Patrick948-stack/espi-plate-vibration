@@ -504,6 +504,7 @@ python monitor_gui.py
 - **Frame averaging method**: "Average of differences" (less noisy differences) or "Difference of averages" (classic approach).
 - **Intensity graph type**: Histogram, Log Histogram (LabVIEW style), 3D surface, or None (no graph, fastest).
 - **Difference amplification**: None (raw differences) or Gain factor (multiply by gain_factor setting, default). This only ever transforms the frame subtraction display, never the Live Feed.
+- **Advanced**: "Show Gain (dB) control" checkbox, unchecked by default. Gain (dB) on the Setup page is hidden until this is checked, the same idea as `run_experiment_gui.py`'s own "Show Gain (dB) control" checkbox, sharing the same setting so the choice is remembered across both dashboards.
 
 Each of the four groups above has its own **Learn More** button that opens a plain language explanation of every option in that group (what it does and the reasoning behind it), for anyone unfamiliar with the terms used. This is separate from the short one line tooltip already on each radio button.
 

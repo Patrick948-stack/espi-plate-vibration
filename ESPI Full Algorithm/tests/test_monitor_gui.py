@@ -206,6 +206,97 @@ class TestSetupPage:
         assert "0.02" in page._summary_label.text()
 
 
+class TestSetupPageGainVisibility:
+    """
+    Gain (dB) is an advanced control, hidden by default. The "Show Gain
+    (dB) control" checkbox that reveals it lives on SettingsPage (the gear
+    icon page), not Setup itself -- the same layout run_experiment_gui.py
+    uses (its own checkbox lives in Settings too), and both dashboards read
+    and write the same shared show_gain settings key. isVisibleTo(page) is
+    used rather than isVisible(): a bare, unshown SetupPage() always
+    reports isVisible() == False regardless of internal setVisible() calls,
+    so isVisible() would pass trivially whether or not the checkbox
+    actually controls anything.
+    """
+
+    def test_gain_hidden_by_default(self, qtbot):
+        page = SetupPage()
+        qtbot.addWidget(page)
+        settings_page = SettingsPage(page)
+        qtbot.addWidget(settings_page)
+        assert settings_page._show_gain_checkbox.isChecked() is False
+        assert not page._gain_label.isVisibleTo(page)
+        assert not page.gain_spin.isVisibleTo(page)
+
+    def test_gain_shown_when_show_gain_setting_is_true(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_gain": True,
+        })
+        page = SetupPage()
+        qtbot.addWidget(page)
+        settings_page = SettingsPage(page)
+        qtbot.addWidget(settings_page)
+        assert settings_page._show_gain_checkbox.isChecked() is True
+        assert page._gain_label.isVisibleTo(page)
+        assert page.gain_spin.isVisibleTo(page)
+
+    def test_checking_the_box_shows_gain_immediately(self, qtbot):
+        page = SetupPage()
+        qtbot.addWidget(page)
+        settings_page = SettingsPage(page)
+        qtbot.addWidget(settings_page)
+        assert not page._gain_label.isVisibleTo(page)
+
+        settings_page._show_gain_checkbox.setChecked(True)
+
+        assert page._gain_label.isVisibleTo(page)
+        assert page.gain_spin.isVisibleTo(page)
+
+    def test_unchecking_the_box_hides_gain_again(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_gain": True,
+        })
+        page = SetupPage()
+        qtbot.addWidget(page)
+        settings_page = SettingsPage(page)
+        qtbot.addWidget(settings_page)
+        assert page._gain_label.isVisibleTo(page)
+
+        settings_page._show_gain_checkbox.setChecked(False)
+
+        assert not page._gain_label.isVisibleTo(page)
+        assert not page.gain_spin.isVisibleTo(page)
+
+    def test_toggling_the_box_persists_to_settings(self, qtbot):
+        """
+        The checkbox writes straight through to settings_manager, so it is
+        remembered next time, and so run_experiment_gui.py's own "Show Gain
+        (dB) control" checkbox (same show_gain key) picks up the change too.
+        """
+        page = SetupPage()
+        qtbot.addWidget(page)
+        settings_page = SettingsPage(page)
+        qtbot.addWidget(settings_page)
+
+        settings_page._show_gain_checkbox.setChecked(True)
+        assert settings_manager.load_settings()["show_gain"] is True
+
+        settings_page._show_gain_checkbox.setChecked(False)
+        assert settings_manager.load_settings()["show_gain"] is False
+
+    def test_setup_page_alone_still_defaults_to_hidden(self, qtbot):
+        """A SetupPage constructed on its own (no SettingsPage built yet,
+        e.g. MainWindow builds Setup before Settings) must not crash and
+        must still start with Gain hidden, since it reads show_gain
+        straight from settings at construction, not from SettingsPage."""
+        page = SetupPage()
+        qtbot.addWidget(page)
+        assert not page._gain_label.isVisibleTo(page)
+        assert not page.gain_spin.isVisibleTo(page)
+
+
 class TestSetupPageLockedByUseLastSettingsAsDefault:
     """
     While "Use Last Settings as Default" is on (set from espi_app's

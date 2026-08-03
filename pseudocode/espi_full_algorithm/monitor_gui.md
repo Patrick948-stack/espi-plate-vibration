@@ -33,7 +33,10 @@ Hardware capture configuration panel. Only shows settings that affect camera I/O
 
 2. Exposure, gain, and gain_factor spin boxes
    - Exposure: 0.0001–10 seconds, default from `monitor_default_exposure` (0.06)
-   - Gain: negative values allowed (in dB), default from `monitor_default_gain` (1.0)
+   - Gain: negative values allowed (in dB), default from `monitor_default_gain` (1.0). Hidden
+     by default (label and spin box both, via `set_gain_visible()`) unless `show_gain` is
+     True in the settings file; the "Show Gain (dB) control" checkbox that flips this lives
+     on SettingsPage, not here, the same layout run_experiment_gui.py uses
    - gain_factor: 0.01–200 (scales difference amplification), default from `monitor_default_gain_factor` (10.0)
    - These are separate settings keys from run_experiment_gui.py's own `default_exposure` / `default_gain` / `default_gain_factor`, since the two dashboards have always used different historical defaults
 
@@ -90,6 +93,16 @@ The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A
      to), so this project has exactly one amplification story everywhere: gain_factor
      or none.
 
+5. Advanced group: "Show Gain (dB) control" checkbox, unchecked by default
+   - SettingsPage is constructed with a reference to the live SetupPage instance
+     (`SettingsPage(setup_page)`), stored as `self._setup_page`
+   - Toggling this checkbox calls `self._setup_page.set_gain_visible(checked)` directly,
+     so Setup's Gain (dB) label and spin box show or hide immediately, with no need to
+     navigate away and back
+   - Also writes `show_gain` straight through to `settings_manager.save_settings()`, so
+     the choice is remembered next time, and shared with run_experiment_gui.py's own
+     "Show Gain (dB) control" checkbox (same settings key)
+
 **Methods:**
 
 - `grayscale_method()`: return "standard" or "single_channel"
@@ -98,6 +111,7 @@ The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A
 - `averaging_method()`: return "averaged_differences" or "frame_averaging"
 - `graph_type()`: return "histogram", "log_histogram", "3d", or None
 - `diff_amplification()`: return "none" or "gain_factor"
+- `_on_show_gain_toggled(checked)`: apply visibility to SetupPage live and persist show_gain
 - `_update_grayscale_ui_visibility()`: show/hide color and backend controls based on grayscale method selection
 - `_make_learn_more_button(title, html_content)`: build one Learn More button wired to open a LearnMoreDialog with the given title and content
 - `_learn_more_row(button)`: right align a Learn More button in its own row above a group's radio buttons
