@@ -32,17 +32,17 @@ Wired to the Save Settings button. Calls `self.save_settings()` (below) and show
 
 #### `load_settings()` / `save_settings() -> bool`
 
-Straightforward two-way mapping between every widget on the page and one key in the settings dict — grayscale method/color/backend, default camera + index, `show_gain`, all the capture defaults, and the two Live Monitoring checkboxes (`show_live_feed_during_sweep`, `show_saved_image_after_capture`). `save_settings()` validates before writing and returns whether the write succeeded.
+Straightforward two-way mapping between every widget on the page and one key in the settings dict — grayscale method/color, default camera + index, `show_gain`, all the capture defaults, and the two Live Monitoring checkboxes (`show_live_feed_during_sweep`, `show_saved_image_after_capture`). `save_settings()` validates before writing and returns whether the write succeeded.
 
 #### `_update_grayscale_visibility()` / `_update_camera_visibility()` / `_update_capture_visibility()`
 
-Each shows or hides one group's dependent controls (color/backend combos, camera index spinner, gain label+spin) based on the relevant radio/checkbox state. Called once at the end of `__init__()` after the whole widget tree exists, and again automatically any time the relevant control's `toggled` signal fires.
+Each shows or hides one group's dependent controls (the color combo, camera index spinner, gain label+spin) based on the relevant radio/checkbox state. Called once at the end of `__init__()` after the whole widget tree exists, and again automatically any time the relevant control's `toggled` signal fires.
 
 #### `_apply_lock_state(settings)`
 
 Called at the end of `load_settings()` (so every time the page becomes visible, not just at construction). Reads `settings.get("use_last_settings_as_default", False)` and, if True, calls `.setEnabled(False)` on the camera radios, `_index_spin`, `start_freq_spin`, `end_freq_spin`, `step_spin`, `n_averages_spin`, `exposure_spin`, `gain_spin`, `gain_factor_spin`, and the **Save Settings** button itself, since there is nothing left to hand-edit and save while these are auto-managed from a real sweep. If False, every one of those widgets is re-enabled instead.
 
-Grayscale method/color/backend, `show_gain`, and the two Live Monitoring checkboxes are deliberately left untouched either way, since those are display/processing preferences, not measurement defaults, and stay out of scope for this feature. Disabling the Save button does not stop `showEvent()`/`load_settings()` from keeping the displayed values current; it only stops the human from overwriting them by hand while `run_experiment_gui.py`'s own `MainWindow._save_last_used_settings_if_enabled()` is the sole writer of these keys.
+Grayscale method/color, `show_gain`, and the two Live Monitoring checkboxes are deliberately left untouched either way, since those are display/processing preferences, not measurement defaults, and stay out of scope for this feature. Disabling the Save button does not stop `showEvent()`/`load_settings()` from keeping the displayed values current; it only stops the human from overwriting them by hand while `run_experiment_gui.py`'s own `MainWindow._save_last_used_settings_if_enabled()` is the sole writer of these keys.
 
 ## Key Concepts
 

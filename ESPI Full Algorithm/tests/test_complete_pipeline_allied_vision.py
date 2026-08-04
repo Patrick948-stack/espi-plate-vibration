@@ -140,7 +140,7 @@ class TestFrequencySweepAVValidation:
     def test_valid_params_reach_hardware_stage(self):
         # Validation passes → the function tries to open devices.
         # We intercept at _connect_devices to avoid actual hardware calls.
-        with patch.object(cp, "_connect_devices", return_value=(None, None, "")):
+        with patch.object(cp, "_connect_devices", return_value=(None, None, "", {})):
             result = cp.frequency_sweep_allied_vision(**self.VALID)
         assert result is None   # None because _connect_devices returned None instr
 
@@ -192,7 +192,7 @@ def hw(tmp_path):
     sweep logic runs without a physical Allied Vision camera or signal generator.
     """
     with patch.object(cp, "_connect_devices",
-                      return_value=(MagicMock(), MagicMock(), "MOCK_SG")), \
+                      return_value=(MagicMock(), MagicMock(), "MOCK_SG", {})), \
          patch.object(cp, "show_live_feed_from_camera"), \
          patch.object(cp, "discard_warmup_frames"), \
          patch.object(cp, "_lock_camera_settings",
@@ -298,7 +298,7 @@ class TestFrequencySweepAVMocked:
         assert all(f <= 100.3 + 1e-6 for f in called_freqs)
 
     def test_returns_none_when_connect_devices_fails(self, tmp_path):
-        with patch.object(cp, "_connect_devices", return_value=(None, None, "")):
+        with patch.object(cp, "_connect_devices", return_value=(None, None, "", {})):
             result = cp.frequency_sweep_allied_vision(100, 200, 100, 2, 10000, 0.0, str(tmp_path))
         assert result is None
 
@@ -308,7 +308,7 @@ class TestReferenceFrequencySweepAVMocked:
     @pytest.fixture
     def hw_ref(self, tmp_path):
         with patch.object(cp, "_connect_devices",
-                          return_value=(MagicMock(), MagicMock(), "MOCK_SG")), \
+                          return_value=(MagicMock(), MagicMock(), "MOCK_SG", {})), \
              patch.object(cp, "show_live_feed_from_camera"), \
              patch.object(cp, "discard_warmup_frames"), \
              patch.object(cp, "_lock_camera_settings",
@@ -339,7 +339,7 @@ class TestReferenceFrequencySweepAVMocked:
         assert len(result) == 3
 
     def test_returns_none_when_connect_devices_fails(self, tmp_path):
-        with patch.object(cp, "_connect_devices", return_value=(None, None, "")):
+        with patch.object(cp, "_connect_devices", return_value=(None, None, "", {})):
             result = cp.reference_frequency_sweep_allied_vision(
                 100, 200, 100, 2, 10000, 0.0, str(tmp_path))
         assert result is None
@@ -444,6 +444,102 @@ class TestGainFactorAV:
                                              str(hw["tmp_path"]), gain_factor=20)
         diffs = mock_avg.call_args[0][0]
         assert all((d == 255).all() for d in diffs)
+
+
+# ===========================================================================
+# Grayscale settings — Sweep must honor the same grayscale_method/color/
+# backend choice Preview already does, instead of always connecting the
+# camera in "standard" mode. _connect_devices() is the single choke point
+# both sweep functions use to reach connect_camera(), so it gets the new
+# grayscale_method parameter directly (mirrors TestConfigureSignalGenerator
+# above, which tests _connect_devices()'s sibling helper the same way).
+# ===========================================================================
+
+class TestConnectDevicesGrayscale:
+
+    def test_default_forwards_standard_to_connect_camera(self):
+        with patch.object(cp, "open_connection", return_value=MagicMock()), \
+             patch.object(cp, "get_identity", return_value="MOCK_SG"), \
+             patch.object(cp, "connect_camera",
+                          return_value=(MagicMock(), {})) as mock_cc:
+            cp._connect_devices(channel=1)
+        _, kwargs = mock_cc.call_args
+        assert kwargs["grayscale_method"] == "standard"
+
+    def test_single_channel_forwarded_to_connect_camera(self):
+        with patch.object(cp, "open_connection", return_value=MagicMock()), \
+             patch.object(cp, "get_identity", return_value="MOCK_SG"), \
+             patch.object(cp, "connect_camera",
+                          return_value=(MagicMock(), {})) as mock_cc:
+            cp._connect_devices(channel=1, grayscale_method="single_channel")
+        _, kwargs = mock_cc.call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+
+class TestGrayscaleThreadingAV:
+
+    def test_frequency_sweep_forwards_grayscale_method_to_connect_devices(self, hw):
+        with patch.object(cp, "_connect_devices",
+                          return_value=(MagicMock(), MagicMock(), "MOCK_SG", {})) as mock_conn:
+            cp.frequency_sweep_allied_vision(440, 440, 1, 2, 10000, 0.0,
+                                             str(hw["tmp_path"]),
+                                             grayscale_method="single_channel")
+        _, kwargs = mock_conn.call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_reference_sweep_forwards_grayscale_method_to_connect_devices(self, hw):
+        with patch.object(cp, "_connect_devices",
+                          return_value=(MagicMock(), MagicMock(), "MOCK_SG", {})) as mock_conn:
+            cp.reference_frequency_sweep_allied_vision(
+                440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                grayscale_method="single_channel")
+        _, kwargs = mock_conn.call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_frequency_sweep_applies_grayscale_conversion_to_captured_frames(self, hw):
+        with patch.object(cp, "_apply_grayscale_conversion",
+                          return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep_allied_vision(440, 440, 1, 2, 10000, 0.0,
+                                             str(hw["tmp_path"]),
+                                             grayscale_method="single_channel",
+                                             grayscale_color="G")
+        assert mock_conv.called
+        _, kwargs = mock_conv.call_args
+        assert kwargs["method"] == "single_channel"
+        assert kwargs["color"] == "G"
+
+    def test_reference_sweep_applies_conversion_to_reference_and_measurement_frames(self, hw):
+        with patch.object(cp, "_apply_grayscale_conversion",
+                          return_value=FAKE_FRAME) as mock_conv:
+            cp.reference_frequency_sweep_allied_vision(
+                440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                grayscale_method="single_channel", grayscale_color="B")
+        # hw's grab_n_frames mock always returns the same 2-frame list
+        # regardless of the n requested: 2 calls converting the raw frames
+        # that get averaged into the reference, then 2 more for the
+        # n_averages=2 measurement frames.
+        assert mock_conv.call_count == 4
+        _, kwargs = mock_conv.call_args
+        assert kwargs["method"] == "single_channel"
+        assert kwargs["color"] == "B"
+
+    def test_channel_swap_applied_when_format_info_requests_it(self, hw):
+        rgb_frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        rgb_frame[:, :, 0] = 10   # R
+        rgb_frame[:, :, 2] = 20   # B
+        with patch.object(cp, "_connect_devices",
+                          return_value=(MagicMock(), MagicMock(), "MOCK_SG",
+                                        {"needs_channel_swap": True})), \
+             patch.object(cp, "grab_n_frames",
+                          return_value=[rgb_frame.copy(), rgb_frame.copy()]), \
+             patch.object(cp, "_apply_grayscale_conversion",
+                          return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep_allied_vision(440, 440, 1, 1, 10000, 0.0,
+                                             str(hw["tmp_path"]),
+                                             grayscale_method="single_channel")
+        seen_frame = mock_conv.call_args_list[0][0][0]
+        assert seen_frame[0, 0, 0] == 20
+        assert seen_frame[0, 0, 2] == 10
 
 
 # ===========================================================================

@@ -55,6 +55,7 @@ from sdg_control import (
     turn_off_output,
 )
 from camera_control import *
+from monitor_gui import _apply_grayscale_conversion
 
 
 # Seconds to wait after changing frequency before capturing frames.
@@ -84,7 +85,8 @@ def _settle_with_live_feed(camera, seconds, freq):
 
 
 def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
-                     gain_factor=1, amplitude=1.0, offset=0.0, stop_check=None):
+                     gain_factor=1, amplitude=1.0, offset=0.0, stop_check=None,
+                     grayscale_method="standard", grayscale_color="R"):
     """
     Run a full ESPI frequency sweep and save one averaged difference image per frequency.
 
@@ -143,6 +145,16 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
                               whatever frequencies were already measured are still
                               returned. Left as None (the default), the sweep
                               always runs every frequency to completion.
+        grayscale_method (str) : "standard" (Mono8, the camera's built-in
+                              grayscale) or "single_channel" (connect in RGB8
+                              and extract one R/G/B channel). Matches the
+                              Settings page's "Grayscale Conversion Method"
+                              choice, and connect_camera() uses this same
+                              value to decide which pixel format to request.
+                              Defaults to "standard", matching DEFAULT_SETTINGS.
+        grayscale_color (str) : "R", "G", or "B" — which channel to extract
+                              when grayscale_method="single_channel". Ignored
+                              otherwise. Defaults to "R".
 
     Returns:
         dict : Maps each frequency (float, Hz) to its averaged difference image
@@ -185,16 +197,14 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
         print("ERROR: Signal generator not found. Check the USB cable and try again.")
         return None
 
-    result = connect_camera()
+    result = connect_camera(grayscale_method=grayscale_method)
     if result is None or (isinstance(result, tuple) and result[0] is None):
         print("ERROR: Camera not found. Check the USB cable and try again.")
         # Close the signal generator session we already opened before returning,
         # so it is not left in a locked state.
         close_connection(instr)
         return None
-    
 
-    camera, format_info = result
     camera, format_info = result
 
     # ==========================================================================
@@ -295,8 +305,19 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
                       f" — only {len(imgs_grab)} frame(s) received. Skipping.")
                 continue
 
+            # Apply the RGB->BGR channel swap (RGB8 hardware only) before
+            # grayscale conversion, so single-channel R/G/B extraction reads
+            # the correct channel order.
+            processed = []
+            for frame in imgs_grab:
+                if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                    frame = frame[:, :, ::-1]
+                processed.append(_apply_grayscale_conversion(
+                    frame, method=grayscale_method, color=grayscale_color,
+                ))
+
             diff = cv2.convertScaleAbs(
-                substract_frames(imgs_grab[0], imgs_grab[1]), alpha=gain_factor
+                substract_frames(processed[0], processed[1]), alpha=gain_factor
             )
             imgs_subs.append(diff)
 
@@ -363,7 +384,8 @@ def frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, o
 
 
 def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_us, gain, output_dir,
-                               gain_factor=1, amplitude=1.0, offset=0.0, stop_check=None):
+                               gain_factor=1, amplitude=1.0, offset=0.0, stop_check=None,
+                               grayscale_method="standard", grayscale_color="R"):
     """
     Reference-based ESPI frequency sweep.
 
@@ -415,6 +437,11 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
                               same 0.0 default.
         stop_check  (callable, optional) : See frequency_sweep()'s docstring —
                               same safe, between-frequencies stop mechanism.
+        grayscale_method (str) : See frequency_sweep()'s docstring — same
+                              "standard"/"single_channel" choice, applied to
+                              the reference frame as well as every
+                              measurement frame.
+        grayscale_color (str) : See frequency_sweep()'s docstring.
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } or None on error. May
@@ -452,13 +479,12 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         print("ERROR: Signal generator not found. Check the USB cable and try again.")
         return None
 
-    result = connect_camera()
+    result = connect_camera(grayscale_method=grayscale_method)
     if result is None or (isinstance(result, tuple) and result[0] is None):
         print("ERROR: Camera not found. Check the USB cable and try again.")
         close_connection(instr)
         return None
 
-    camera, format_info = result
     camera, format_info = result
 
     # ==========================================================================
@@ -483,6 +509,11 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         close_connection(instr)
         return None
     reference = ref_frames[0]
+    if format_info.get("needs_channel_swap", False) and len(reference.shape) == 3:
+        reference = reference[:, :, ::-1]
+    reference = _apply_grayscale_conversion(
+        reference, method=grayscale_method, color=grayscale_color,
+    )
     print("Reference frame captured.")
 
     # ==========================================================================
@@ -525,6 +556,11 @@ def reference_frequency_sweep(start_freq, end_freq, step, n_averages, exposure_u
         frames = grab_n_frames(camera, n_averages)
 
         for frame in frames:
+            if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                frame = frame[:, :, ::-1]
+            frame = _apply_grayscale_conversion(
+                frame, method=grayscale_method, color=grayscale_color,
+            )
             diff = cv2.convertScaleAbs(substract_frames(reference, frame), alpha=gain_factor)
             imgs_subs.append(diff)
 

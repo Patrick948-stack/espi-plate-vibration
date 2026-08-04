@@ -118,7 +118,7 @@ class SettingsPage(QWidget):
         self._grayscale_radios["single_channel"] = single_radio
         grayscale_layout.addWidget(single_radio)
 
-        # Color and backend controls (hidden for standard)
+        # Color channel control (hidden for standard)
         self._color_label = QLabel("Target Color Channel:")
         self._color_combo = QComboBox()
         self._color_combo.addItems(["Red (R)", "Green (G)", "Blue (B)"])
@@ -129,17 +129,6 @@ class SettingsPage(QWidget):
         color_layout.addWidget(self._color_combo)
         color_layout.addStretch()
         grayscale_layout.addLayout(color_layout)
-
-        self._backend_label = QLabel("Processing Algorithm:")
-        self._backend_combo = QComboBox()
-        self._backend_combo.addItems(["NumPy (Fast)", "Pillow", "OpenCV HSV"])
-        self._backend_combo.setCurrentIndex(0)
-
-        backend_layout = QHBoxLayout()
-        backend_layout.addWidget(self._backend_label)
-        backend_layout.addWidget(self._backend_combo)
-        backend_layout.addStretch()
-        grayscale_layout.addLayout(backend_layout)
 
         grayscale_layout.addStretch()
         grayscale_group.setLayout(grayscale_layout)
@@ -369,14 +358,12 @@ class SettingsPage(QWidget):
         self._update_capture_visibility()
 
     def _update_grayscale_visibility(self):
-        """Show/hide color and backend controls based on method selection."""
+        """Show/hide the color channel control based on method selection."""
         is_single = self._grayscale_radios["single_channel"].isChecked()
         should_show = is_single
         # Use setVisible (which is more reliable than show/hide in this context)
         self._color_label.setVisible(should_show)
         self._color_combo.setVisible(should_show)
-        self._backend_label.setVisible(should_show)
-        self._backend_combo.setVisible(should_show)
 
     def _update_camera_visibility(self):
         """Show/hide camera index spinner for non-Basler cameras."""
@@ -419,10 +406,6 @@ class SettingsPage(QWidget):
         color_map = {"R": 0, "G": 1, "B": 2}
         color_idx = color_map.get(settings.get('grayscale_color', 'R'), 0)
         self._color_combo.setCurrentIndex(color_idx)
-
-        backend_map = {"numpy": 0, "pillow": 1, "opencv_hsv": 2}
-        backend = settings.get("grayscale_backend", "numpy")
-        self._backend_combo.setCurrentIndex(backend_map.get(backend, 0))
 
         # Camera
         camera_choice = settings.get("default_camera_choice", "2")
@@ -474,9 +457,6 @@ class SettingsPage(QWidget):
         color_text = self._color_combo.currentText()
         color_code = color_text.split(" ")[0][0]
 
-        backend_map = {0: "numpy", 1: "pillow", 2: "opencv_hsv"}
-        backend = backend_map[self._backend_combo.currentIndex()]
-
         # Get current camera choice
         camera_choice = None
         for choice, radio in self._camera_radios.items():
@@ -487,7 +467,6 @@ class SettingsPage(QWidget):
         settings = {
             "grayscale_method": "single_channel" if self._grayscale_radios["single_channel"].isChecked() else "standard",
             "grayscale_color": color_code,
-            "grayscale_backend": backend,
             "default_camera_choice": camera_choice or "2",
             "default_camera_index": self._index_spin.value(),
             "show_gain": self._show_gain_checkbox.isChecked(),

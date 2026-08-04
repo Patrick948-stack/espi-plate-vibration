@@ -19,6 +19,8 @@ import sys
 import math
 import importlib
 
+from settings_manager import load_settings
+
 
 # ==============================================================================
 # ERROR DIAGNOSTICS
@@ -601,17 +603,27 @@ def run_pipeline(camera_choice, mode_choice, params, stop_check=None):
     amplitude   = params.get("amplitude", 1.0)
     offset      = params.get("offset", 0.0)
 
+    # Read from the same settings file run_experiment_gui.py's _start_preview()
+    # already reads, so the real Sweep captures with the exact grayscale
+    # method/color the user sees in Preview, instead of always connecting
+    # the camera in its default "standard" mode.
+    settings           = load_settings()
+    grayscale_method    = settings.get("grayscale_method", "standard")
+    grayscale_color     = settings.get("grayscale_color", "R")
+
     base_params = dict(
-        start_freq  = params["start_freq"],
-        end_freq    = params["end_freq"],
-        step        = params["step"],
-        n_averages  = params["n_averages"],
-        gain        = gain,
-        gain_factor = gain_factor,
-        amplitude   = amplitude,
-        offset      = offset,
-        output_dir  = output_dir,
-        stop_check  = stop_check,
+        start_freq        = params["start_freq"],
+        end_freq          = params["end_freq"],
+        step              = params["step"],
+        n_averages        = params["n_averages"],
+        gain              = gain,
+        gain_factor       = gain_factor,
+        amplitude         = amplitude,
+        offset            = offset,
+        output_dir        = output_dir,
+        stop_check        = stop_check,
+        grayscale_method  = grayscale_method,
+        grayscale_color   = grayscale_color,
     )
 
     # ---- Basler ----

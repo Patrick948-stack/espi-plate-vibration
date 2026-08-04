@@ -369,6 +369,103 @@ class TestStopCheck:
 
 
 # ===========================================================================
+# Grayscale settings — Sweep must honor the same grayscale_method/color
+# choice that Preview already does, instead of always connecting the
+# camera in "standard" mode. connect_camera() must receive the requested
+# method, and every captured frame must be run through
+# _apply_grayscale_conversion() (imported from monitor_gui, reused rather
+# than duplicated) before it is subtracted.
+# ===========================================================================
+
+class TestGrayscaleThreading:
+
+    def test_default_connects_camera_in_standard_mode(self, hw):
+        cp.frequency_sweep(440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]))
+        _, kwargs = hw["cam"].call_args
+        assert kwargs["grayscale_method"] == "standard"
+
+    def test_single_channel_forwarded_to_connect_camera(self, hw):
+        cp.frequency_sweep(440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                            grayscale_method="single_channel")
+        _, kwargs = hw["cam"].call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_reference_sweep_forwards_grayscale_method_to_connect_camera(self, hw):
+        cp.reference_frequency_sweep(440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                      grayscale_method="single_channel")
+        _, kwargs = hw["cam"].call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_frequency_sweep_applies_grayscale_conversion_to_captured_frames(self, hw):
+        with patch("complete_pipeline._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep(440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                grayscale_method="single_channel", grayscale_color="G")
+        assert mock_conv.called
+        _, kwargs = mock_conv.call_args
+        assert kwargs["method"] == "single_channel"
+        assert kwargs["color"] == "G"
+
+    def test_reference_sweep_applies_grayscale_conversion_to_captured_frames(self, hw):
+        with patch("complete_pipeline._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.reference_frequency_sweep(440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                          grayscale_method="single_channel",
+                                          grayscale_color="B")
+        assert mock_conv.called
+        _, kwargs = mock_conv.call_args
+        assert kwargs["method"] == "single_channel"
+        assert kwargs["color"] == "B"
+
+    def test_reference_sweep_applies_conversion_to_the_reference_frame_too(self, hw):
+        # The reference frame is captured once, before the sweep loop even
+        # starts — it must go through the same grayscale conversion as every
+        # per-frequency frame, or every diff would compare converted data
+        # against un-converted reference data.
+        with patch("complete_pipeline._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.reference_frequency_sweep(440, 440, 1, 2, 10000, 0.0, str(hw["tmp_path"]),
+                                          grayscale_method="single_channel")
+        # 1 call for the reference frame + 2 calls for n_averages=2 measurement frames.
+        assert mock_conv.call_count == 3
+
+    def test_channel_swap_applied_when_format_info_requests_it(self, hw):
+        rgb_frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        rgb_frame[:, :, 0] = 10   # R
+        rgb_frame[:, :, 2] = 20   # B
+        with patch("complete_pipeline.connect_camera",
+                   return_value=(MagicMock(), {"needs_channel_swap": True})), \
+             patch("complete_pipeline.grab_n_frames",
+                   return_value=[rgb_frame.copy(), rgb_frame.copy()]), \
+             patch("complete_pipeline._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep(440, 440, 1, 1, 10000, 0.0, str(hw["tmp_path"]),
+                                grayscale_method="single_channel")
+        seen_frame = mock_conv.call_args_list[0][0][0]
+        # After an R<->B swap, channel 0 (was R=10) must now equal the
+        # original B=20, and channel 2 (was B=20) must now equal the
+        # original R=10.
+        assert seen_frame[0, 0, 0] == 20
+        assert seen_frame[0, 0, 2] == 10
+
+    def test_no_swap_when_format_info_does_not_request_it(self, hw):
+        rgb_frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        rgb_frame[:, :, 0] = 10
+        rgb_frame[:, :, 2] = 20
+        with patch("complete_pipeline.connect_camera",
+                   return_value=(MagicMock(), {"needs_channel_swap": False})), \
+             patch("complete_pipeline.grab_n_frames",
+                   return_value=[rgb_frame.copy(), rgb_frame.copy()]), \
+             patch("complete_pipeline._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep(440, 440, 1, 1, 10000, 0.0, str(hw["tmp_path"]),
+                                grayscale_method="single_channel")
+        seen_frame = mock_conv.call_args_list[0][0][0]
+        assert seen_frame[0, 0, 0] == 10
+        assert seen_frame[0, 0, 2] == 20
+
+
+# ===========================================================================
 # gain_factor — must scale every difference image before it is averaged and
 # saved, saturating at 255 instead of wrapping around (uint8 overflow).
 # ===========================================================================

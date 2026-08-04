@@ -375,6 +375,78 @@ class TestGainFactorInclusive:
 
 
 # ===========================================================================
+# Grayscale settings — Sweep must honor the same grayscale_method/color/
+# backend choice Preview already does, instead of always connecting the
+# camera in "standard" mode.
+# ===========================================================================
+
+class TestGrayscaleThreadingInclusive:
+
+    def test_default_connects_camera_in_standard_mode(self, hw):
+        with patch("complete_pipeline_inclusive.connect_camera",
+                   return_value=(MagicMock(), {})) as mock_cc:
+            cp.frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw["tmp_path"]))
+        _, kwargs = mock_cc.call_args
+        assert kwargs["grayscale_method"] == "standard"
+
+    def test_single_channel_forwarded_to_connect_camera(self, hw):
+        with patch("complete_pipeline_inclusive.connect_camera",
+                   return_value=(MagicMock(), {})) as mock_cc:
+            cp.frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw["tmp_path"]),
+                                         grayscale_method="single_channel")
+        _, kwargs = mock_cc.call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_reference_sweep_forwards_grayscale_method_to_connect_camera(self, hw_ref):
+        with patch("complete_pipeline_inclusive.connect_camera",
+                   return_value=(MagicMock(), {})) as mock_cc:
+            cp.reference_frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw_ref["tmp_path"]),
+                                                    grayscale_method="single_channel")
+        _, kwargs = mock_cc.call_args
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_frequency_sweep_applies_grayscale_conversion_to_captured_frames(self, hw):
+        with patch("complete_pipeline_inclusive._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw["tmp_path"]),
+                                         grayscale_method="single_channel", grayscale_color="G")
+        assert mock_conv.called
+        _, kwargs = mock_conv.call_args
+        assert kwargs["method"] == "single_channel"
+        assert kwargs["color"] == "G"
+
+    def test_reference_sweep_applies_conversion_to_reference_and_measurement_frames(self, hw_ref):
+        with patch("complete_pipeline_inclusive._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.reference_frequency_sweep_inclusive(440, 440, 1, 2, -6, 0.0, str(hw_ref["tmp_path"]),
+                                                    grayscale_method="single_channel",
+                                                    grayscale_color="B")
+        # hw_ref's grab_n_frames mock always returns a single-frame list
+        # regardless of n requested: 1 call for the reference frame, 1 more
+        # for the (mocked) measurement frame.
+        assert mock_conv.call_count == 2
+        _, kwargs = mock_conv.call_args
+        assert kwargs["method"] == "single_channel"
+        assert kwargs["color"] == "B"
+
+    def test_channel_swap_applied_when_format_info_requests_it(self, hw):
+        rgb_frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        rgb_frame[:, :, 0] = 10   # R
+        rgb_frame[:, :, 2] = 20   # B
+        with patch("complete_pipeline_inclusive.connect_camera",
+                   return_value=(MagicMock(), {"needs_channel_swap": True})), \
+             patch("complete_pipeline_inclusive.grab_n_frames",
+                   return_value=[rgb_frame.copy(), rgb_frame.copy()]), \
+             patch("complete_pipeline_inclusive._apply_grayscale_conversion",
+                   return_value=FAKE_FRAME) as mock_conv:
+            cp.frequency_sweep_inclusive(440, 440, 1, 1, -6, 0.0, str(hw["tmp_path"]),
+                                         grayscale_method="single_channel")
+        seen_frame = mock_conv.call_args_list[0][0][0]
+        assert seen_frame[0, 0, 0] == 20
+        assert seen_frame[0, 0, 2] == 10
+
+
+# ===========================================================================
 # skip_live_feed parameter
 # ===========================================================================
 

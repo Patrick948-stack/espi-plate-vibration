@@ -600,9 +600,9 @@ class TestCameraPreviewWorker:
         camera_control_inclusive.py's connect_camera() always reports
         needs_channel_swap=False -- cv2.VideoCapture already returns frames
         in OpenCV's native BGR order, which is exactly what
-        _apply_grayscale_conversion()'s "numpy" backend assumes, so this
-        test's raw frame is laid out BGR (index 2 = Red), matching a real
-        webcam frame with no swap involved.
+        _apply_grayscale_conversion()'s single-channel extraction assumes,
+        so this test's raw frame is laid out BGR (index 2 = Red), matching
+        a real webcam frame with no swap involved.
         """
         mock_camera = object()
         raw_frame = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -622,7 +622,7 @@ class TestCameraPreviewWorker:
 
         worker = CameraPreviewWorker(
             "2", 0.05, 1.0, grayscale_method="single_channel",
-            grayscale_color="R", grayscale_backend="numpy",
+            grayscale_color="R",
         )
         received = []
         worker.frame_ready.connect(received.append)
@@ -659,7 +659,7 @@ class TestCameraPreviewWorker:
 
         worker = CameraPreviewWorker(
             "2", 0.05, 1.0, grayscale_method="single_channel",
-            grayscale_color="R", grayscale_backend="numpy",
+            grayscale_color="R",
         )
         received = []
         worker.frame_ready.connect(received.append)

@@ -166,7 +166,7 @@ Captures one frame from the camera.
 
 ### grab_single_frame_color(camera)
 
-Present only so this module's interface matches camera_control_inclusive.py and camera_control_allied_vision.py, which both added a function with this same name (see the note below). Basler cameras in this project are always configured as Mono8 or Mono12, so there is no color to preserve here in the first place. This function simply calls grab_single_frame(camera) and returns whatever it returns.
+Present only so this module's interface matches camera_control_inclusive.py and camera_control_allied_vision.py, which both added a function with this same name (see the note below). The Basler camera in this project captures color by default. connect_camera() only switches it to Mono8 when grayscale_method="standard" is requested; when grayscale_method="single_channel" is requested instead, it sets RGB8, and grab_single_frame() already returns that real (H, W, 3) color data untouched, with no forced greyscale conversion to skip. This function simply calls grab_single_frame(camera) and returns whatever it returns.
 
 **A bug found and fixed in the other two camera modules, not this one:**
 

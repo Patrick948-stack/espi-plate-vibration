@@ -70,6 +70,7 @@ from sdg_control import (
     turn_off_output,
 )
 from camera_control_inclusive import *
+from monitor_gui import _apply_grayscale_conversion
 
 
 # How many seconds to wait after changing frequency before capturing frames.
@@ -120,6 +121,8 @@ def frequency_sweep_inclusive(
     skip_live_feed = False,
     gain_factor    = 1,
     stop_check     = None,
+    grayscale_method  = "standard",
+    grayscale_color   = "R",
 ):
     """
     Run a full ESPI frequency sweep using any OpenCV-compatible camera.
@@ -197,6 +200,15 @@ def frequency_sweep_inclusive(
                                 were already measured are still returned. Left
                                 as None (the default), the sweep always runs
                                 every frequency to completion.
+        grayscale_method (str) : "standard" (grayscale, the camera's native
+                                capture) or "single_channel" (extract one
+                                R/G/B channel from color capture). Matches the
+                                Settings page's "Grayscale Conversion Method"
+                                choice. Defaults to "standard", matching
+                                DEFAULT_SETTINGS.
+        grayscale_color   (str) : "R", "G", or "B" — which channel to extract
+                                when grayscale_method="single_channel".
+                                Defaults to "R".
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } for every frequency
@@ -272,13 +284,12 @@ def frequency_sweep_inclusive(
         print(f"Signal generator identified: {sg_identity}")
 
         print("\nConnecting to camera...")
-        result = connect_camera(camera_index=0)
+        result = connect_camera(camera_index=0, grayscale_method=grayscale_method)
 
         if result is None or (isinstance(result, tuple) and result[0] is None):
             print("[ERROR] Camera not found.  "
                   "Check the USB cable and try again.")
             return None
-
 
         camera, format_info = result
         # ======================================================================
@@ -478,7 +489,15 @@ def frequency_sweep_inclusive(
                           f"{i + 1}/{n_averages} — skipping this pair.")
                     continue
 
-                diff = substract_frames(pair[0], pair[1])
+                processed_pair = []
+                for frame in pair:
+                    if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                        frame = frame[:, :, ::-1]
+                    processed_pair.append(_apply_grayscale_conversion(
+                        frame, method=grayscale_method, color=grayscale_color,
+                    ))
+
+                diff = substract_frames(processed_pair[0], processed_pair[1])
                 if diff is None:
                     # Shape mismatch — shouldn't happen normally, but better to
                     # skip than to crash and leave the signal generator running.
@@ -609,6 +628,8 @@ def reference_frequency_sweep_inclusive(
     skip_live_feed = False,
     gain_factor    = 1,
     stop_check     = None,
+    grayscale_method  = "standard",
+    grayscale_color   = "R",
 ):
     """
     Reference-based ESPI frequency sweep using any OpenCV-compatible camera.
@@ -665,6 +686,11 @@ def reference_frequency_sweep_inclusive(
         stop_check    (callable, optional) : See frequency_sweep_inclusive()'s
                                 docstring — same safe, between-frequencies stop
                                 mechanism.
+        grayscale_method (str) : See frequency_sweep_inclusive()'s docstring —
+                                same "standard"/"single_channel" choice,
+                                applied to the reference frame as well as
+                                every measurement frame.
+        grayscale_color   (str) : See frequency_sweep_inclusive()'s docstring.
 
     Returns:
         dict : { frequency_hz: averaged_difference_image } for each successful
@@ -720,12 +746,11 @@ def reference_frequency_sweep_inclusive(
         print(f"Signal generator identified: {sg_identity}")
 
         print("\nConnecting to camera...")
-        result = connect_camera(camera_index=0)
+        result = connect_camera(camera_index=0, grayscale_method=grayscale_method)
 
         if result is None or (isinstance(result, tuple) and result[0] is None):
             print("[ERROR] Camera not found. Check the USB cable.")
             return None
-
 
         camera, format_info = result
         # ======================================================================
@@ -765,6 +790,11 @@ def reference_frequency_sweep_inclusive(
             print("[ERROR] Could not capture reference frame. Aborting.")
             return None
         reference = ref_pair[0]
+        if format_info.get("needs_channel_swap", False) and len(reference.shape) == 3:
+            reference = reference[:, :, ::-1]
+        reference = _apply_grayscale_conversion(
+            reference, method=grayscale_method, color=grayscale_color,
+        )
         print("Reference frame captured.")
 
         # ======================================================================
@@ -863,6 +893,11 @@ def reference_frequency_sweep_inclusive(
             frames = grab_n_frames(camera, n_averages, max_retries=MAX_GRAB_RETRIES)
 
             for frame in frames:
+                if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                    frame = frame[:, :, ::-1]
+                frame = _apply_grayscale_conversion(
+                    frame, method=grayscale_method, color=grayscale_color,
+                )
                 diff = substract_frames(reference, frame)
                 if diff is not None:
                     difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))

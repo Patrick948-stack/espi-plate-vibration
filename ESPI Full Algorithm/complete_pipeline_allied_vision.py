@@ -53,6 +53,7 @@ from sdg_control import (
     turn_off_output,
 )
 from camera_control_allied_vision import *
+from monitor_gui import _apply_grayscale_conversion
 
 
 # How long to wait at each frequency before grabbing frames.
@@ -195,9 +196,13 @@ def _validate_sweep_params(start_freq: float, end_freq: float, step: float,
     return True
 
 
-def _connect_devices(channel: int):
+def _connect_devices(channel: int, grayscale_method: str = "standard"):
     """
     Connect to the signal generator and the Allied Vision camera.
+
+    grayscale_method : "standard" or "single_channel" — forwarded to
+        connect_camera() to decide whether it requests Mono8 or RGB8.
+        Defaults to "standard", matching DEFAULT_SETTINGS.
 
     Returns (instr, camera, sg_identity) on success, or (None, None, None)
     if either device could not be found.
@@ -211,14 +216,12 @@ def _connect_devices(channel: int):
     print(f"  Signal generator: {sg_identity}")
 
     print("\nConnecting to Allied Vision camera...")
-    result = connect_camera(camera_index=0)
+    result = connect_camera(camera_index=0, grayscale_method=grayscale_method)
     if result is None or (isinstance(result, tuple) and result[0] is None):
         print("[ERROR] Allied Vision camera not found. Check USB cable.")
         close_connection(instr)
         return None, None, None
 
-
-    camera, format_info = result
     camera, format_info = result
     return instr, camera, sg_identity
 
@@ -318,6 +321,8 @@ def frequency_sweep_allied_vision(
     skip_live_feed:  bool  = False,
     gain_factor:     float = 1,
     stop_check=None,
+    grayscale_method:  str = "standard",
+    grayscale_color:   str = "R",
 ) -> dict | None:
     """
     Run a full ESPI pair-subtraction sweep using an Allied Vision camera.
@@ -369,6 +374,13 @@ def frequency_sweep_allied_vision(
                         whatever frequencies were already measured are still
                         returned. Left as None (the default), the sweep always
                         runs every frequency to completion.
+        grayscale_method  : "standard" (Mono8, the camera's built-in
+                        grayscale) or "single_channel" (connect in RGB8 and
+                        extract one R/G/B channel). Matches the Settings
+                        page's "Grayscale Conversion Method" choice. Defaults
+                        to "standard", matching DEFAULT_SETTINGS.
+        grayscale_color   : "R", "G", or "B" — which channel to extract when
+                        grayscale_method="single_channel". Defaults to "R".
 
     Returns:
         dict of { frequency_hz: averaged_image } if the sweep ran. May contain
@@ -392,7 +404,9 @@ def frequency_sweep_allied_vision(
 
     try:
         # ---- Connect devices ----
-        instr, camera, sg_identity = _connect_devices(channel)
+        instr, camera, sg_identity, format_info = _connect_devices(
+            channel, grayscale_method=grayscale_method
+        )
         if instr is None:
             return None
 
@@ -463,7 +477,15 @@ def frequency_sweep_allied_vision(
                           f"for pair {pair_num + 1}/{n_averages} — skipping.")
                     continue
 
-                diff = substract_frames(pair[0], pair[1])
+                processed_pair = []
+                for frame in pair:
+                    if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                        frame = frame[:, :, ::-1]
+                    processed_pair.append(_apply_grayscale_conversion(
+                        frame, method=grayscale_method, color=grayscale_color,
+                    ))
+
+                diff = substract_frames(processed_pair[0], processed_pair[1])
                 if diff is not None:
                     difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))
 
@@ -535,6 +557,8 @@ def reference_frequency_sweep_allied_vision(
     skip_live_feed:  bool  = False,
     gain_factor:     float = 1,
     stop_check=None,
+    grayscale_method:  str = "standard",
+    grayscale_color:   str = "R",
 ) -> dict | None:
     """
     Run an ESPI reference-subtraction sweep using an Allied Vision camera.
@@ -546,7 +570,9 @@ def reference_frequency_sweep_allied_vision(
     consecutive frames look almost identical and their difference is mostly noise.
     Comparing against a truly stationary baseline gives a cleaner result.
 
-    Args: same as frequency_sweep_allied_vision() above, including stop_check.
+    Args: same as frequency_sweep_allied_vision() above, including stop_check,
+    grayscale_method, and grayscale_color — the reference frame is converted
+    the same way as every measurement frame.
 
     Returns:
         dict of { frequency_hz: averaged_image } if the sweep ran. May contain
@@ -567,7 +593,9 @@ def reference_frequency_sweep_allied_vision(
 
     try:
         # ---- Connect devices ----
-        instr, camera, sg_identity = _connect_devices(channel)
+        instr, camera, sg_identity, format_info = _connect_devices(
+            channel, grayscale_method=grayscale_method
+        )
         if instr is None:
             return None
 
@@ -588,8 +616,16 @@ def reference_frequency_sweep_allied_vision(
             print("[ERROR] Could not capture a reference frame. Aborting.")
             return None
 
+        processed_ref_frames = []
+        for frame in ref_frames:
+            if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                frame = frame[:, :, ::-1]
+            processed_ref_frames.append(_apply_grayscale_conversion(
+                frame, method=grayscale_method, color=grayscale_color,
+            ))
+
         # Average three frames for the reference to reduce its own noise.
-        reference = average_img(ref_frames)
+        reference = average_img(processed_ref_frames)
         if reference is None:
             print("[ERROR] Reference frame averaging failed. Aborting.")
             return None
@@ -645,6 +681,11 @@ def reference_frequency_sweep_allied_vision(
 
             difference_images = []
             for frame in frames:
+                if format_info.get("needs_channel_swap", False) and len(frame.shape) == 3:
+                    frame = frame[:, :, ::-1]
+                frame = _apply_grayscale_conversion(
+                    frame, method=grayscale_method, color=grayscale_color,
+                )
                 diff = substract_frames(reference, frame)
                 if diff is not None:
                     difference_images.append(cv2.convertScaleAbs(diff, alpha=gain_factor))

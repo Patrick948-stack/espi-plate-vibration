@@ -721,6 +721,84 @@ class TestMissingSdkMessage:
 # and an unrecognised camera_choice
 # ===========================================================================
 
+class TestRunPipelineGrayscaleSettings:
+    """
+    run_pipeline() must load grayscale_method/grayscale_color from
+    settings_manager.load_settings() and forward them to whichever sweep
+    function is chosen, for every camera and both subtraction modes. This is
+    what closes the gap where Preview honored the Settings page's grayscale
+    choice but the real Sweep silently ignored it.
+    """
+
+    def setup_method(self):
+        self._basler_mod = _mock_pipeline_module("complete_pipeline")
+        self._cv_mod     = _mock_pipeline_module("complete_pipeline_inclusive")
+        self._av_mod     = _mock_pipeline_module("complete_pipeline_allied_vision")
+
+    def teardown_method(self):
+        for name in ("complete_pipeline",
+                     "complete_pipeline_inclusive",
+                     "complete_pipeline_allied_vision"):
+            sys.modules.pop(name, None)
+
+    def test_basler_forwards_single_channel_settings(self):
+        settings = {"grayscale_method": "single_channel", "grayscale_color": "G"}
+        with patch("run_experiment.load_settings", return_value=settings):
+            run_experiment.run_pipeline("1", "1", _default_params())
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["grayscale_method"] == "single_channel"
+        assert kwargs["grayscale_color"] == "G"
+
+    def test_basler_reference_mode_forwards_grayscale_settings(self):
+        settings = {"grayscale_method": "single_channel", "grayscale_color": "B"}
+        with patch("run_experiment.load_settings", return_value=settings):
+            run_experiment.run_pipeline("1", "2", _default_params())
+        kwargs = self._basler_mod.reference_frequency_sweep.call_args[1]
+        assert kwargs["grayscale_method"] == "single_channel"
+        assert kwargs["grayscale_color"] == "B"
+
+    def test_opencv_forwards_grayscale_settings(self):
+        settings = {"grayscale_method": "single_channel", "grayscale_color": "R"}
+        with patch("run_experiment.load_settings", return_value=settings):
+            run_experiment.run_pipeline("2", "1", _default_params())
+        kwargs = self._cv_mod.frequency_sweep_inclusive.call_args[1]
+        assert kwargs["grayscale_method"] == "single_channel"
+        assert kwargs["grayscale_color"] == "R"
+
+    def test_opencv_reference_mode_forwards_grayscale_settings(self):
+        settings = {"grayscale_method": "single_channel", "grayscale_color": "G"}
+        with patch("run_experiment.load_settings", return_value=settings):
+            run_experiment.run_pipeline("2", "2", _default_params())
+        kwargs = self._cv_mod.reference_frequency_sweep_inclusive.call_args[1]
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_allied_forwards_grayscale_settings(self):
+        settings = {"grayscale_method": "single_channel", "grayscale_color": "B"}
+        with patch("run_experiment.load_settings", return_value=settings):
+            run_experiment.run_pipeline("3", "1", _default_params())
+        kwargs = self._av_mod.frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["grayscale_method"] == "single_channel"
+        assert kwargs["grayscale_color"] == "B"
+
+    def test_allied_reference_mode_forwards_grayscale_settings(self):
+        settings = {"grayscale_method": "single_channel", "grayscale_color": "R"}
+        with patch("run_experiment.load_settings", return_value=settings):
+            run_experiment.run_pipeline("3", "2", _default_params())
+        kwargs = self._av_mod.reference_frequency_sweep_allied_vision.call_args[1]
+        assert kwargs["grayscale_method"] == "single_channel"
+
+    def test_missing_grayscale_keys_default_to_standard(self):
+        # A settings.json written before this feature existed, or a fresh
+        # DEFAULT_SETTINGS copy, must not crash run_pipeline() — it should
+        # fall back to the same "standard"/"R" defaults every sweep
+        # function itself already defaults to.
+        with patch("run_experiment.load_settings", return_value={}):
+            run_experiment.run_pipeline("1", "1", _default_params())
+        kwargs = self._basler_mod.frequency_sweep.call_args[1]
+        assert kwargs["grayscale_method"] == "standard"
+        assert kwargs["grayscale_color"] == "R"
+
+
 class TestRunPipelineErrorRecovery:
     def setup_method(self):
         self._basler_mod = _mock_pipeline_module("complete_pipeline")

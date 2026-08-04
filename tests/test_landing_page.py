@@ -53,9 +53,12 @@ def test_landing_page_buttons_exist(qapp, temp_config_dir, qtbot):
     page = LandingPage()
     qtbot.addWidget(page)
 
-    # Check mode buttons
-    assert page.monitor_button is not None
-    assert page.scan_button is not None
+    # Check mode cards. These used to be plain QPushButtons
+    # (monitor_button / scan_button), but the sidebar-navigation refactor
+    # replaced them with ModeCard widgets (icon + title + description),
+    # since a QPushButton can only show one label and can't fit all three.
+    assert page.monitor_card is not None
+    assert page.scan_card is not None
 
     # Check control buttons
     assert page.settings_button is not None

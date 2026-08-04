@@ -18,11 +18,12 @@ from typing import Any, Dict, Optional
 DEFAULT_SETTINGS = {
     "grayscale_method": "standard",
     "grayscale_color": "R",
-    "grayscale_backend": "numpy",
     "default_camera_choice": "2",
     "default_camera_index": 0,
     "default_mode_choice": "1",  # "1"=pair subtraction, "2"=reference subtraction
     "show_gain": False,
+    "show_compare_amplification_button": False,
+    "show_compare_grayscale_button": False,
     "default_start_freq": 100.0,
     "default_end_freq": 1000.0,
     "default_step_size": 100.0,

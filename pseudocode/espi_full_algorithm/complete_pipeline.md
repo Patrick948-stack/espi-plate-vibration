@@ -273,14 +273,37 @@ deliberately does not turn output on itself. Matches what the "What the
 Pipeline Does at Each Frequency" section above already described as the
 intended behavior.
 
+**The real Sweep now honors the Settings page's grayscale choice, not just Preview.**
+`frequency_sweep()` and `reference_frequency_sweep()` used to always call
+`connect_camera()` with no arguments, which connects in its default "standard"
+Mono8 mode no matter what the user picked on the Settings page. Both now take
+two new keyword parameters, `grayscale_method="standard"`,
+`grayscale_color="R"` (matching `DEFAULT_SETTINGS`, so any existing caller
+that omits them is unaffected), forward `grayscale_method` into
+`connect_camera(grayscale_method=...)`, and run every captured frame
+(including the reference frame in `reference_frequency_sweep()`) through
+`_apply_grayscale_conversion()` (imported from `monitor_gui.py`, reused
+rather than duplicated) before it is subtracted, applying the R/B channel
+swap first whenever `format_info["needs_channel_swap"]` is set. A third
+parameter, `grayscale_backend`, used to select between NumPy/Pillow/OpenCV
+HSV single-channel extraction; it was removed along with the other two
+backends, since NumPy slicing is now the only implementation.
+`run_experiment.run_pipeline()` is the single place that reads these two
+values from `settings_manager.load_settings()` and forwards them here, so
+Preview and Sweep now always agree.
+
 ## Related Files
 
 - camera_control.py - Camera capture and processing
+- monitor_gui.py - Owns `_apply_grayscale_conversion()`, imported from here
+  rather than duplicated, since Preview already proved it correct.
 - sdg_control/ - Signal generator control package this file now imports
   from (waveform.py, output.py, limits.py, constants.py, status.py,
   connections.py, errors.py); see sdg_control.md. The older, single
   file `signal_generator_control.py` mentioned in "Recent Changes"
   above no longer exists in this project.
 - live_graphs.py - Visualization during experiments
-- run_experiment.py - Command-line version
+- run_experiment.py - Command-line version, and the single choke point
+  that loads grayscale settings and forwards them into this file's
+  sweep functions.
 - run_experiment_gui.py - PyQt6 GUI version

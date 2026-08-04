@@ -1,12 +1,13 @@
 matplotlib==3.11.0
 numpy==2.4.6
 opencv-python==4.13.0.92
-PyQt6==6.11.0
 pytest==9.1.1
 pytest-qt==4.5.0
+PyQt6==6.11.0
 pyusb==1.3.1
 pyvisa==1.16.2
 pyvisa-py==0.8.1
+qtawesome==1.3.1
 
 # ==============================================================================
 # Basler camera (pypylon) — only needed if you have a Basler camera
@@ -24,10 +25,10 @@ pyvisa-py==0.8.1
 # 3. Run the installer and keep the default/full component selection —
 #    it installs the camera drivers, not just software.
 # 4. Then, with venv_physics active:
-#      pip install pypylon
+#      pip install pypylon==26.7
 # 5. Verify:
 #      python -c "from pypylon import pylon; print('Basler ready')"
-pypylon
+pypylon==26.7
 
 # ==============================================================================
 # Allied Vision camera (vmbpy) — only needed if you have an Allied Vision camera
@@ -86,4 +87,4 @@ pypylon
 #   python -c "import usb.core; print(list(usb.core.find(find_all=True)))"
 # An empty list [] or a NoBackendError means this step still needs fixing.
 # See README.md Stage 8.5 for the full verification walkthrough.
-libusb-package
+libusb-package==1.0.30.0

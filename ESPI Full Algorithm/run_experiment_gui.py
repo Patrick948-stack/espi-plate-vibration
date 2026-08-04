@@ -478,7 +478,6 @@ class CameraPreviewWorker(QThread):
         gain: float,
         grayscale_method: str = "standard",
         grayscale_color: str = "R",
-        grayscale_backend: str = "numpy",
     ) -> None:
         """Initialize preview worker with validated parameters."""
         super().__init__()
@@ -502,7 +501,6 @@ class CameraPreviewWorker(QThread):
         self._gain = gain
         self._grayscale_method = grayscale_method
         self._grayscale_color = grayscale_color
-        self._grayscale_backend = grayscale_backend
         self._stop = False
 
     def stop(self):
@@ -618,7 +616,7 @@ class CameraPreviewWorker(QThread):
                 # existing frame_ready subscriber) expects. A no-op for
                 # cameras that are already Mono8/greyscale.
                 frame = _apply_grayscale_conversion(
-                    frame, self._grayscale_method, self._grayscale_color, self._grayscale_backend
+                    frame, self._grayscale_method, self._grayscale_color
                 )
 
                 self.frame_ready.emit(frame)
@@ -690,10 +688,10 @@ class PreviewPage(QWidget):
         self.setLayout(layout)
 
     def start_preview(self, camera_choice, exposure_s, gain, grayscale_method="standard",
-                       grayscale_color="R", grayscale_backend="numpy"):
+                       grayscale_color="R"):
         self.feed_label.setText("Connecting to camera…")
         self._worker = CameraPreviewWorker(
-            camera_choice, exposure_s, gain, grayscale_method, grayscale_color, grayscale_backend
+            camera_choice, exposure_s, gain, grayscale_method, grayscale_color
         )
         self._worker.frame_ready.connect(self._on_frame)
         self._worker.error.connect(self._on_error)
@@ -1540,7 +1538,6 @@ class MainWindow(QMainWindow):
         settings = load_settings()
         grayscale_method = settings.get("grayscale_method", "standard")
         grayscale_color = settings.get("grayscale_color", "R")
-        grayscale_backend = settings.get("grayscale_backend", "numpy")
 
         self._save_last_used_settings_if_enabled(
             camera_choice, params, extra={"grayscale_method": grayscale_method}
@@ -1551,7 +1548,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Previewing camera feed")
         self.preview_page.start_preview(
             camera_choice, params["exposure"], params["gain"],
-            grayscale_method, grayscale_color, grayscale_backend,
+            grayscale_method, grayscale_color,
         )
 
     def _start_sweep_stage(self):

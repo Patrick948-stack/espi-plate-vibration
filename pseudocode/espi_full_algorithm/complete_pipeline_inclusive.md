@@ -151,6 +151,25 @@ reference instead of subtracting frame pairs from each other. The saved
 files are labeled `espi_ref_raw` instead of `espi_raw`, and the metadata
 file records `"diff_mode": "reference"`.
 
+## Recent Changes
+
+**The real Sweep now honors the Settings page's grayscale choice, not just Preview.**
+Both sweep functions gained two new keyword parameters,
+`grayscale_method="standard"`, `grayscale_color="R"` (matching
+`DEFAULT_SETTINGS`, so any existing caller that omits them is unaffected).
+`grayscale_method` is now forwarded into
+`connect_camera(camera_index=0, grayscale_method=...)` in step 2, and every
+captured frame (both members of each pair in step 8, and the reference
+frame in the reference-subtraction variant) is run through
+`_apply_grayscale_conversion()` (imported from `monitor_gui.py`, reused
+rather than duplicated) before it is subtracted, applying the R/B channel
+swap first whenever `format_info["needs_channel_swap"]` is set. A third
+parameter, `grayscale_backend`, used to select between NumPy/Pillow/OpenCV
+HSV single-channel extraction; it was removed along with the other two
+backends, since NumPy slicing is now the only implementation.
+`run_experiment.run_pipeline()` is the single place that reads these two
+values from `settings_manager.load_settings()` and forwards them here.
+
 ## Running the file directly
 
 ```

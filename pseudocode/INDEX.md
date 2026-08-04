@@ -36,7 +36,7 @@ The actual ESPI measurement system. Handles camera capture, signal generation, i
 |------|---------|
 | [espi_full_algorithm/run_experiment_gui.md](espi_full_algorithm/run_experiment_gui.md) | PyQt6 dashboard for frequency sweep experiments (Setup, Preview, Sweep, Results pages) |
 | [espi_full_algorithm/run_experiment.md](espi_full_algorithm/run_experiment.md) | The same frequency sweep experiment, as an interactive terminal script |
-| [espi_full_algorithm/monitor_gui.md](espi_full_algorithm/monitor_gui.md) | PyQt6 live monitor dashboard with two frame-averaging strategies |
+| [espi_full_algorithm/monitor_gui.md](espi_full_algorithm/monitor_gui.md) | PyQt6 live monitor dashboard using averaged differences |
 | [espi_full_algorithm/monitor.md](espi_full_algorithm/monitor.md) | The same live camera monitor, as an interactive terminal script |
 | [espi_full_algorithm/settings_dialog.md](espi_full_algorithm/settings_dialog.md) | Settings page UI for run_experiment_gui.py (grayscale, camera, capture defaults, live monitoring toggles) |
 | [espi_full_algorithm/settings_manager.md](espi_full_algorithm/settings_manager.md) | JSON load/save/validate for run_experiment_gui.py's and monitor_gui.py's persisted settings |

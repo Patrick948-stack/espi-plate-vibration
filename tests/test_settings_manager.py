@@ -32,11 +32,12 @@ class TestDefaultSettings:
         required_keys = {
             "grayscale_method",
             "grayscale_color",
-            "grayscale_backend",
             "default_camera_choice",
             "default_camera_index",
             "default_mode_choice",
             "show_gain",
+            "show_compare_amplification_button",
+            "show_compare_grayscale_button",
             "default_start_freq",
             "default_end_freq",
             "default_step_size",

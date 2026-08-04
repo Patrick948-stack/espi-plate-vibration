@@ -170,8 +170,15 @@ function reconfigure_if_needed(camera_choice, params):
 
 ```
 function run_pipeline(camera_choice, mode_choice, params):
+    settings = settings_manager.load_settings()   # same file the GUI's
+        _start_preview() already reads, so Preview and the real Sweep
+        always agree on which grayscale conversion is active
+    grayscale_method  = settings.get("grayscale_method", "standard")
+    grayscale_color   = settings.get("grayscale_color", "R")
+
     build a dictionary of the shared settings every pipeline needs
-        (start_freq, end_freq, step, n_averages, gain, output_dir)
+        (start_freq, end_freq, step, n_averages, gain, output_dir,
+         grayscale_method, grayscale_color)
 
     if camera_choice is "1" (Basler):
         import frequency_sweep / reference_frequency_sweep

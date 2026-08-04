@@ -523,9 +523,12 @@ def grab_single_frame_color(camera):
 
     grab_single_frame() above already returns grabResult.Array untouched,
     with no forced greyscale conversion, so there is no reduction to skip
-    here. Basler cameras in this project are always configured as Mono8 or
-    Mono12 and have no color channels to preserve in the first place, so
-    this simply delegates to grab_single_frame().
+    here. The Basler camera in this project captures color by default;
+    connect_camera() only switches it to Mono8 when grayscale_method=
+    "standard" is requested. When grayscale_method="single_channel" is
+    requested instead, connect_camera() sets RGB8, and this function
+    returns that real (H, W, 3) color data untouched, exactly like the
+    other two camera modules' grab_single_frame_color().
     """
     return grab_single_frame(camera)
 

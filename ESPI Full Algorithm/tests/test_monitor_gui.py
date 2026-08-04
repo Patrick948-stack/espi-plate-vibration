@@ -62,8 +62,6 @@ from monitor_gui import (
     _AMPLIFICATION_METHODS,
     _apply_grayscale_conversion,
     _grayscale_numpy,
-    _grayscale_pillow,
-    _grayscale_opencv_hsv,
     LearnMoreDialog,
     GrayscaleComparisonDialog,
     _compare_grayscale_methods,
@@ -78,7 +76,6 @@ def _settings(**overrides):
         gain_factor=10.0,
         graph_type=None,
         n_averages=1,
-        averaging_method="frame_averaging",
         diff_amplification="gain_factor",
     )
     base.update(overrides)
@@ -222,7 +219,7 @@ class TestSetupPageGainVisibility:
     def test_gain_hidden_by_default(self, qtbot):
         page = SetupPage()
         qtbot.addWidget(page)
-        settings_page = SettingsPage(page)
+        settings_page = SettingsPage(page, MagicMock())
         qtbot.addWidget(settings_page)
         assert settings_page._show_gain_checkbox.isChecked() is False
         assert not page._gain_label.isVisibleTo(page)
@@ -235,7 +232,7 @@ class TestSetupPageGainVisibility:
         })
         page = SetupPage()
         qtbot.addWidget(page)
-        settings_page = SettingsPage(page)
+        settings_page = SettingsPage(page, MagicMock())
         qtbot.addWidget(settings_page)
         assert settings_page._show_gain_checkbox.isChecked() is True
         assert page._gain_label.isVisibleTo(page)
@@ -244,7 +241,7 @@ class TestSetupPageGainVisibility:
     def test_checking_the_box_shows_gain_immediately(self, qtbot):
         page = SetupPage()
         qtbot.addWidget(page)
-        settings_page = SettingsPage(page)
+        settings_page = SettingsPage(page, MagicMock())
         qtbot.addWidget(settings_page)
         assert not page._gain_label.isVisibleTo(page)
 
@@ -260,7 +257,7 @@ class TestSetupPageGainVisibility:
         })
         page = SetupPage()
         qtbot.addWidget(page)
-        settings_page = SettingsPage(page)
+        settings_page = SettingsPage(page, MagicMock())
         qtbot.addWidget(settings_page)
         assert page._gain_label.isVisibleTo(page)
 
@@ -277,7 +274,7 @@ class TestSetupPageGainVisibility:
         """
         page = SetupPage()
         qtbot.addWidget(page)
-        settings_page = SettingsPage(page)
+        settings_page = SettingsPage(page, MagicMock())
         qtbot.addWidget(settings_page)
 
         settings_page._show_gain_checkbox.setChecked(True)
@@ -346,40 +343,142 @@ class TestSetupPageLockedByUseLastSettingsAsDefault:
 # SettingsPage
 # ===========================================================================
 
+class TestLiveMonitorPageCompareButtonVisibility:
+    """
+    Both compare buttons are hidden by default, matching the same
+    show_gain-style pattern: a per-button setting, off by default, seeded
+    at construction, and toggled live by SettingsPage's own checkboxes
+    (see TestSettingsPageCompareButtonToggles below). Only "Stop Monitor"
+    should show up in the controls row until a toggle turns one on.
+    """
+
+    def test_both_compare_buttons_hidden_by_default(self, qtbot):
+        page = LiveMonitorPage()
+        qtbot.addWidget(page)
+        assert page.compare_button.isVisibleTo(page) is False
+        assert page.compare_grayscale_button.isVisibleTo(page) is False
+
+    def test_compare_amplification_shown_when_setting_is_true(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_compare_amplification_button": True,
+        })
+        page = LiveMonitorPage()
+        qtbot.addWidget(page)
+        assert page.compare_button.isVisibleTo(page) is True
+        assert page.compare_grayscale_button.isVisibleTo(page) is False
+
+    def test_compare_grayscale_shown_when_setting_is_true(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_compare_grayscale_button": True,
+        })
+        page = LiveMonitorPage()
+        qtbot.addWidget(page)
+        assert page.compare_button.isVisibleTo(page) is False
+        assert page.compare_grayscale_button.isVisibleTo(page) is True
+
+    def test_set_compare_amplification_visible_toggles_live(self, qtbot):
+        page = LiveMonitorPage()
+        qtbot.addWidget(page)
+        assert page.compare_button.isVisibleTo(page) is False
+
+        page.set_compare_amplification_visible(True)
+        assert page.compare_button.isVisibleTo(page) is True
+
+        page.set_compare_amplification_visible(False)
+        assert page.compare_button.isVisibleTo(page) is False
+
+    def test_set_compare_grayscale_visible_toggles_live(self, qtbot):
+        page = LiveMonitorPage()
+        qtbot.addWidget(page)
+        assert page.compare_grayscale_button.isVisibleTo(page) is False
+
+        page.set_compare_grayscale_visible(True)
+        assert page.compare_grayscale_button.isVisibleTo(page) is True
+
+        page.set_compare_grayscale_visible(False)
+        assert page.compare_grayscale_button.isVisibleTo(page) is False
+
+
+class TestSettingsPageCompareButtonToggles:
+    """
+    SettingsPage's two new checkboxes mirror _show_gain_checkbox exactly:
+    off by default, apply immediately to the live LiveMonitorPage, and
+    persist to the shared settings file.
+    """
+
+    def test_checkboxes_unchecked_by_default(self, qtbot):
+        live_monitor_page = LiveMonitorPage()
+        qtbot.addWidget(live_monitor_page)
+        settings_page = SettingsPage(SetupPage(), live_monitor_page)
+        qtbot.addWidget(settings_page)
+        assert settings_page._show_compare_amplification_checkbox.isChecked() is False
+        assert settings_page._show_compare_grayscale_checkbox.isChecked() is False
+
+    def test_checking_amplification_box_shows_button_immediately(self, qtbot):
+        live_monitor_page = LiveMonitorPage()
+        qtbot.addWidget(live_monitor_page)
+        settings_page = SettingsPage(SetupPage(), live_monitor_page)
+        qtbot.addWidget(settings_page)
+
+        settings_page._show_compare_amplification_checkbox.setChecked(True)
+
+        assert live_monitor_page.compare_button.isVisibleTo(live_monitor_page) is True
+        assert live_monitor_page.compare_grayscale_button.isVisibleTo(live_monitor_page) is False
+
+    def test_checking_grayscale_box_shows_button_immediately(self, qtbot):
+        live_monitor_page = LiveMonitorPage()
+        qtbot.addWidget(live_monitor_page)
+        settings_page = SettingsPage(SetupPage(), live_monitor_page)
+        qtbot.addWidget(settings_page)
+
+        settings_page._show_compare_grayscale_checkbox.setChecked(True)
+
+        assert live_monitor_page.compare_grayscale_button.isVisibleTo(live_monitor_page) is True
+        assert live_monitor_page.compare_button.isVisibleTo(live_monitor_page) is False
+
+    def test_unchecking_hides_button_again(self, qtbot):
+        settings_manager.save_settings({
+            **settings_manager.DEFAULT_SETTINGS,
+            "show_compare_amplification_button": True,
+        })
+        live_monitor_page = LiveMonitorPage()
+        qtbot.addWidget(live_monitor_page)
+        settings_page = SettingsPage(SetupPage(), live_monitor_page)
+        qtbot.addWidget(settings_page)
+        assert live_monitor_page.compare_button.isVisibleTo(live_monitor_page) is True
+
+        settings_page._show_compare_amplification_checkbox.setChecked(False)
+
+        assert live_monitor_page.compare_button.isVisibleTo(live_monitor_page) is False
+
+    def test_toggling_amplification_box_persists_to_settings(self, qtbot):
+        live_monitor_page = LiveMonitorPage()
+        qtbot.addWidget(live_monitor_page)
+        settings_page = SettingsPage(SetupPage(), live_monitor_page)
+        qtbot.addWidget(settings_page)
+
+        settings_page._show_compare_amplification_checkbox.setChecked(True)
+        assert settings_manager.load_settings()["show_compare_amplification_button"] is True
+
+        settings_page._show_compare_amplification_checkbox.setChecked(False)
+        assert settings_manager.load_settings()["show_compare_amplification_button"] is False
+
+    def test_toggling_grayscale_box_persists_to_settings(self, qtbot):
+        live_monitor_page = LiveMonitorPage()
+        qtbot.addWidget(live_monitor_page)
+        settings_page = SettingsPage(SetupPage(), live_monitor_page)
+        qtbot.addWidget(settings_page)
+
+        settings_page._show_compare_grayscale_checkbox.setChecked(True)
+        assert settings_manager.load_settings()["show_compare_grayscale_button"] is True
+
+        settings_page._show_compare_grayscale_checkbox.setChecked(False)
+        assert settings_manager.load_settings()["show_compare_grayscale_button"] is False
+
+
 class TestSettingsPage:
-    def test_grayscale_backend_choices_available(self, qtbot):
-        setup = SetupPage()
-        settings_page = SettingsPage(setup)
-        qtbot.addWidget(settings_page)
-        backend_values = [
-            settings_page._backend_combo.itemData(i)
-            for i in range(settings_page._backend_combo.count())
-        ]
-        # Verify expected backends are available
-        assert "numpy" in backend_values
-        assert "pillow" in backend_values
-        assert "opencv_hsv" in backend_values
-
-    def test_default_averaging_method_is_averaged_differences(self, qtbot):
-        setup = SetupPage()
-        settings_page = SettingsPage(setup)
-        qtbot.addWidget(settings_page)
-        assert settings_page.averaging_method() == "averaged_differences"
-
-    def test_can_select_frame_averaging(self, qtbot):
-        setup = SetupPage()
-        settings_page = SettingsPage(setup)
-        qtbot.addWidget(settings_page)
-        settings_page._averaging_radios["frame_averaging"].setChecked(True)
-        assert settings_page.averaging_method() == "frame_averaging"
-
-    def test_can_select_averaged_differences(self, qtbot):
-        setup = SetupPage()
-        settings_page = SettingsPage(setup)
-        qtbot.addWidget(settings_page)
-        settings_page._averaging_radios["averaged_differences"].setChecked(True)
-        assert settings_page.averaging_method() == "averaged_differences"
-
     @pytest.mark.parametrize("choice,expected", [
         ("1", "histogram"),
         ("2", "log_histogram"),
@@ -388,48 +487,41 @@ class TestSettingsPage:
     ])
     def test_graph_type_choices(self, qtbot, choice, expected):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         settings_page._graph_radios[choice].setChecked(True)
         assert settings_page.graph_type() == expected
 
     def test_default_graph_type_is_none(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         assert settings_page.graph_type() is None
 
     @pytest.mark.parametrize("choice", ["none", "gain_factor"])
     def test_diff_amplification_choices(self, qtbot, choice):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         settings_page._amp_radios[choice].setChecked(True)
         assert settings_page.diff_amplification() == choice
 
     def test_default_diff_amplification_is_gain_factor(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         assert settings_page.diff_amplification() == "gain_factor"
 
-    def test_tooltips_are_set_on_averaging_radios(self, qtbot):
-        setup = SetupPage()
-        settings_page = SettingsPage(setup)
-        qtbot.addWidget(settings_page)
-        for choice, radio in settings_page._averaging_radios.items():
-            assert len(radio.toolTip()) > 0
-
     def test_tooltips_are_set_on_graph_radios(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         for choice, radio in settings_page._graph_radios.items():
             assert len(radio.toolTip()) > 0
 
     def test_tooltips_are_set_on_amplification_radios(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         for choice, radio in settings_page._amp_radios.items():
             assert len(radio.toolTip()) > 0
@@ -452,10 +544,10 @@ class _FakeLearnMoreDialog:
 
 class TestLearnMoreButtons:
     """
-    Each processing method group (grayscale conversion, frame averaging,
-    intensity graph, difference amplification) gets a Learn More button that
-    opens a plain language explanation, so someone unfamiliar with these
-    algorithms is not stuck guessing what a radio button label means.
+    Each settings group (grayscale conversion, intensity graph, difference
+    amplification, advanced) gets a Learn More button that opens a plain
+    language explanation, so someone unfamiliar with these algorithms is
+    not stuck guessing what a radio button label means.
     """
 
     @pytest.fixture(autouse=True)
@@ -466,36 +558,36 @@ class TestLearnMoreButtons:
 
     def test_every_group_has_a_learn_more_button(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         assert isinstance(settings_page._grayscale_learn_more_button, QPushButton)
-        assert isinstance(settings_page._averaging_learn_more_button, QPushButton)
         assert isinstance(settings_page._graph_learn_more_button, QPushButton)
         assert isinstance(settings_page._amplification_learn_more_button, QPushButton)
+        assert isinstance(settings_page._advanced_learn_more_button, QPushButton)
 
     def test_grayscale_learn_more_mentions_its_own_options(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         settings_page._grayscale_learn_more_button.click()
         title, html = _FakeLearnMoreDialog.created[0]
         assert "grayscale" in title.lower()
-        for keyword in ("Full-RGB", "channel", "NumPy", "Pillow"):
+        for keyword in ("Full-RGB", "channel", "NumPy"):
             assert keyword in html
 
-    def test_averaging_learn_more_mentions_its_own_options(self, qtbot):
+    def test_advanced_learn_more_mentions_its_own_options(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
-        settings_page._averaging_learn_more_button.click()
+        settings_page._advanced_learn_more_button.click()
         title, html = _FakeLearnMoreDialog.created[0]
-        assert "averaging" in title.lower()
-        for keyword in ("Average of differences", "Difference of averages", "speckle"):
+        assert "advanced" in title.lower()
+        for keyword in ("Show Gain", "Compare Amplification Methods", "Compare Grayscale Methods"):
             assert keyword in html
 
     def test_graph_learn_more_mentions_its_own_options(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         settings_page._graph_learn_more_button.click()
         title, html = _FakeLearnMoreDialog.created[0]
@@ -505,7 +597,7 @@ class TestLearnMoreButtons:
 
     def test_amplification_learn_more_mentions_its_own_options(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         settings_page._amplification_learn_more_button.click()
         title, html = _FakeLearnMoreDialog.created[0]
@@ -515,7 +607,7 @@ class TestLearnMoreButtons:
 
     def test_each_button_click_opens_exactly_one_dialog(self, qtbot):
         setup = SetupPage()
-        settings_page = SettingsPage(setup)
+        settings_page = SettingsPage(setup, MagicMock())
         qtbot.addWidget(settings_page)
         settings_page._amplification_learn_more_button.click()
         assert len(_FakeLearnMoreDialog.created) == 1
@@ -530,7 +622,7 @@ class TestLearnMoreDialog:
 
 
 # ===========================================================================
-# Single-channel grayscale extraction backends (pure functions, no Qt needed)
+# Single-channel grayscale extraction (pure functions, no Qt needed)
 # ===========================================================================
 
 @pytest.fixture
@@ -541,6 +633,20 @@ def bgr_frame_distinct_channels():
     frame[:, :, 1] = 150  # Green
     frame[:, :, 2] = 200  # Red
     return frame
+
+
+class TestGrayscaleNumpyExtraction:
+    @pytest.mark.parametrize("color_code,channel_idx", [("B", 0), ("G", 1), ("R", 2)])
+    def test_extracts_the_requested_channel(self, bgr_frame_distinct_channels, color_code, channel_idx):
+        result = _grayscale_numpy(bgr_frame_distinct_channels, color_code)
+        assert result.shape == bgr_frame_distinct_channels.shape[:2]
+        assert np.all(result == bgr_frame_distinct_channels[:, :, channel_idx])
+
+    def test_apply_grayscale_conversion_dispatches_to_numpy_slicing(self, bgr_frame_distinct_channels):
+        result = _apply_grayscale_conversion(
+            bgr_frame_distinct_channels, method="single_channel", color="R"
+        )
+        assert np.all(result == bgr_frame_distinct_channels[:, :, 2])
 
 
 class TestGrayscaleComparisonDialog:
@@ -613,10 +719,10 @@ class TestMonitorWorkerAmplificationIntegration:
     loop still produces correctly amplified frames now that normalize,
     CLAHE, and gamma are gone -- not just that _apply_diff_amplification()
     works correctly in isolation (see TestApplyDiffAmplificationDispatch
-    above). Calls _run_frame_averaging()/_run_averaged_differences()
-    directly instead of worker.start(), so this never touches the real
-    QThread machinery and cannot hit the worker-thread hang TestLiveMonitorPage
-    below is skipped for.
+    above). Calls _run_averaged_differences() directly instead of
+    worker.start(), so this never touches the real QThread machinery and
+    cannot hit the worker-thread hang TestLiveMonitorPage below is skipped
+    for.
     """
 
     def _make_worker(self, diff_amplification, gain_factor):
@@ -636,34 +742,6 @@ class TestMonitorWorkerAmplificationIntegration:
         cam_lib.grab_single_frame_color_with_retry.side_effect = [*frames, None]
         cam_lib.substract_frames = cv2.absdiff
         return cam_lib
-
-    def test_frame_averaging_applies_gain_factor_end_to_end(self, gray_100x100, gray_100x100_b):
-        worker = self._make_worker("gain_factor", gain_factor=3.0)
-        cam_lib = self._fake_cam_lib([gray_100x100, gray_100x100_b])
-
-        received = []
-        worker.frame_ready.connect(lambda frame, diff: received.append((frame, diff)))
-
-        worker._run_frame_averaging(cam_lib, camera=object(), gain_factor=3.0, n_averages=1)
-
-        # First emit has no diff yet (no previous average to compare against).
-        # Second emit has the real, gain_factor-amplified diff.
-        assert received[0][1] is None
-        expected_raw_diff = cv2.absdiff(gray_100x100, gray_100x100_b)
-        expected_amplified = cv2.convertScaleAbs(expected_raw_diff, alpha=3.0)
-        assert np.array_equal(received[1][1], expected_amplified)
-
-    def test_frame_averaging_applies_none_end_to_end(self, gray_100x100, gray_100x100_b):
-        worker = self._make_worker("none", gain_factor=3.0)
-        cam_lib = self._fake_cam_lib([gray_100x100, gray_100x100_b])
-
-        received = []
-        worker.frame_ready.connect(lambda frame, diff: received.append((frame, diff)))
-
-        worker._run_frame_averaging(cam_lib, camera=object(), gain_factor=3.0, n_averages=1)
-
-        expected_raw_diff = cv2.absdiff(gray_100x100, gray_100x100_b)
-        assert np.array_equal(received[1][1], expected_raw_diff)
 
     def test_averaged_differences_applies_gain_factor_end_to_end(self, gray_100x100, gray_100x100_b):
         # averaged_differences grabs frame *pairs* and emits BEFORE updating
@@ -688,6 +766,49 @@ class TestMonitorWorkerAmplificationIntegration:
         amplified_diffs = [diff for _, diff in received if diff is not None]
         for diff in amplified_diffs:
             assert diff.dtype == np.uint8
+
+    def test_averaged_differences_emits_the_real_matched_pair(self, gray_100x100, gray_100x100_b):
+        """
+        Bug: raw_frame_ready used to only ever emit frame2, once per loop
+        iteration, never frame1. LiveMonitorPage's _last_two_raw_frames
+        buffer (fed only from this signal) therefore ended up holding two
+        different iterations' frame2, never a real matched frame1/frame2
+        pair from the same diff computation. The "Compare Grayscale
+        Methods" dialog opened without error but silently compared frames
+        that were never actually subtracted together.
+
+        Fix: emit frame1 immediately before frame2, every iteration, so
+        two consecutive raw_frame_ready emits are always a genuine pair.
+        """
+        worker = self._make_worker("gain_factor", gain_factor=1.0)
+        cam_lib = self._fake_cam_lib([gray_100x100, gray_100x100_b])
+
+        received = []
+        worker.raw_frame_ready.connect(lambda frame: received.append(frame))
+
+        worker._run_averaged_differences(cam_lib, camera=object(), gain_factor=1.0, n_averages=1)
+
+        assert len(received) == 2
+        assert np.array_equal(received[0], gray_100x100)
+        assert np.array_equal(received[1], gray_100x100_b)
+
+    def test_averaged_differences_emits_raw_frames_before_grayscale_conversion(
+        self, gray_100x100, gray_100x100_b,
+    ):
+        # raw_frame_ready must carry the untouched frame, not the
+        # already-converted one, so the comparison dialog can run every
+        # grayscale backend on genuinely raw data.
+        worker = self._make_worker("gain_factor", gain_factor=1.0)
+        worker._grayscale_method = "single_channel"
+        cam_lib = self._fake_cam_lib([gray_100x100, gray_100x100_b])
+
+        received = []
+        worker.raw_frame_ready.connect(lambda frame: received.append(frame))
+
+        worker._run_averaged_differences(cam_lib, camera=object(), gain_factor=1.0, n_averages=1)
+
+        assert np.array_equal(received[0], gray_100x100)
+        assert np.array_equal(received[1], gray_100x100_b)
 
 
 @pytest.mark.skip(reason="Worker threads hang in test environment — requires signal delivery fix")

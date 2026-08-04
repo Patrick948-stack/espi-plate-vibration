@@ -48,7 +48,6 @@ import time
 import cv2
 import numpy as np
 import qtawesome as qta
-from PIL import Image
 
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPixmap
@@ -131,22 +130,6 @@ DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S = 6.0
 # GRAYSCALE CONVERSION ALGORITHMS — SINGLE-CHANNEL EXTRACTION
 # ==============================================================================
 
-def _grayscale_pillow(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
-    """
-    Extract single color channel using Pillow and merge across all channels.
-    Returns a grayscale array with all channels equal to the selected color intensity.
-    """
-    # Convert BGR to RGB for Pillow
-    rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(rgb_frame, mode='RGB')
-
-    # Extract the target channel and get as numpy array
-    channel = np.array(pil_img.getchannel(color_code))
-
-    # Return the single-channel grayscale (2D array)
-    return channel
-
-
 def _grayscale_numpy(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
     """
     Extract single color channel using NumPy slicing (BGR layout).
@@ -158,51 +141,10 @@ def _grayscale_numpy(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
     return bgr_frame[:, :, channel_idx].copy()
 
 
-def _grayscale_opencv_hsv(bgr_frame: np.ndarray, color_code: str) -> np.ndarray:
-    """
-    Extract single color channel using HSV-based hue masking.
-    Converts BGR to HSV, creates a mask for the target color's hue range,
-    and returns the brightness (Value channel) of only those pixels.
-
-    This approach isolates pixels of a specific hue and returns their true
-    brightness, which is cleaner than raw channel extraction for
-    monochromatic light sources (e.g. a red laser).
-
-    Hue ranges (OpenCV HSV: H 0-180):
-    - Red: 0-10 and 170-180 (wraps around)
-    - Green: 35-85
-    - Blue: 100-140
-
-    Time: O(width * height), Space: O(width * height) for the output.
-    """
-    hsv_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
-
-    if color_code == "R":
-        # Red wraps around in hue space
-        mask1 = cv2.inRange(hsv_frame, np.array([0, 50, 50]), np.array([10, 255, 255]))
-        mask2 = cv2.inRange(hsv_frame, np.array([170, 50, 50]), np.array([180, 255, 255]))
-        color_mask = cv2.bitwise_or(mask1, mask2)
-    elif color_code == "G":
-        # Green hue range
-        color_mask = cv2.inRange(hsv_frame, np.array([35, 50, 50]), np.array([85, 255, 255]))
-    elif color_code == "B":
-        # Blue hue range
-        color_mask = cv2.inRange(hsv_frame, np.array([100, 50, 50]), np.array([140, 255, 255]))
-    else:
-        raise ValueError(f"Invalid color code: {color_code}")
-
-    # Extract the V (Value/Brightness) channel from HSV
-    v_channel = hsv_frame[:, :, 2]
-
-    # Apply mask to get brightness of only target color pixels
-    return cv2.bitwise_and(v_channel, v_channel, mask=color_mask)
-
-
 def _apply_grayscale_conversion(
     frame: np.ndarray,
     method: str = "standard",
     color: str = "R",
-    backend: str = "numpy",
 ) -> np.ndarray:
     """
     Apply grayscale conversion to a frame based on the selected method.
@@ -211,7 +153,6 @@ def _apply_grayscale_conversion(
         frame: numpy array — either BGR (H, W, 3) or grayscale (H, W), uint8
         method: "standard" (full RGB) or "single_channel"
         color: "R", "G", or "B" (used only when method="single_channel")
-        backend: "numpy", "pillow", or "opencv_split" (used only when method="single_channel")
 
     Returns:
         2D grayscale numpy array (H, W) uint8
@@ -227,25 +168,18 @@ def _apply_grayscale_conversion(
         # Standard full-RGB grayscale conversion
         return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     elif method == "single_channel":
-        if backend == "numpy":
-            return _grayscale_numpy(frame, color)
-        elif backend == "pillow":
-            return _grayscale_pillow(frame, color)
-        elif backend == "opencv_hsv":
-            return _grayscale_opencv_hsv(frame, color)
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
+        return _grayscale_numpy(frame, color)
     else:
         raise ValueError(f"Invalid method: {method}")
 
 
-_GRAYSCALE_COMPARISON_METHODS = ("standard", "numpy", "pillow", "opencv_hsv")
+_GRAYSCALE_COMPARISON_METHODS = ("standard", "single_channel")
 
 
 def _compare_grayscale_methods(frame: np.ndarray, color: str = "R") -> dict:
     """
-    Run Standard Full-RGB and all three single-channel extraction backends
-    on the same raw frame, so their effect can be compared side by side
+    Run Standard Full-RGB and Single-Channel Extraction (NumPy slicing) on
+    the same raw frame, so their effect can be compared side by side
     instead of switching settings and restarting the monitor to see each
     one. Backs the Compare Grayscale Methods button.
 
@@ -259,12 +193,7 @@ def _compare_grayscale_methods(frame: np.ndarray, color: str = "R") -> dict:
     results = {}
     for method in _GRAYSCALE_COMPARISON_METHODS:
         start = time.perf_counter()
-        if method == "standard":
-            result = _apply_grayscale_conversion(frame, method="standard")
-        else:
-            result = _apply_grayscale_conversion(
-                frame, method="single_channel", color=color, backend=method
-            )
+        result = _apply_grayscale_conversion(frame, method=method, color=color)
         elapsed = time.perf_counter() - start
         results[method] = (result, elapsed, float(np.mean(result)))
     return results
@@ -293,17 +222,8 @@ def _compare_grayscale_difference_methods(
     results = {}
     for method in _GRAYSCALE_COMPARISON_METHODS:
         start = time.perf_counter()
-        # Convert both frames using the same method
-        if method == "standard":
-            gray1 = _apply_grayscale_conversion(frame1, method="standard")
-            gray2 = _apply_grayscale_conversion(frame2, method="standard")
-        else:
-            gray1 = _apply_grayscale_conversion(
-                frame1, method="single_channel", color=color, backend=method
-            )
-            gray2 = _apply_grayscale_conversion(
-                frame2, method="single_channel", color=color, backend=method
-            )
+        gray1 = _apply_grayscale_conversion(frame1, method=method, color=color)
+        gray2 = _apply_grayscale_conversion(frame2, method=method, color=color)
         # Compute absolute difference between the grayscale frames
         diff = cv2.absdiff(gray1, gray2)
         # Apply amplification to make difference visible
@@ -333,8 +253,8 @@ def _apply_diff_amplification(
     Apply the selected amplification to a raw difference frame.
 
     Callers must only ever pass the post-averaging diff array here (see
-    MonitorWorker._run_frame_averaging / _run_averaged_differences), never
-    the raw or averaged live feed frame, since amplification is meant to make
+    MonitorWorker._run_averaged_differences), never the raw or averaged
+    live feed frame, since amplification is meant to make
     the subtracted fringe pattern visible, not to alter what the live feed
     shows the operator.
     """
@@ -622,10 +542,8 @@ class MonitorWorker(QThread):
         self._settings = settings
         self._diff_amplification = settings.get("diff_amplification", "gain_factor")
         self._n_averages = settings.get("n_averages", 1)
-        self._averaging_method = settings.get("averaging_method", "averaged_differences")
         self._grayscale_method = settings.get("grayscale_method", "standard")
         self._grayscale_color = settings.get("grayscale_color", "R")
-        self._grayscale_backend = settings.get("grayscale_backend", "numpy")
         self._frame_grab_retry_delay_s = settings.get(
             "frame_grab_retry_delay_s", DEFAULT_FRAME_GRAB_RETRY_DELAY_S
         )
@@ -673,10 +591,7 @@ class MonitorWorker(QThread):
             gain_factor = self._settings["gain_factor"]
             n_averages = self._n_averages
 
-            if self._averaging_method == "averaged_differences":
-                self._run_averaged_differences(cam_lib, camera, gain_factor, n_averages)
-            else:
-                self._run_frame_averaging(cam_lib, camera, gain_factor, n_averages)
+            self._run_averaged_differences(cam_lib, camera, gain_factor, n_averages)
 
         except Exception as e:
             self.error.emit(f"The monitor stopped unexpectedly: {e}")
@@ -730,66 +645,9 @@ class MonitorWorker(QThread):
 
         return frame
 
-    def _run_frame_averaging(self, cam_lib, camera, gain_factor, n_averages):
-        """
-        Frame averaging (classic method):
-        1. Collect n_averages raw frames
-        2. Average them together
-        3. Subtract from previous average to get difference
-        """
-        frame_buffer = []
-        prev_averaged = None
-
-        while not self._stop:
-            # grab_single_frame_color_with_retry(), not grab_single_frame():
-            # the plain version already reduces a color frame to greyscale
-            # before returning it, which would make single-channel R/G/B
-            # extraction below a no-op no matter what color or backend was
-            # picked. The _with_retry version also gives a flaky USB
-            # webcam a couple of extra chances before this loop gives up,
-            # instead of failing on the very first dropped frame.
-            frame = self._grab_frame(cam_lib, camera)
-            if frame is None:
-                self.error.emit("Failed to grab frame — check camera connection.")
-                break
-
-            self.raw_frame_ready.emit(frame)
-
-            # Apply grayscale conversion (standard or single-channel)
-            frame = _apply_grayscale_conversion(
-                frame, self._grayscale_method, self._grayscale_color, self._grayscale_backend
-            )
-
-            frame_buffer.append(frame)
-
-            if len(frame_buffer) == n_averages:
-                # Defensive check: ensure all frames in buffer have same shape
-                first_shape = frame_buffer[0].shape
-                for i, f in enumerate(frame_buffer[1:], 1):
-                    if f.shape != first_shape:
-                        print(f"❌ ERROR: Frame {i} has shape {f.shape}, expected {first_shape}")
-                        self.error.emit("Frame shapes are inconsistent — aborting.")
-                        break
-
-                # Compute average with clipping to prevent data loss
-                averaged_float = np.mean(frame_buffer, axis=0)
-                averaged = np.clip(averaged_float, 0, 255).astype(np.uint8)
-                frame_buffer = []
-
-                diff = None
-                if prev_averaged is not None:
-                    raw_diff = cam_lib.substract_frames(prev_averaged, averaged)
-                    self.raw_diff_ready.emit(raw_diff)
-                    diff = _apply_diff_amplification(
-                        raw_diff, self._diff_amplification, gain_factor,
-                    )
-
-                prev_averaged = averaged
-                self.frame_ready.emit(averaged, diff)
-
     def _run_averaged_differences(self, cam_lib, camera, gain_factor, n_averages):
         """
-        Average of differences (new method):
+        Average of differences:
         1. Grab pairs of consecutive frames
         2. Subtract each pair to get a difference image
         3. Collect n_averages differences in a buffer
@@ -802,7 +660,13 @@ class MonitorWorker(QThread):
         current_diff = None
 
         while not self._stop:
-            # grab_single_frame_color_with_retry(), see _run_frame_averaging() above for why.
+            # grab_single_frame_color_with_retry(), not grab_single_frame():
+            # the plain version already reduces a color frame to greyscale
+            # before returning it, which would make single-channel R/G/B
+            # extraction below a no-op no matter what color was picked. The
+            # _with_retry version also gives a flaky USB webcam a couple of
+            # extra chances before this loop gives up, instead of failing on
+            # the very first dropped frame.
             frame1 = self._grab_frame(cam_lib, camera)
             if frame1 is None:
                 self.error.emit("Failed to grab frame — check camera connection.")
@@ -813,14 +677,18 @@ class MonitorWorker(QThread):
                 self.error.emit("Failed to grab frame — check camera connection.")
                 break
 
+            # Both frames from this exact diff computation, back to back, so
+            # LiveMonitorPage's 2-slot buffer (_on_raw_frame) always holds a
+            # genuine matched pair instead of two different iterations' frame2.
+            self.raw_frame_ready.emit(frame1)
             self.raw_frame_ready.emit(frame2)
 
             # Apply grayscale conversion (standard or single-channel)
             frame1 = _apply_grayscale_conversion(
-                frame1, self._grayscale_method, self._grayscale_color, self._grayscale_backend
+                frame1, self._grayscale_method, self._grayscale_color
             )
             frame2 = _apply_grayscale_conversion(
-                frame2, self._grayscale_method, self._grayscale_color, self._grayscale_backend
+                frame2, self._grayscale_method, self._grayscale_color
             )
 
             raw_diff = cam_lib.substract_frames(frame1, frame2)
@@ -912,19 +780,16 @@ class AmplificationComparisonDialog(QDialog):
 
 class GrayscaleComparisonDialog(QDialog):
     """
-    Shows Standard Full-RGB and all three single-channel extraction
-    backends (NumPy, Pillow, OpenCV HSV) applied to the same raw frame,
-    side by side, using whichever color channel is currently selected in
-    Settings. Answers "does switching to single-channel extraction actually
-    make a visible difference" by letting the operator look at the results
-    instead of guessing.
+    Shows Standard Full-RGB and Single-Channel Extraction (NumPy slicing)
+    applied to the same raw frame, side by side, using whichever color
+    channel is currently selected in Settings. Answers "does switching to
+    single-channel extraction actually make a visible difference" by
+    letting the operator look at the results instead of guessing.
     """
 
     _LABELS = {
         "standard": "Standard Full-RGB",
-        "numpy": "Single-Channel (NumPy)",
-        "pillow": "Single-Channel (Pillow)",
-        "opencv_hsv": "Single-Channel (OpenCV HSV)",
+        "single_channel": "Single-Channel (NumPy)",
     }
 
     def __init__(self, frame, color, parent=None):
@@ -967,16 +832,14 @@ class GrayscaleDifferenceComparisonDialog(QDialog):
     """
     Shows how each grayscale conversion method affects the difference between
     two consecutive frames. Takes two raw frames, applies each grayscale method
-    to both, computes the difference, and displays all four results side by side.
+    to both, computes the difference, and displays both results side by side.
     Answers "which grayscale method produces the clearest difference visualization"
     without restarting the monitor.
     """
 
     _LABELS = {
         "standard": "Standard Full-RGB",
-        "numpy": "Single-Channel (NumPy)",
-        "pillow": "Single-Channel (Pillow)",
-        "opencv_hsv": "Single-Channel (OpenCV HSV)",
+        "single_channel": "Single-Channel (NumPy)",
     }
 
     def __init__(self, frame1, frame2, color, cam_lib=None, amplification_method="none", gain_factor=1.0, parent=None):
@@ -1077,6 +940,9 @@ class LiveMonitorPage(QWidget):
 
         self.compare_button = QPushButton("Compare Amplification Methods")
         self.compare_button.setEnabled(False)
+        self.compare_button.setVisible(
+            settings_manager.load_settings().get("show_compare_amplification_button", False)
+        )
         self.compare_button.setToolTip(
             "Run every amplification method on the current diff frame, side by side."
         )
@@ -1085,6 +951,9 @@ class LiveMonitorPage(QWidget):
 
         self.compare_grayscale_button = QPushButton("Compare Grayscale Methods")
         self.compare_grayscale_button.setEnabled(False)
+        self.compare_grayscale_button.setVisible(
+            settings_manager.load_settings().get("show_compare_grayscale_button", False)
+        )
         self.compare_grayscale_button.setToolTip(
             "Show how each grayscale method affects the latest frame difference."
         )
@@ -1121,6 +990,22 @@ class LiveMonitorPage(QWidget):
         self._worker.finished_cleanly.connect(self._on_finished)
         self._worker.start()
         self.stop_button.setEnabled(True)
+
+    def set_compare_amplification_visible(self, visible: bool):
+        """
+        Show or hide the Compare Amplification Methods button. Called once
+        at construction with whatever show_compare_amplification_button
+        was saved, and again live by SettingsPage's own checkbox whenever
+        it is toggled.
+        """
+        self.compare_button.setVisible(visible)
+
+    def set_compare_grayscale_visible(self, visible: bool):
+        """
+        Show or hide the Compare Grayscale Methods button. Same pattern as
+        set_compare_amplification_visible() above.
+        """
+        self.compare_grayscale_button.setVisible(visible)
 
     def is_running(self):
         return self._worker is not None and self._worker.isRunning()
@@ -1273,38 +1158,10 @@ camera's three channels: the other two channels mostly contain noise for a
 single color light source, so dropping them can give a cleaner, higher
 contrast signal than blending everything together.</p>
 
-<p>When Single-Channel is selected, you also pick a processing algorithm:
-<b>NumPy</b>, <b>Pillow</b>, or <b>OpenCV Split</b>. All three do the exact
-same job, pulling out the one channel you picked, using three different
-underlying code libraries. They will always give you the same picture.
-NumPy is the fastest and is the recommended default; the other two exist so
-the option can be checked against different libraries.</p>
-"""
-
-_AVERAGING_HELP_HTML = """
-<h3>About Frame Averaging</h3>
-<p>Every camera frame has some random pixel to pixel noise from the laser
-light, usually called speckle noise. Comparing two noisy frames directly
-makes that noise show up in the difference image right alongside the real
-vibration pattern you are trying to see. Both strategies here exist to
-reduce that noise before you have to look at it.</p>
-
-<p><b>Difference of averages</b> collects several raw frames, averages them
-together first, then compares that averaged frame to the previous averaged
-frame. Averaging the raw frames cancels out a lot of the random noise before
-any comparison happens.</p>
-
-<p><b>Average of differences</b> does the two steps in the opposite order:
-compare frame pairs first to get a difference image, collect several of
-those difference images, then average the differences together. This tends
-to produce a cleaner result for ESPI specifically, since it averages the
-noise out of exactly the image you care about (the difference), rather than
-averaging noise out of the inputs and hoping it stays gone after
-subtraction.</p>
-
-<p>There is no wrong choice here. Average of differences is the recommended
-starting point, but trying both on your own setup is the only way to know
-which looks cleaner for your particular camera and lighting.</p>
+<p>Single-Channel Extraction pulls out the channel you picked using a plain
+NumPy array slice, which is the fastest way to do it since it does not
+convert the frame's data or run any per-pixel math, just reads the one
+channel already stored in the image array.</p>
 """
 
 _GRAPH_HELP_HTML = """
@@ -1354,6 +1211,31 @@ on the Live Monitor page runs both side by side on the same frame, so you
 can look at the results instead of guessing.</p>
 """
 
+_ADVANCED_HELP_HTML = """
+<h3>About Advanced Settings</h3>
+<p>These options are hidden by default because most sessions never need
+them. They exist for setup, troubleshooting, and comparing processing
+methods rather than everyday monitoring.</p>
+
+<p><b>Show Gain (dB) control</b> reveals a capture setting for camera gain
+(signal amplification in decibels) on the Setup page. Most cameras and
+lighting setups work fine with gain left at 0 dB, using exposure time
+instead to control brightness, so this control stays out of the way unless
+you specifically need it.</p>
+
+<p><b>Add Compare button for Amplification Methods</b> puts a
+<b>Compare Amplification Methods</b> button on the Live Monitor page that
+runs every amplification method on the current difference frame side by
+side, so you can look at the results instead of guessing which one to
+use.</p>
+
+<p><b>Add Compare button for Grayscale Conversion</b> puts a
+<b>Compare Grayscale Methods</b> button on the Live Monitor page that runs
+Standard Full-RGB and Single-Channel Extraction on the same raw frames side
+by side, so you can see whether switching to single-channel actually makes
+a visible difference for your setup.</p>
+"""
+
 
 # ==============================================================================
 # SETTINGS PAGE
@@ -1362,12 +1244,13 @@ can look at the results instead of guessing.</p>
 class SettingsPage(QWidget):
     """
     Live monitor settings configuration page.
-    Lets users choose frame-averaging strategy, grayscale conversion method, intensity graph type,
+    Lets users choose grayscale conversion method, intensity graph type,
     and difference amplification.
     """
-    def __init__(self, setup_page):
+    def __init__(self, setup_page, live_monitor_page):
         super().__init__()
         self._setup_page = setup_page
+        self._live_monitor_page = live_monitor_page
         layout = QVBoxLayout()
 
         grid = QGridLayout()
@@ -1411,24 +1294,6 @@ class SettingsPage(QWidget):
         color_layout.addStretch()
         grayscale_layout.addLayout(color_layout)
 
-        # Algorithm backend selection (only shown when single_channel is selected)
-        self._backend_label = QLabel("Processing Algorithm:")
-        self._backend_combo = QComboBox()
-        backend_tooltips = {
-            "numpy": "Fast NumPy slicing (recommended)",
-            "pillow": "Pillow Image library extraction",
-            "opencv_hsv": "OpenCV HSV hue masking (isolates specific light color)",
-        }
-        for backend, tooltip in backend_tooltips.items():
-            self._backend_combo.addItem(backend.replace("_", " ").title(), backend)
-        self._backend_combo.setCurrentIndex(0)  # Default to NumPy
-
-        backend_layout = QHBoxLayout()
-        backend_layout.addWidget(self._backend_label)
-        backend_layout.addWidget(self._backend_combo)
-        backend_layout.addStretch()
-        grayscale_layout.addLayout(backend_layout)
-
         grayscale_layout.addStretch()
         grayscale_group.setLayout(grayscale_layout)
         grid.addWidget(grayscale_group, 0, 0)
@@ -1441,37 +1306,6 @@ class SettingsPage(QWidget):
         # Set initial state: single_channel is default, then update visibility
         self._grayscale_radios["single_channel"].setChecked(True)
         self._update_grayscale_ui_visibility()
-
-        # Averaging method group
-        avg_group = QGroupBox("Frame Averaging Strategy")
-        avg_layout = QVBoxLayout()
-
-        self._averaging_learn_more_button = self._make_learn_more_button(
-            "About Frame Averaging", _AVERAGING_HELP_HTML
-        )
-        avg_layout.addLayout(self._learn_more_row(self._averaging_learn_more_button))
-
-        self._averaging_group = QButtonGroup(self)
-        self._averaging_radios = {}
-        averaging_tooltips = {
-            "averaged_differences": "Subtracts frame pairs first, then averages the differences. Best for reducing speckle noise.",
-            "frame_averaging": "Averages raw frames first, then subtracts. Classic approach.",
-        }
-        averaging_labels = {
-            "averaged_differences": "Average of differences",
-            "frame_averaging": "Difference of averages",
-        }
-        for choice in averaging_tooltips.keys():
-            radio = QRadioButton(averaging_labels[choice])
-            radio.setToolTip(averaging_tooltips[choice])
-            self._averaging_group.addButton(radio)
-            self._averaging_radios[choice] = radio
-            avg_layout.addWidget(radio)
-
-        self._averaging_radios["averaged_differences"].setChecked(True)
-        avg_layout.addStretch()
-        avg_group.setLayout(avg_layout)
-        grid.addWidget(avg_group, 0, 1)
 
         # Intensity graph group
         graph_group = QGroupBox("Intensity Graph")
@@ -1506,7 +1340,7 @@ class SettingsPage(QWidget):
         self._graph_radios["4"].setChecked(True)
         graph_layout.addStretch()
         graph_group.setLayout(graph_layout)
-        grid.addWidget(graph_group, 1, 0)
+        grid.addWidget(graph_group, 0, 1)
 
         # Difference amplification group
         amp_group = QGroupBox("Difference Amplification")
@@ -1536,7 +1370,7 @@ class SettingsPage(QWidget):
 
         amp_layout.addStretch()
         amp_group.setLayout(amp_layout)
-        grid.addWidget(amp_group, 1, 1)
+        grid.addWidget(amp_group, 1, 0)
 
         self._amp_radios["gain_factor"].setChecked(True)
 
@@ -1547,13 +1381,30 @@ class SettingsPage(QWidget):
         advanced_group = QGroupBox("Advanced")
         advanced_layout = QVBoxLayout()
 
+        self._advanced_learn_more_button = self._make_learn_more_button(
+            "About Advanced Settings", _ADVANCED_HELP_HTML
+        )
+        advanced_layout.addLayout(self._learn_more_row(self._advanced_learn_more_button))
+
         self._show_gain_checkbox = QCheckBox("Show Gain (dB) control")
         self._show_gain_checkbox.setChecked(settings_manager.load_settings().get("show_gain", False))
         self._show_gain_checkbox.toggled.connect(self._on_show_gain_toggled)
         advanced_layout.addWidget(self._show_gain_checkbox)
 
+        self._show_compare_amplification_checkbox = QCheckBox("Add Compare button for Amplification Methods")
+        self._show_compare_amplification_checkbox.setChecked(
+            settings_manager.load_settings().get("show_compare_amplification_button", False))
+        self._show_compare_amplification_checkbox.toggled.connect(self._on_show_compare_amplification_toggled)
+        advanced_layout.addWidget(self._show_compare_amplification_checkbox)
+
+        self._show_compare_grayscale_checkbox = QCheckBox("Add Compare button for Grayscale Conversion")
+        self._show_compare_grayscale_checkbox.setChecked(
+            settings_manager.load_settings().get("show_compare_grayscale_button", False))
+        self._show_compare_grayscale_checkbox.toggled.connect(self._on_show_compare_grayscale_toggled)
+        advanced_layout.addWidget(self._show_compare_grayscale_checkbox)
+
         advanced_group.setLayout(advanced_layout)
-        grid.addWidget(advanced_group, 2, 0, 1, 2)
+        grid.addWidget(advanced_group, 1, 1)
 
         layout.addLayout(grid)
 
@@ -1603,12 +1454,10 @@ class SettingsPage(QWidget):
         return row
 
     def _update_grayscale_ui_visibility(self):
-        """Show/hide color and backend options based on grayscale method selection."""
+        """Show/hide the color channel option based on grayscale method selection."""
         is_single_channel = self._grayscale_radios["single_channel"].isChecked()
         self._color_label.setVisible(is_single_channel)
         self._color_combo.setVisible(is_single_channel)
-        self._backend_label.setVisible(is_single_channel)
-        self._backend_combo.setVisible(is_single_channel)
 
     def grayscale_method(self):
         """Get the currently selected grayscale method."""
@@ -1621,17 +1470,6 @@ class SettingsPage(QWidget):
         """Get the currently selected color channel (R, G, or B)."""
         text = self._color_combo.currentText()
         return text.split(" ")[0][0]  # Extract 'R', 'G', or 'B' from "Red (R)"
-
-    def grayscale_backend(self):
-        """Get the currently selected algorithm backend."""
-        return self._backend_combo.currentData()
-
-    def averaging_method(self):
-        """Get the currently selected averaging method."""
-        for choice, radio in self._averaging_radios.items():
-            if radio.isChecked():
-                return choice
-        return "averaged_differences"
 
     def graph_type(self):
         """Get the currently selected graph type."""
@@ -1659,6 +1497,28 @@ class SettingsPage(QWidget):
         self._setup_page.set_gain_visible(checked)
         current = settings_manager.load_settings()
         current["show_gain"] = checked
+        settings_manager.save_settings(current)
+
+    def _on_show_compare_amplification_toggled(self, checked):
+        """
+        Apply the new visibility immediately on the live Live Monitor page,
+        and persist it to settings so the choice is remembered next time.
+        Same pattern as _on_show_gain_toggled() above.
+        """
+        self._live_monitor_page.set_compare_amplification_visible(checked)
+        current = settings_manager.load_settings()
+        current["show_compare_amplification_button"] = checked
+        settings_manager.save_settings(current)
+
+    def _on_show_compare_grayscale_toggled(self, checked):
+        """
+        Apply the new visibility immediately on the live Live Monitor page,
+        and persist it to settings so the choice is remembered next time.
+        Same pattern as _on_show_gain_toggled() above.
+        """
+        self._live_monitor_page.set_compare_grayscale_visible(checked)
+        current = settings_manager.load_settings()
+        current["show_compare_grayscale_button"] = checked
         settings_manager.save_settings(current)
 
 
@@ -1774,7 +1634,7 @@ class MainWindow(QMainWindow):
 
         self.setup_page = SetupPage()
         self.live_monitor_page = LiveMonitorPage()
-        self.settings_page = SettingsPage(self.setup_page)
+        self.settings_page = SettingsPage(self.setup_page, self.live_monitor_page)
 
 
         self._stack = QStackedWidget()
@@ -1862,12 +1722,10 @@ class MainWindow(QMainWindow):
         settings = self.setup_page.settings()
         self._save_last_used_settings_if_enabled(camera_choice, settings)
         # Merge in the processing strategy settings from settings page
-        settings["averaging_method"] = self.settings_page.averaging_method()
         settings["graph_type"] = self.settings_page.graph_type()
         settings["diff_amplification"] = self.settings_page.diff_amplification()
         settings["grayscale_method"] = self.settings_page.grayscale_method()
         settings["grayscale_color"] = self.settings_page.grayscale_color()
-        settings["grayscale_backend"] = self.settings_page.grayscale_backend()
 
         self.live_monitor_page.start_monitor(camera_choice, camera_index, settings)
 

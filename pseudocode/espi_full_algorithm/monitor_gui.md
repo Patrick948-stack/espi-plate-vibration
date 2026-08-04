@@ -2,15 +2,15 @@
 
 ## Purpose
 
-A PyQt6 dashboard for real-time live monitoring of camera frames and frame differences without running a full frequency sweep. Displays live camera feed, frame subtraction results, and optional intensity graphs. Lets the user choose between two frame-averaging strategies to reduce speckle noise.
+A PyQt6 dashboard for real-time live monitoring of camera frames and frame differences without running a full frequency sweep. Displays live camera feed, frame subtraction results, and optional intensity graphs.
 
 ## Main Components
 
 **SetupPage** - Configuration interface for hardware capture settings: camera selection, exposure, gain, gain_factor, and frames to average.
 
-**SettingsPage** - Processing strategy configuration where users choose frame-averaging method, intensity graph type, and difference amplification approach (none, or gain_factor) via radio buttons with hover tooltips.
+**SettingsPage** - Processing strategy configuration where users choose grayscale conversion method, intensity graph type, and difference amplification approach (none, or gain_factor) via radio buttons with hover tooltips, plus an Advanced group of checkboxes, laid out as four groups in a 2x2 grid.
 
-**MonitorWorker** - Background thread that grabs frames from the camera, applies the chosen averaging strategy, and emits frame-ready signals to update the GUI. Also emits the raw, pre-amplification diff frame on its own signal so the Compare dialog can reuse it.
+**MonitorWorker** - Background thread that grabs frames from the camera, computes averaged differences, and emits frame-ready signals to update the GUI. Also emits the raw, pre-amplification diff frame on its own signal so the Compare dialog can reuse it.
 
 **LiveMonitorPage** - Displays the live camera feed and frame subtraction side by side, plus an optional intensity graph, plus a Compare Amplification Methods button and a Compare Grayscale Methods button, each opening a side by side comparison of every method in its own category.
 
@@ -36,12 +36,12 @@ Hardware capture configuration panel. Only shows settings that affect camera I/O
    - Gain: negative values allowed (in dB), default from `monitor_default_gain` (1.0). Hidden
      by default (label and spin box both, via `set_gain_visible()`) unless `show_gain` is
      True in the settings file; the "Show Gain (dB) control" checkbox that flips this lives
-     on SettingsPage, not here, the same layout run_experiment_gui.py uses
+     on SettingsPage's Advanced group, not here, the same layout run_experiment_gui.py uses
    - gain_factor: 0.01–200 (scales difference amplification), default from `monitor_default_gain_factor` (10.0)
    - These are separate settings keys from run_experiment_gui.py's own `default_exposure` / `default_gain` / `default_gain_factor`, since the two dashboards have always used different historical defaults
 
 3. Frames to average spinner (1–50)
-   - How many frames (or frame pairs) to combine before display
+   - How many frame pairs to combine before display
    - Not settings-backed; always starts at 1 (no averaging)
 
 4. Live summary label showing all current settings
@@ -57,7 +57,9 @@ Hardware capture configuration panel. Only shows settings that affect camera I/O
 
 ### SettingsPage
 
-Processing strategy configuration panel. Lets users choose grayscale conversion method, frame-averaging method, intensity graph type, and difference amplification via radio buttons and combo boxes with hover tooltips. Each of the four groups also has a Learn More button that opens a plain language explanation of every option in that group, for someone who is not familiar with these algorithms.
+Processing strategy configuration panel. Lets users choose grayscale conversion method, intensity graph type, and difference amplification via radio buttons, plus an Advanced group of checkboxes, all with hover tooltips. Each of the four groups also has a Learn More button that opens a plain language explanation of every option in that group, for someone who is not familiar with these algorithms.
+
+The four groups are laid out as a 2x2 grid: Grayscale Conversion Method (top left), Intensity Graph (top right), Difference Amplification (bottom left), Advanced (bottom right). There is no frame-averaging strategy group — frame difference computation always uses averaged differences (see MonitorWorker below), so there is nothing to choose there.
 
 The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A QStackedWidget must be big enough to show every page it holds, even ones not currently visible, so an unscrolled SettingsPage's own minimum height was forcing the whole window, and every other page, to be at least that tall too. That is what cropped the Settings button and the Live Monitor page's control row off the bottom of a real screen. See tests/test_sidebar_layout.py (rules I10 and I11).
 
@@ -65,25 +67,18 @@ The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A
 
 1. Grayscale conversion method selector (radio buttons)
    - "Standard Full-RGB": use standard luminosity-based grayscale (default for most cameras)
-   - "Single-Channel Extraction": extract one color channel only
-     - When selected, shows two additional combo boxes:
-       - Target Color Channel: Red (default), Green, or Blue
-       - Processing Algorithm: NumPy slicing (default), Pillow, or OpenCV channel splitting
-     - When not selected, hides color and algorithm controls for cleaner interface
+   - "Single-Channel Extraction": extract one color channel only, using plain NumPy array slicing (the only supported extraction algorithm)
+     - When selected, shows one additional combo box: Target Color Channel (Red default, Green, or Blue)
+     - When not selected, hides the color control for a cleaner interface
 
-2. Frame averaging method selector (radio buttons)
-   - "Average of differences": grab pairs, subtract, collect differences, average them
-   - "Difference of averages": collect raw frames, average them, then subtract
-   - Each radio has a tooltip explaining its approach
-
-3. Intensity graph type selector (radio buttons)
+2. Intensity graph type selector (radio buttons)
    - Histogram: updates on every frame
    - Log histogram: LabVIEW style, updates on every frame
    - 3D surface: updates a few times per second
    - None: no graph (fastest)
    - Each radio has a tooltip describing performance and output
 
-4. Difference amplification method (radio buttons, default Gain factor)
+3. Difference amplification method (radio buttons, default Gain factor)
    - No amplification: show raw pixel differences
    - Gain factor: multiply by gain_factor from SetupPage (default selection)
    - Each radio has a tooltip explaining its effect
@@ -93,88 +88,68 @@ The whole page is wrapped in a QScrollArea, the same way SetupPage already is. A
      to), so this project has exactly one amplification story everywhere: gain_factor
      or none.
 
-5. Advanced group: "Show Gain (dB) control" checkbox, unchecked by default
-   - SettingsPage is constructed with a reference to the live SetupPage instance
-     (`SettingsPage(setup_page)`), stored as `self._setup_page`
-   - Toggling this checkbox calls `self._setup_page.set_gain_visible(checked)` directly,
-     so Setup's Gain (dB) label and spin box show or hide immediately, with no need to
-     navigate away and back
-   - Also writes `show_gain` straight through to `settings_manager.save_settings()`, so
-     the choice is remembered next time, and shared with run_experiment_gui.py's own
-     "Show Gain (dB) control" checkbox (same settings key)
+4. Advanced group: checkboxes for capture-hardware and diagnostic controls a typical user does not need to see, plus its own Learn More button
+   - "Show Gain (dB) control", unchecked by default
+     - SettingsPage is constructed with a reference to the live SetupPage instance
+       (`SettingsPage(setup_page, live_monitor_page)`), stored as `self._setup_page`
+     - Toggling this checkbox calls `self._setup_page.set_gain_visible(checked)` directly,
+       so Setup's Gain (dB) label and spin box show or hide immediately, with no need to
+       navigate away and back
+     - Also writes `show_gain` straight through to `settings_manager.save_settings()`, so
+       the choice is remembered next time, and shared with run_experiment_gui.py's own
+       "Show Gain (dB) control" checkbox (same settings key)
+   - "Add Compare button for Amplification Methods", unchecked by default — shows/hides the Compare Amplification Methods button on the Live Monitor page
+   - "Add Compare button for Grayscale Conversion", unchecked by default — shows/hides the Compare Grayscale Methods button on the Live Monitor page
 
 **Methods:**
 
 - `grayscale_method()`: return "standard" or "single_channel"
 - `grayscale_color()`: return "R", "G", or "B" (only used when single_channel is selected)
-- `grayscale_backend()`: return "numpy", "pillow", or "opencv_hsv" (only used when single_channel is selected)
-- `averaging_method()`: return "averaged_differences" or "frame_averaging"
 - `graph_type()`: return "histogram", "log_histogram", "3d", or None
 - `diff_amplification()`: return "none" or "gain_factor"
 - `_on_show_gain_toggled(checked)`: apply visibility to SetupPage live and persist show_gain
-- `_update_grayscale_ui_visibility()`: show/hide color and backend controls based on grayscale method selection
+- `_update_grayscale_ui_visibility()`: show/hide the color control based on grayscale method selection
 - `_make_learn_more_button(title, html_content)`: build one Learn More button wired to open a LearnMoreDialog with the given title and content
 - `_learn_more_row(button)`: right align a Learn More button in its own row above a group's radio buttons
 
 **Learn More buttons:**
 
-Each of the four groups (Grayscale Conversion Method, Frame Averaging Strategy, Intensity Graph, Difference Amplification) has its own Learn More button at the top of the group, above the radio buttons. Clicking one opens a `LearnMoreDialog` containing a plain language explanation of every option in that group, written for whoever is operating the monitor, not for someone reading the source code. This is separate from the short hover tooltips already on each radio button: tooltips are a one line reminder, the Learn More dialog is a full explanation of what the option does and the reasoning behind it.
+Each of the four groups (Grayscale Conversion Method, Intensity Graph, Difference Amplification, Advanced) has its own Learn More button at the top of the group, above its controls. Clicking one opens a `LearnMoreDialog` containing a plain language explanation of every option in that group, written for whoever is operating the monitor, not for someone reading the source code. This is separate from the short hover tooltips already on each radio button: tooltips are a one line reminder, the Learn More dialog is a full explanation of what the option does and the reasoning behind it.
 
 `LearnMoreDialog` is a small `QDialog` wrapping a `QTextBrowser`, chosen over a plain `QLabel` because the explanations are long enough to need scrolling and because `QTextBrowser` can render simple HTML (headings, bold text, paragraphs) without needing a separate widget for every line.
 
 ### Grayscale Conversion Functions
 
-Helper functions that convert BGR camera frames to grayscale using different methods.
+Helper functions that convert BGR camera frames to grayscale.
 
 **What they do:**
 
-1. `_apply_grayscale_conversion(frame, method, color, backend)`: dispatcher function
+1. `_apply_grayscale_conversion(frame, method, color)`: dispatcher function
    - Takes a BGR numpy array
    - Applies standard grayscale (method="standard") or single-channel (method="single_channel")
    - Returns a 2D grayscale uint8 array
-   - Raises ValueError for invalid method or backend
+   - Raises ValueError for an invalid method
 
-2. `_grayscale_numpy(bgr_frame, color_code)`: NumPy slicing approach (fastest)
+2. `_grayscale_numpy(bgr_frame, color_code)`: NumPy slicing approach, the only single-channel extraction algorithm in the project
    - Extracts channel directly from BGR array using indexing (B=0, G=1, R=2)
    - Returns 2D array of selected channel intensities
    - Time: O(H×W), Space: O(H×W)
 
-3. `_grayscale_pillow(bgr_frame, color_code)`: Pillow Image library approach
-   - Converts BGR to RGB for Pillow compatibility
-   - Uses PIL Image.getchannel() to extract the target channel
-   - Returns 2D numpy array of selected channel
-   - Time: O(H×W), Space: O(H×W)
-
-4. `_grayscale_opencv_hsv(bgr_frame, color_code)`: OpenCV HSV hue-masking approach
-   - Converts BGR to HSV color space
-   - Creates a binary mask for the hue range of the target color:
-     - Red: Hue 0-10 and 170-180 (wraps around in hue space)
-     - Green: Hue 35-85
-     - Blue: Hue 100-140
-   - Extracts the V (Value/Brightness) channel from the HSV frame
-   - Applies the mask to get the brightness of only target-color pixels, zeroing everything else
-   - Returns 2D array of masked brightness values
-   - Time: O(H×W), Space: O(H×W)
-
-5. `_compare_grayscale_methods(frame, color)`: runs Standard Full-RGB and all three single-channel backends on the same raw frame
-   - Loops over "standard", "numpy", "pillow", "opencv_hsv", timing each call and recording the result's average brightness
+3. `_compare_grayscale_methods(frame, color)`: runs Standard Full-RGB and Single-Channel Extraction on the same raw frame
+   - Loops over "standard" and "single_channel", timing each call and recording the result's average brightness
    - Returns a dict mapping method name to (result_image, elapsed_seconds, mean_brightness)
    - Backs the Compare Grayscale Methods button on LiveMonitorPage
 
-6. `_compare_grayscale_difference_methods(frame1, frame2, color, cam_lib, amplification_method, gain_factor)`: compares grayscale methods on the difference between two consecutive frames
+4. `_compare_grayscale_difference_methods(frame1, frame2, color, cam_lib, amplification_method, gain_factor)`: compares grayscale methods on the difference between two consecutive frames
    - Takes two raw frames (frame1 and frame2) and applies each grayscale method to both, computes the absolute difference, then applies the selected amplification method
-   - Loops over "standard", "numpy", "pillow", "opencv_hsv", timing each call and recording the result's average brightness
+   - Loops over "standard" and "single_channel", timing each call and recording the result's average brightness
    - Returns a dict mapping method name to (difference_image, elapsed_seconds, mean_brightness)
-   - Backs the Compare Grayscale Methods button on LiveMonitorPage (new functionality showing frame differences instead of single frame)
-   - The amplification step is critical: raw differences have very low pixel values (0-50), so without amplification all methods look equally dark; applying the monitor's current amplification method makes the differences visible and fair to compare
+   - Backs the Compare Grayscale Methods button on LiveMonitorPage (showing frame differences instead of a single frame)
+   - The amplification step is critical: raw differences have very low pixel values (0-50), so without amplification both methods look equally dark; applying the monitor's current amplification method makes the differences visible and fair to compare
 
-**Why three backends?**
+**Why only NumPy slicing?**
 
-- NumPy is fastest (simple array indexing, no color space conversion)
-- Pillow provides Image format compatibility for PIL-based pipelines
-- OpenCV HSV is specialized for monochromatic light sources: it isolates pixels whose hue matches the laser color, returning only their true brightness. This produces a cleaner signal than raw channel extraction for single-color illumination (e.g., a red laser on a surface).
-
-The NumPy and Pillow backends are equivalent (both return raw channel intensities), while OpenCV HSV is qualitatively different: it masks by hue before extracting brightness. Choose HSV when you have a colored laser and want noise-free intensity; choose NumPy or Pillow for general-purpose frames.
+Pillow and an OpenCV HSV hue-masking backend used to exist as alternate single-channel extraction algorithms. Both were removed: Pillow's `Image.getchannel()` and NumPy's array indexing returned identical channel intensities, just through two different libraries doing the same job, and the HSV hue-masking approach was a qualitatively different algorithm (masking by hue before extracting brightness) that added complexity most users never needed. NumPy slicing is the fastest of the three (simple array indexing, no color space conversion, no library call) and is now the only option, so there is nothing left to choose between.
 
 ### Difference Amplification Functions
 
@@ -187,7 +162,7 @@ Normalize contrast, CLAHE, and gamma correction used to live here too (`_apply_c
 1. `_apply_diff_amplification(raw_diff, method, gain_factor)`: single dispatcher for every amplification method
    - "none" returns the raw diff unchanged
    - "gain_factor" calls cv2.convertScaleAbs with the configured gain factor
-   - Both MonitorWorker capture strategies call this same function instead of repeating the if/elif chain, so adding a new amplification method only means adding one branch here
+   - MonitorWorker's capture loop calls this same function instead of repeating an if/elif chain, so adding a new amplification method only means adding one branch here
 
 2. `_compare_amplification_methods(raw_diff, gain_factor)`: runs every method on the same raw diff frame
    - Loops over every amplification method, times each call, and records the result's standard deviation as a rough contrast number
@@ -204,11 +179,9 @@ Background thread that runs the actual live-monitoring loop with frame grabbing 
    - Pass the grayscale_method ("standard" or "single_channel") to connect_camera()
    - This sets the camera's pixel format: Mono8 for standard (fast, small), BayerRG8 for single-channel (preserves color data)
 2. Set exposure and gain based on settings
-3. Initialize grayscale conversion settings (method, color, backend)
-4. Branch to the appropriate averaging strategy:
-   - `_run_frame_averaging()` for classic method
-   - `_run_averaged_differences()` for new method
-5. In both strategies, convert each grabbed frame using the selected grayscale method
+3. Initialize grayscale conversion settings (method, color)
+4. Run the averaged-differences loop (`_run_averaged_differences()`) — this is the only frame-difference strategy; there is nothing to branch on
+5. Convert each grabbed frame using the selected grayscale method
 6. Emit frame_ready signal with (averaged_frame, difference_frame) for each completed average
 
 **Grayscale Integration:**
@@ -216,7 +189,6 @@ Background thread that runs the actual live-monitoring loop with frame grabbing 
 The worker stores the grayscale settings from SettingsPage:
 - `_grayscale_method`: "standard" or "single_channel"
 - `_grayscale_color`: "R", "G", or "B"
-- `_grayscale_backend`: "numpy", "pillow", or "opencv_hsv"
 
 **Amplification Integration:**
 
@@ -227,14 +199,14 @@ Every raw diff frame is emitted on `raw_diff_ready` before amplification is appl
 
 When grabbing a frame, the worker calls its own `_grab_frame(cam_lib, camera)` helper, not `cam_lib.grab_single_frame(camera)` directly, then:
 1. Gets the raw frame back exactly as the camera driver produced it (a real (H, W, 3) BGR array for a color camera, or a plain (H, W) array for a mono camera)
-2. Immediately applies `_apply_grayscale_conversion()` to get a 2D grayscale frame, using whichever method, color, and backend the operator picked
+2. Immediately applies `_apply_grayscale_conversion()` to get a 2D grayscale frame, using whichever method and color the operator picked
 3. Proceeds with normal frame averaging logic on the grayscale output
 
 **Why grab_single_frame_color_with_retry() and not grab_single_frame():** grab_single_frame() reduces a color frame to greyscale internally, before this worker ever sees it. That is fine for every other caller in this project, but it used to break single-channel Red/Green/Blue extraction here specifically: by the time `_apply_grayscale_conversion()` ran, the frame was already flattened to 2D, so it hit the "already grayscale" early return and the color choice never had any effect at all. grab_single_frame_color() is a sibling function (added to camera_control_inclusive.py, camera_control_allied_vision.py, and camera_control.py) that returns the real color data untouched, so this worker's own grayscale conversion step is the only place color gets reduced.
 
 **Why the _with_retry variant specifically:** the worker originally called the plain, non-retrying grab_single_frame_color(), and a real USB webcam then failed on the very first grab with "Failed to grab frame, check camera connection", even though the camera had opened successfully moments earlier. Some USB webcams need a brief moment to warm up right after connect_camera() opens them, and a single unretried read() attempt can fail even on a camera that works fine immediately after. grab_single_frame_with_retry() already existed in this project for exactly this reason, used by other callers, but MonitorWorker was never using it, or its color-preserving counterpart. grab_single_frame_color_with_retry() closes that gap: it mirrors grab_single_frame_with_retry()'s retry loop while preserving color, the same relationship grab_single_frame_color() has to grab_single_frame().
 
-**`_grab_frame(cam_lib, camera)` helper and the elapsed-time retry budget:** even after the retry variant above was wired in, the real USB webcam kept failing once the monitor actually started, because a fixed attempt count could not bridge how long the camera actually took to warm up. A diagnostic that mirrored the real startup order (connect, then set_exposure_manual(), then set_gain_manual(), then start reading) measured about 3.4 seconds before the first successful read(), and caught a second, shorter drop happening again mid-session, after the initial warm-up had already succeeded. grab_single_frame_color_with_retry() gained a `max_total_wait_s` parameter (see camera_control.md for the full explanation) that keeps retrying based on real elapsed time instead of a fixed count. `_grab_frame()` is a small private helper that calls it with this worker's `_frame_grab_retry_delay_s` and `_frame_grab_max_total_wait_s`, both read from the settings dict in `__init__()` (keys `frame_grab_retry_delay_s`, `frame_grab_max_total_wait_s`), falling back to module-level constants `DEFAULT_FRAME_GRAB_RETRY_DELAY_S` (0.3s) and `DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S` (6.0s, about 1.75x the measured 3.4s stall) if the settings dict does not have them. Both loops (`_run_frame_averaging` and `_run_averaged_differences`) call `_grab_frame()` instead of `cam_lib.grab_single_frame_color_with_retry(camera)` directly, so this budget applies to every frame grab in a live session, not only the very first one after connecting.
+**`_grab_frame(cam_lib, camera)` helper and the elapsed-time retry budget:** even after the retry variant above was wired in, the real USB webcam kept failing once the monitor actually started, because a fixed attempt count could not bridge how long the camera actually took to warm up. A diagnostic that mirrored the real startup order (connect, then set_exposure_manual(), then set_gain_manual(), then start reading) measured about 3.4 seconds before the first successful read(), and caught a second, shorter drop happening again mid-session, after the initial warm-up had already succeeded. grab_single_frame_color_with_retry() gained a `max_total_wait_s` parameter (see camera_control.md for the full explanation) that keeps retrying based on real elapsed time instead of a fixed count. `_grab_frame()` is a small private helper that calls it with this worker's `_frame_grab_retry_delay_s` and `_frame_grab_max_total_wait_s`, both read from the settings dict in `__init__()` (keys `frame_grab_retry_delay_s`, `frame_grab_max_total_wait_s`), falling back to module-level constants `DEFAULT_FRAME_GRAB_RETRY_DELAY_S` (0.3s) and `DEFAULT_FRAME_GRAB_MAX_TOTAL_WAIT_S` (6.0s, about 1.75x the measured 3.4s stall) if the settings dict does not have them. `_run_averaged_differences()` calls `_grab_frame()` instead of `cam_lib.grab_single_frame_color_with_retry(camera)` directly, so this budget applies to every frame grab in a live session, not only the very first one after connecting.
 
 This ensures all downstream processing (averaging, subtraction, display) works with the chosen grayscale representation, and that the chosen representation is actually reachable in the first place.
 
@@ -256,21 +228,7 @@ Why this matters: If the camera is left in Mono8 (single channel), extracting "R
 
 For Allied Vision cameras, this also resets the "stale format memory" bug that occurred in prior development: cameras remember their pixel format in onboard memory across power cycles. By always explicitly setting the format in connect_camera() and verifying it was applied (with retry logic in set_pixel_format()), we prevent mysterious failures where previous session's format state would interfere with the current session.
 
-**Strategies:**
-
-#### Frame Averaging (Classic)
-
-1. Grab a raw frame from camera
-2. Add it to frame_buffer
-3. When frame_buffer reaches n_averages frames:
-   - Compute np.mean() across all frames (element-wise pixel average)
-   - Clear frame_buffer
-   - If there's a previous averaged frame, compute difference
-   - Emit raw_diff_ready with the raw difference (pre-amplification)
-   - Apply amplification (none or gain_factor) via _apply_diff_amplification()
-   - Emit frame_ready with both the averaged frame and the amplified difference
-
-#### Averaged Differences (New)
+**Strategy: Averaged Differences**
 
 1. Grab frame1 from camera
 2. Grab frame2 from camera
@@ -284,10 +242,9 @@ For Allied Vision cameras, this also resets the "stale format memory" bug that o
    - Apply amplification (none or gain_factor) via _apply_diff_amplification()
    - Emit frame_ready with both the averaged difference and the amplified change
 
-**Why two strategies?**
+**Why this strategy, and not a settings choice?**
 
-- Frame averaging spreads speckle noise across both frames, leaving it in the difference
-- Averaged differences collects the noise in the frame pairs, then averages it away—resulting in cleaner difference images
+A "frame averaging" strategy (collect raw frames, average them, then subtract) used to exist as a second, selectable option. It was removed: averaged differences consistently produces cleaner fringe visibility for ESPI, since it collects the noise in the frame pairs and averages it away from exactly the image the operator cares about (the difference), instead of averaging noise out of the raw inputs and hoping it stays gone after subtraction. With only one strategy left, there is nothing to choose, so the Settings page no longer has a Frame Averaging Strategy group.
 
 **Signals:**
 
@@ -348,37 +305,37 @@ Running every image-processing pass on every single frame just in case the opera
 
 **Compare Grayscale Methods button:**
 
-1. Disabled at startup and immediately after Stop Monitor, since there are not yet two raw frames to compare
+1. Disabled at startup and immediately after Stop Monitor, since there are not yet two raw frames to compare. Also hidden entirely by default (see "Optional Compare buttons" under Recent Changes below); a per-button Settings toggle in the Advanced group controls whether it appears at all.
 2. `_on_raw_frame(raw_frame)` keeps a rolling list of the last 2 pre-grayscale-conversion frames and enables the button once 2 frames are available
 3. Clicking the button opens a `GrayscaleDifferenceComparisonDialog` built from the stored frame pair and whichever color channel (Red, Green, or Blue) is currently selected in Settings
-4. The dialog applies the same amplification method (gain_factor or none) that the main monitor is using, so all four grayscale methods can be fairly compared
+4. The dialog applies the same amplification method (gain_factor or none) that the main monitor is using, so both grayscale methods can be fairly compared
 5. Same on-demand, no cost when unused design as the Compare Amplification Methods button
 
 ### GrayscaleComparisonDialog
 
-A modal popup that answers "does switching to single-channel extraction actually make a visible difference" without restarting the monitor and re-checking Settings four times. Added after a real bug: color data was being destroyed before single-channel extraction ever ran (see camera_control.md and the "single-channel extraction end to end" note in this file), so this dialog also doubles as visible proof the fix works, since Standard Full-RGB and the three single-channel backends will look genuinely different on a colored scene now.
+A modal popup that answers "does switching to single-channel extraction actually make a visible difference" without restarting the monitor and re-checking Settings.
 
 **What it does:**
 
 1. Take the same raw frame and color channel choice the live monitor is currently configured with
-2. Call `_compare_grayscale_methods()` to run Standard Full-RGB and all three single-channel backends against that one frame
+2. Call `_compare_grayscale_methods()` to run Standard Full-RGB and Single-Channel Extraction against that one frame
 3. Lay out one column per method: the resulting image, plus a caption with elapsed time in milliseconds and the result's average brightness
 4. A Close button dismisses the dialog; nothing here mutates the running monitor's settings
 
 ### GrayscaleDifferenceComparisonDialog
 
-A modal popup that answers "which grayscale method produces the clearest difference visualization" by comparing how each method handles the difference between two consecutive frames. Shows Standard Full-RGB and the three single-channel backends side by side, all with the same amplification applied (matching the monitor's current amplification method and settings).
+A modal popup that answers "does single-channel extraction produce a clearer difference visualization than standard full-RGB" by comparing how each method handles the difference between two consecutive frames. Shows Standard Full-RGB and Single-Channel Extraction side by side, both with the same amplification applied (matching the monitor's current amplification method and settings).
 
 **What it does:**
 
 1. Take the last two raw frames captured and whichever color channel is currently selected in Settings
-2. For each grayscale method (Standard, NumPy, Pillow, OpenCV HSV):
+2. For each grayscale method (Standard, Single-Channel):
    - Convert both frames using that method
    - Compute the absolute pixel-wise difference between them
    - Apply the same amplification (gain_factor or none) that the monitor is currently using
 3. Lay out one column per method: the resulting difference image, plus timing and average intensity metrics
 4. A Close button dismisses the dialog; nothing here mutates the running monitor's settings
-5. The amplification visibility is critical: raw differences are nearly black (pixel values 0-50), so without amplification all four methods look equally dim and useless; applying the same amplification the monitor uses makes the differences visible and comparable
+5. The amplification visibility is critical: raw differences are nearly black (pixel values 0-50), so without amplification both methods look equally dim and useless; applying the same amplification the monitor uses makes the differences visible and comparable
 
 ### MainWindow
 
@@ -437,21 +394,15 @@ A previous version did override resizeEvent() to force the nav list's minimum an
 
 ## Key Concepts
 
-### Frame Averaging vs. Averaged Differences
+### Averaged Differences
 
-Both reduce speckle noise, but differently:
-
-- **Speckle noise** is random granular variation in the raw frame due to laser interference
-- **Frame averaging**: reduces noise equally in both frames → noise remains in the difference
-- **Averaged differences**: averages the differences themselves → noise averaged out of the result
-
-For ESPI, where you care about the difference patterns, averaged differences typically produces cleaner fringe visibility.
+Reduces speckle noise (random granular variation in the raw frame due to laser interference) by averaging the differences themselves, rather than averaging raw frames before subtracting. For ESPI, where you care about the difference patterns, this produces cleaner fringe visibility than averaging the inputs first — which is why it is the only strategy in this project rather than a settings choice.
 
 ### Cooperative Stopping
 
 The worker checks `self._stop` once per average cycle, not per frame. This is safe because:
 
-1. An average cycle involves grabbing multiple frames (or frame pairs)
+1. An average cycle involves grabbing multiple frame pairs
 2. Between averages, no hardware operation is in progress
 3. Stopping between averages guarantees clean disconnect
 
@@ -467,22 +418,32 @@ SetupPage.settings() → MonitorWorker.__init__() → stored in _settings → re
 
 ### Amplification Only Touches the Diff, Never the Live Feed
 
-`_apply_diff_amplification()` is only ever called with `raw_diff` or `raw_change`, the arrays computed after averaging and subtraction. The live feed frame (`averaged` in frame averaging, `frame2` in averaged differences) is emitted through `frame_ready` completely untouched by whichever amplification method is selected. This holds for gain_factor the same way it held for the methods since removed (normalize, CLAHE, gamma), since both remaining methods are dispatched from the same single call site in each strategy method.
-
-### One Dispatcher Instead of a Repeated if/elif
-
-Both `_run_frame_averaging` and `_run_averaged_differences` call the same `_apply_diff_amplification()` instead of each keeping their own copy of the `if method == "gain_factor": ... else: ...` block, so a bug fix or a new method only needs to change in one place.
+`_apply_diff_amplification()` is only ever called with `raw_diff` or `raw_change`, the arrays computed after averaging and subtraction. The live feed frame (`frame2` in `_run_averaged_differences`) is emitted through `frame_ready` completely untouched by whichever amplification method is selected. This holds for gain_factor the same way it held for the methods since removed (normalize, CLAHE, gamma), since both remaining methods are dispatched from the same single call site.
 
 ## Why This Design
 
-1. **Two averaging methods** let users experiment with which produces better results for their setup.
-2. **Separate strategy methods** (_run_frame_averaging, _run_averaged_differences) make each approach crystal clear and easy to modify.
-3. **Cooperative stopping** is safer than forceful termination for hardware-dependent loops.
-4. **Settings dict** keeps configuration flowing one direction (Setup → Worker) without tight coupling.
-5. **Signal-based updates** keep camera I/O off the main Qt thread while safely updating the GUI.
-6. **Navigation gating** prevents invalid states (e.g., viewing Live Monitor when no monitor is running).
-7. **Only gain_factor or none**: normalize contrast (which delegated to each camera_control*.py module's own amplify_difference()), CLAHE, and gamma correction were removed to keep exactly one amplification story across the whole project.
-8. **Compare Amplification Methods is a button, not an always-on panel**, so comparing costs CPU only when the operator actually asks for it, not on every frame for everyone.
+1. **Averaged differences** consistently produces the cleanest fringe visibility for ESPI, so it is the single, non-configurable strategy rather than one of several options to pick between.
+2. **Cooperative stopping** is safer than forceful termination for hardware-dependent loops.
+3. **Settings dict** keeps configuration flowing one direction (Setup → Worker) without tight coupling.
+4. **Signal-based updates** keep camera I/O off the main Qt thread while safely updating the GUI.
+5. **Navigation gating** prevents invalid states (e.g., viewing Live Monitor when no monitor is running).
+6. **Only gain_factor or none**: normalize contrast (which delegated to each camera_control*.py module's own amplify_difference()), CLAHE, and gamma correction were removed to keep exactly one amplification story across the whole project.
+7. **Compare Amplification Methods is a button, not an always-on panel**, so comparing costs CPU only when the operator actually asks for it, not on every frame for everyone.
+8. **Only NumPy slicing for single-channel extraction**: Pillow and an OpenCV HSV backend were removed for the same reason as the amplification methods above — one clear implementation per concept, instead of multiple libraries doing the same job.
+
+## Recent Changes
+
+**Removed the Frame Averaging Strategy setting.** The classic "collect raw frames, average, then subtract" strategy (`_run_frame_averaging()`) and its Settings-page radio group were removed entirely. Averaged differences is now the only strategy `MonitorWorker` runs, so `SettingsPage` no longer has an `averaging_method()` accessor, no `_averaging_radios`, and the Settings grid dropped from five widgets (four groups plus one full-width Advanced row) down to a clean 2x2 grid of four groups, with Advanced now occupying its own cell and gaining a Learn More button of its own.
+
+**Removed the Pillow and OpenCV HSV grayscale backends.** Single-channel extraction now has exactly one implementation, `_grayscale_numpy()`, reached directly from `_apply_grayscale_conversion()` with no `backend` parameter. The Settings page's "Processing Algorithm" combo box (NumPy / Pillow / OpenCV HSV) was removed along with `grayscale_backend` from `DEFAULT_SETTINGS`; the comparison dialogs and `_GRAYSCALE_COMPARISON_METHODS` now only run "standard" and "single_channel".
+
+**Fixed the "Compare Grayscale Methods" frame-pairing bug.** `_run_averaged_differences()` used to only call `self.raw_frame_ready.emit(frame2)`, once per loop iteration, never `frame1`. `LiveMonitorPage`'s `_last_two_raw_frames` buffer (fed only from this signal) therefore ended up holding two different iterations' `frame2`, never a genuine matched pair from the same diff computation. The dialog opened without error and showed a result, but it was silently comparing frames that were never actually subtracted together. Fixed by emitting `frame1` immediately before `frame2`, both raw (before grayscale conversion), so two consecutive `raw_frame_ready` emits are always a real pair. No change needed in `_on_raw_frame()` or `_open_grayscale_comparison_dialog()` themselves; the bug was purely in what got emitted.
+
+**Optional Compare buttons.** Both compare buttons used to always be present in the Live Monitor controls row. They are now hidden by default and shown only once their own Settings toggle is switched on, mirroring the existing "Show Gain (dB) control" checkbox pattern exactly:
+- Two new `DEFAULT_SETTINGS` keys, `show_compare_amplification_button` and `show_compare_grayscale_button`, both `False`.
+- `LiveMonitorPage` seeds each button's initial `setVisible()` from settings at construction, and gained `set_compare_amplification_visible()` / `set_compare_grayscale_visible()` methods mirroring `SetupPage.set_gain_visible()`.
+- `SettingsPage` gained two new checkboxes in its Advanced group and `_on_show_compare_amplification_toggled()` / `_on_show_compare_grayscale_toggled()` handlers, mirroring `_on_show_gain_toggled()`: apply immediately to the live page, then persist through `settings_manager`.
+- `SettingsPage.__init__()` now takes a second parameter, `live_monitor_page`, the same way it already held a reference to `setup_page` to reach `SetupPage.set_gain_visible()`. `MainWindow` passes `self.live_monitor_page` at its one construction call site.
 
 ## Related Files
 
@@ -508,7 +469,7 @@ app.exec()
 User flow:
 1. Launch app → Setup page appears
 2. Choose camera (default: USB camera)
-3. Set exposure, gain, graph type, averaging method
+3. Set exposure, gain, graph type
 4. Click "Start Monitor" → Live Monitor page with camera feed appears
 5. Watch live frames and differences; graph updates in real-time
 6. Click "Stop Monitor" → return to Setup

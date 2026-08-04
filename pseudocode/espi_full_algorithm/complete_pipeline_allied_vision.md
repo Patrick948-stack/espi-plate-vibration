@@ -45,10 +45,11 @@ function _validate_sweep_params(start_freq, end_freq, step, n_averages,
     check every value is physically sensible; print a specific error and
     return False for the first one that is not
 
-function _connect_devices(channel):
-    open_connection() for the signal generator, connect_camera() for the
-    camera; if either fails, clean up whatever was opened and return nothing
-        for all three results
+function _connect_devices(channel, grayscale_method="standard"):
+    open_connection() for the signal generator, connect_camera(camera_index=0,
+    grayscale_method=grayscale_method) for the camera; if either fails,
+    clean up whatever was opened and return nothing for all four results
+    (instr, camera, sg_identity, format_info)
 
 function _configure_signal_generator(instr, waveform, start_freq,
                                       amplitude, channel):
@@ -83,7 +84,8 @@ function frequency_sweep_allied_vision(start_freq, end_freq, step,
     instr, camera, results, failed_frequencies = nothing, nothing, {}, []
 
     try:
-        instr, camera, sg_identity = _connect_devices(channel)
+        instr, camera, sg_identity, format_info = _connect_devices(
+            channel, grayscale_method=grayscale_method)
         if instr is nothing: return nothing
 
         if not skip_live_feed:
@@ -152,6 +154,27 @@ From there, every frequency in the loop grabs `n_averages` individual
 frames and subtracts each one from this same fixed `reference`, rather than
 subtracting frame pairs from each other. Saved files are labeled
 `espi_av_ref_raw`, and the metadata records `"diff_mode": "reference"`.
+
+## Recent Changes
+
+**The real Sweep now honors the Settings page's grayscale choice, not just Preview.**
+Both sweep functions gained two new keyword parameters,
+`grayscale_method="standard"`, `grayscale_color="R"` (matching
+`DEFAULT_SETTINGS`, so any existing caller that omits them is unaffected),
+and forward `grayscale_method` into
+`_connect_devices(channel, grayscale_method=...)`, which now also returns
+`format_info` as a fourth value. Every captured frame (both members of each
+pair, the 3 raw frames averaged into the reference in the
+reference-subtraction variant, and every per-frequency measurement frame) is
+run through `_apply_grayscale_conversion()` (imported from `monitor_gui.py`,
+reused rather than duplicated) before it is subtracted, applying the R/B
+channel swap first whenever `format_info["needs_channel_swap"]` is set. A
+third parameter, `grayscale_backend`, used to select between
+NumPy/Pillow/OpenCV HSV single-channel extraction; it was removed along
+with the other two backends, since NumPy slicing is now the only
+implementation. `run_experiment.run_pipeline()` is the single place that
+reads these two values from `settings_manager.load_settings()` and forwards
+them here.
 
 ## Running the file directly
 
