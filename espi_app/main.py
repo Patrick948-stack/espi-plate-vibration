@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QApplication
 from espi_app.settings import SettingsManager
 from espi_app.main_window import LandingPage
 from espi_app.styles import apply_theme
+from espi_app.logo import build_icon
 
 
 def main():
@@ -42,6 +43,13 @@ def main():
     # Create the PyQt6 application
     # This must be created before any widgets
     app = QApplication(sys.argv)
+
+    # Sets the taskbar/dock/alt-tab icon for every window this app opens
+    # (landing page, and Monitor/Scan mode, since they are additional
+    # windows in this same QApplication, not separate processes). Without
+    # this, Windows specifically shows a generic icon in the taskbar while
+    # the app is open, even though the .exe file's own icon is correct.
+    app.setWindowIcon(build_icon())
 
     # Apply the user's chosen theme
     theme = settings_mgr.get("ui.theme")

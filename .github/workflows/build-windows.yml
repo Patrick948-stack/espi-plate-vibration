@@ -38,8 +38,40 @@ jobs:
         # ${{ github.workspace }} is the checked-out repo root, an absolute
         # path GitHub Actions always provides, sidestepping this entirely
         # the same way "$(pwd)/..." does for the local Mac build.
+        #
+        # --collect-submodules pyvisa_py: a real bug, found on a real
+        # downloaded Mac build, not theoretical. pyvisa finds its "@py"
+        # backend (pyvisa_py) by scanning installed top level packages at
+        # runtime with pkgutil.iter_modules() for anything named
+        # "pyvisa_*" (pyvisa.highlevel.list_backends()), not through a
+        # plain `import pyvisa_py` statement anywhere in this project's own
+        # code. PyInstaller's static analysis only follows real import
+        # statements, so without this flag it never bundles pyvisa_py, and
+        # the packaged app fails with "Wrapper not found: No package named
+        # pyvisa_py" the moment Scan Mode tries to reach the signal
+        # generator, while Monitor Mode (which never touches pyvisa) works
+        # fine, exactly the shape of bug a hidden, dynamically discovered
+        # import causes. No PyInstaller hook already covers this
+        # (confirmed by checking directly: nothing for pyvisa_py in either
+        # PyInstaller's own hooks or _pyinstaller_hooks_contrib), and
+        # pyvisa_py is pure Python with no data files, so listing every
+        # submodule as a hidden import is the whole fix; no
+        # --collect-data needed alongside it.
+        #
+        # --add-data "...\espi_app\logo.svg;espi_app": another real bug,
+        # found while fixing a report that the Windows taskbar icon did
+        # not show while the app was open. logo.svg is not a .py file, so
+        # PyInstaller's import-following analysis never bundles it on its
+        # own; without this flag, ESPILogo (the on-screen logo on the
+        # landing page and every dashboard title bar) silently renders
+        # blank in the packaged app, since it looks for logo.svg at a path
+        # that does not exist inside the frozen exe. The "espi_app"
+        # destination after the semicolon must match what
+        # espi_app/logo.py's _resource_dir() looks for under
+        # sys._MEIPASS at runtime. Semicolon, not colon, is PyInstaller's
+        # --add-data separator specifically on Windows.
         run: |
-          pyinstaller --onefile --windowed --name ESPI --icon "${{ github.workspace }}\packaging\assets\logo.ico" --paths "ESPI Full Algorithm" --distpath packaging\dist --workpath packaging\build --specpath packaging\spec espi_app\main.py
+          pyinstaller --onefile --windowed --name ESPI --icon "${{ github.workspace }}\packaging\assets\logo.ico" --paths "ESPI Full Algorithm" --collect-submodules pyvisa_py --add-data "${{ github.workspace }}\espi_app\logo.svg;espi_app" --distpath packaging\dist --workpath packaging\build --specpath packaging\spec espi_app\main.py
 
       - name: Smoke-test that ESPI.exe actually launches
         # This step exists because of a real bug found on the Mac build:

@@ -18,15 +18,48 @@
 
 import os
 
+from PyInstaller.utils.hooks import collect_submodules
+
 _HERE = os.path.dirname(os.path.abspath(SPEC))
 _PROJECT_ROOT = os.path.dirname(_HERE)
+
+# pyvisa finds its "@py" backend (pyvisa_py) by scanning installed top level
+# packages at runtime with pkgutil.iter_modules() for anything named
+# "pyvisa_*" (see pyvisa.highlevel.list_backends()), not through a plain
+# `import pyvisa_py` statement anywhere in this project's own code.
+# PyInstaller's static analysis only follows real import statements, so it
+# never saw this dependency and never bundled it, even though `import
+# pyvisa` alone built and ran fine. The result: the signal generator (Scan
+# Mode) failed with "Wrapper not found: No package named pyvisa_py" in the
+# packaged app, while Monitor Mode (which never touches pyvisa) worked
+# fine, which is exactly the shape of bug a hidden, dynamically discovered
+# import causes. Confirmed no PyInstaller hook already covers this
+# (checked venv_physics's own PyInstaller and _pyinstaller_hooks_contrib
+# hook folders directly: nothing there for pyvisa_py). pyvisa_py is pure
+# Python (no compiled extensions, no non-.py data files), so listing every
+# one of its submodules as a hidden import is enough; no collect_data_files
+# needed.
+_PYVISA_PY_MODULES = collect_submodules('pyvisa_py')
+
+# espi_app/logo.svg is not a .py file, so PyInstaller's import-following
+# analysis never picks it up on its own; it has to be listed explicitly as
+# a data file to end up inside the built app at all. Without this,
+# ESPILogo (the on-screen logo on the landing page and every dashboard
+# title bar, espi_app/logo.py) silently renders blank in every packaged
+# build, since QSvgRenderer looks for logo.svg at a path that does not
+# exist inside the frozen bundle. The destination folder name ('espi_app')
+# must match what espi_app/logo.py's _resource_dir() looks for under
+# sys._MEIPASS at runtime.
+_DATAS = [
+    (os.path.join(_PROJECT_ROOT, 'espi_app', 'logo.svg'), 'espi_app'),
+]
 
 a = Analysis(
     [os.path.join(_PROJECT_ROOT, 'espi_app', 'main.py')],
     pathex=[os.path.join(_PROJECT_ROOT, 'ESPI Full Algorithm')],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=_DATAS,
+    hiddenimports=_PYVISA_PY_MODULES,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

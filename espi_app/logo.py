@@ -32,14 +32,38 @@ Rendering approach and why it isn't a bare QSvgWidget:
     all, on the rare occasions the theme actually changes.
 """
 
+import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QLabel
 
-_SVG_PATH = Path(__file__).resolve().parent / "logo.svg"
+
+def _resource_dir() -> Path:
+    """
+    Where to find bundled data files like logo.svg.
+
+    Running from source, that is just this file's own folder. Running as
+    a PyInstaller-frozen app (packaging/ESPI.spec, .github/workflows/
+    build-windows.yml), it is the temp folder PyInstaller extracts bundled
+    data files into at startup (sys._MEIPASS), under an "espi_app"
+    subfolder matching where the build declares logo.svg should be
+    copied to. Without this check, a frozen build looks for logo.svg at
+    this source file's own on-disk path, which does not exist inside the
+    frozen bundle: real bug, found while chasing a separate report that
+    the Windows taskbar icon did not show while the app was open. logo.svg
+    was never declared as a PyInstaller data file at all, so ESPILogo
+    (the on-screen logo used on the landing page and every dashboard title
+    bar) would have silently rendered blank in every packaged build so far.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "espi_app"
+    return Path(__file__).resolve().parent
+
+
+_SVG_PATH = _resource_dir() / "logo.svg"
 
 # Rendered at a higher resolution than the on-screen size so the logo
 # stays crisp on high-DPI (Retina) displays, then scaled down for display.
@@ -91,3 +115,23 @@ class ESPILogo(QLabel):
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         ))
+
+
+def build_icon() -> QIcon:
+    """
+    Build a QIcon from the same circular-masked logo.svg rendering used
+    everywhere else (ESPILogo above, packaging/generate_icons.py's file
+    icons), for QApplication.setWindowIcon().
+
+    Why this is needed: PyInstaller's --icon build flag only sets the
+    built .exe/.app FILE's own icon, the one Explorer/Finder shows before
+    the app is even running. It does not set the RUNNING window's taskbar
+    icon on Windows; Qt only picks that up from an explicit
+    setWindowIcon() call, which nothing in this app made before. That is
+    exactly why the Windows taskbar showed a generic icon while the app
+    was open, even though the file icon (and the Mac dock icon, which
+    Cocoa does default to the bundle icon for automatically, unlike
+    Windows) were both already correct.
+    """
+    image = _render_circular_masked(_SVG_PATH, 256)
+    return QIcon(QPixmap.fromImage(image))

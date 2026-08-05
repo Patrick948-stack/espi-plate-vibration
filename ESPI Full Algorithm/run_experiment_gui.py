@@ -291,7 +291,16 @@ class SetupPage(QWidget):
 
         capture_layout.addWidget(QLabel("Output folder:"), 3, 0)
         output_row = QHBoxLayout()
-        self.output_dir_edit = QLineEdit("output")
+        # An absolute path under the user's home directory, not a bare
+        # relative name: a relative default resolves against the process's
+        # current working directory, which is unpredictable for a packaged
+        # app launched by double clicking (often "/", which is read-only on
+        # modern macOS) instead of from a terminal cd'd into the project
+        # folder. Real bug: this shipped as plain "output" and broke Scan
+        # Mode in the packaged app with "[Errno 30] Read-only file system:
+        # 'output'" the moment a sweep tried to save its first image.
+        default_output_dir = os.path.join(os.path.expanduser("~"), "Documents", "ESPI Output")
+        self.output_dir_edit = QLineEdit(default_output_dir)
         self.browse_button = QPushButton("Browse…")
         self.browse_button.clicked.connect(self._browse_output_dir)
         output_row.addWidget(self.output_dir_edit)

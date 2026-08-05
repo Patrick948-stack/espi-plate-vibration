@@ -144,7 +144,13 @@ class TestSetupPage:
         assert params["exposure"] == pytest.approx(0.01)
         assert params["gain"] == pytest.approx(0.0)
         assert params["gain_factor"] == pytest.approx(1.0)
-        assert params["output_dir"] == "output"
+        # An absolute path under the user's home directory, not the bare
+        # relative "output" this used to default to: a relative default
+        # resolves against the process's current working directory, which
+        # is unpredictable (often "/", read-only on modern macOS) for the
+        # packaged app launched by double clicking instead of from a
+        # terminal already cd'd into the project folder.
+        assert params["output_dir"] == os.path.join(os.path.expanduser("~"), "Documents", "ESPI Output")
 
     def test_get_params_reflects_typed_values(self, qtbot):
         page = SetupPage()

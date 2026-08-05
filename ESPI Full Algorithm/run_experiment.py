@@ -240,7 +240,15 @@ def choose_sweep_params():
     gain_factor = ask_positive_float("gain_factor", default=1)
 
     print()
-    output_dir = ask("Output folder", default="output", cast=str)
+    # An absolute path under the user's home directory, not a bare relative
+    # name: a relative default resolves against the process's current
+    # working directory, which is wherever the terminal happened to be cd'd
+    # to for a from-source run, but is unpredictable (often "/", which is
+    # read-only on modern macOS) for the packaged app, launched by double
+    # clicking instead of from a terminal. Computed at runtime, not a fixed
+    # string, so it resolves to the actual current user's home folder.
+    default_output_dir = os.path.join(os.path.expanduser("~"), "Documents", "ESPI Output")
+    output_dir = ask("Output folder", default=default_output_dir, cast=str)
 
     return dict(
         start_freq  = start_freq,
