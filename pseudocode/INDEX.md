@@ -186,6 +186,5 @@ This pseudocode is intentionally high-level. For implementation details:
 1. Read the actual Python source files
 2. Look for comments in the code
 3. Check git history to understand why decisions were made
-4. Ask questions in discussions
 
 The pseudocode is meant to help you understand what code does and why. The actual code shows how it's done.
