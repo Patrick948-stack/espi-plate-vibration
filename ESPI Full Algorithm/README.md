@@ -2,7 +2,7 @@
 
 This is the folder where all the working code for the ESPI (Electronic Speckle Pattern Interferometry) plate vibration experiment lives. Everything in here is either a library you can import into your own code, or a script you can run directly.
 
-If you only want to run an experiment and are not interested in how the code works, you only need two files: `monitor.py` and `run_experiment.py`. The rest of this guide explains how to get those two files running on your computer, step by step, with no assumed programming experience.
+Most people should start with the root [README.md](../README.md) instead of this file: it walks you through installing everything and launching the main app window (`python -m espi_app.main`), which opens the same Monitor Mode and Scan Mode dashboards described below with no typing required. This guide is for two other audiences: anyone who wants to run the terminal-only versions, `monitor.py` and `run_experiment.py`, with typed questions instead of a GUI, and anyone who wants camera or signal generator specific setup steps (Basler, Allied Vision, the Windows Zadig driver step) not covered in the root guide. The rest of this file explains how to get everything running on your computer, step by step, with no assumed programming experience.
 
 ## Before you start: what is "the terminal"?
 
@@ -195,7 +195,7 @@ This is the most important check in the whole setup. There are hundreds of autom
 python -m pytest tests/ -v
 ```
 
-A long list of lines will scroll by; that is normal, it is one line per test. Check the very last line of the output; it should say something like `435 passed`.
+A long list of lines will scroll by; that is normal, it is one line per test. Check the very last line of the output; it should say something like `972 passed, 21 skipped`.
 
 If something goes wrong: if the last line mentions any failures, scroll up; pytest prints exactly which function failed and why, right above that summary line. If every single test fails immediately with an import error, your virtual environment is probably not active, or Stage 6 did not finish successfully; go back and check both of those first.
 
@@ -291,15 +291,7 @@ Once that command prints the device, confirm `pyvisa` sees it too:
 python -c "import pyvisa; rm = pyvisa.ResourceManager('@py'); print(rm.list_resources())"
 ```
 
-The signal generator's address (something like `USB0::...::INSTR`) should appear in the printed list. You can also run `python test_signal_generator_only.py` for a full, step by step connection test with clearer explanations at each stage if something is still not working.
-
-If the device is found but the instrument replies slowly or times out, run:
-
-```
-python debug_signal_generator_response.py --backend '@py' --timeout 20000
-```
-
-This prints which VISA backend was used, how long it took to find the device, and how long each common command took to get a reply.
+The signal generator's address (something like `USB0::...::INSTR`) should appear in the printed list. If it does not, or if a command times out once you start `run_experiment.py` or `monitor.py`, every function in `sdg_control/` (see "The signal generator" section below) prints a specific, actionable message instead of a raw Python error when something is wrong, including Windows specific Zadig driver hints where relevant, so read that message closely before assuming something deeper is broken.
 
 **Option B: NI-VISA (heavier, official vendor runtime)**
 
@@ -309,95 +301,14 @@ Note: on Windows, this project's `get_resource_manager()` (used everywhere, thro
 
 Zadig remains the simpler default choice for this project if you don't already need NI-VISA for another instrument: it is a tiny download with no installer, and it keeps the signal generator working through the same free `pyvisa-py` backend already used on Mac and Linux.
 
-## Troubleshooting: diagnostic scripts
+## Troubleshooting a camera or the signal generator
 
-If a camera or the signal generator will not connect, this project includes five small standalone scripts whose only job is to help you figure out why. None of them run an actual experiment or move the plate; they are safe to run any time something is not working.
+This project used to ship a handful of small, standalone diagnostic scripts (`basler_debug.py`, `check_signal_generator.py`, and similar). They have since been removed, since none of them were imported by the actual app and they had drifted out of sync with it. Troubleshooting now happens in two places instead:
 
-Run them from a terminal inside `ESPI Full Algorithm`, with `venv_physics` active. See "Before you start: what is the terminal?" near the top of this file if you are not sure how to open one. It does not matter whether you use the VS Code terminal or your computer's own terminal app; these scripts behave exactly the same either way.
+1. **The checks built into this guide.** Stage 8 above has a copy-pasteable check for each camera type (`python -c "from pypylon import pylon; ..."` and so on), and Stage 8.5 has the equivalent layered checks for the signal generator on Windows (`usb.core.find`, then `pyvisa.ResourceManager`). Work through those in order; each one tells you exactly which layer (USB driver, camera SDK, or `pyvisa`) is failing.
+2. **Actionable error messages from the app itself.** Every function in `sdg_control/` (see "The signal generator" section below) accepts a missing or disconnected instrument gracefully: instead of a raw Python crash, it prints a specific message explaining what is likely wrong, including Windows specific Zadig driver hints where relevant. Read that message first; it usually says exactly what to do next.
 
-**Which one should I run?**
-
-| Symptom | Run this |
-|---|---|
-| A Basler camera will not connect at all | `basler_debug.py` |
-| You are not sure if the signal generator shows up to your computer at all | `check_signal_generator.py` |
-| You want a full, real test that the signal generator connects and actually accepts commands | `test_signal_generator_only.py` |
-| The signal generator connects, but commands are slow or seem to hang | `debug_signal_generator_response.py` |
-| One specific command keeps failing and you want to know if it is that command specifically, or something else that ran before it | `test_syst_err_isolated.py` |
-
-If you are not sure where to start with the signal generator, run them in this order: `check_signal_generator.py` first (does your computer see it at all), then `test_signal_generator_only.py` (does it actually work end to end), then `debug_signal_generator_response.py` only if something is slow rather than simply broken.
-
-**basler_debug.py**
-
-Run:
-
-```
-python basler_debug.py
-```
-
-What it checks, one step at a time: whether the Basler pylon software is installed, whether Python is running directly on Windows rather than inside WSL, whether Windows Device Manager notices the camera, whether the pylon software itself can list any cameras, and finally whether it can actually open a connection to one.
-
-How to read the output: it prints five numbered steps, `[1/5]` through `[5/5]`. Each step prints either that it succeeded, or an explanation of what is likely wrong plus a "What to do" line telling you the next thing to try. The first step that fails is your answer; you do not need to worry about the later steps, since they usually cannot even run until the earlier one is fixed.
-
-**check_signal_generator.py**
-
-Run:
-
-```
-python check_signal_generator.py
-```
-
-What it checks: this is the fastest, simplest check, and a good first step. It looks for the signal generator two different ways: first through the raw `pyusb` library (Step 1), then through `pyvisa` (Step 2), and prints what each one sees.
-
-How to read the output: if Step 1 finds nothing, the problem is with your USB cable, driver, or the instrument's power, before Python is even involved. If Step 1 finds devices but Step 2 finds nothing, the instrument is plugged in but `pyvisa` does not recognize it yet as something it can talk to; on Windows that usually means the Zadig driver step above still needs to be done. If both steps find the device, you are ready to try `test_signal_generator_only.py` next.
-
-**test_signal_generator_only.py**
-
-Run:
-
-```
-python test_signal_generator_only.py
-```
-
-What it does: this is the most complete and realistic test. It connects to the signal generator, asks it to identify itself, sets a quiet 1 kHz test signal, turns the output on for 3 seconds, then turns it off and disconnects. It is safe to run any time; it never touches the camera or the plate.
-
-How to read the output: it prints five numbered steps, `[1/5]` through `[5/5]`. A `Success` message at the very end means the signal generator is fully working and ready to use with `run_experiment.py`. If Step 1 says no instruments were found, work through the numbered checklist it prints, in order, starting from the top.
-
-**debug_signal_generator_response.py**
-
-Run:
-
-```
-python debug_signal_generator_response.py
-```
-
-Use this one specifically when the signal generator connects and responds, but slowly, or when you want to confirm that a setting you sent actually took effect. It is not meant to be your first troubleshooting step; run `check_signal_generator.py` and `test_signal_generator_only.py` first.
-
-What it does: it asks the instrument several safe, read only questions and times how long each one takes to reply. Unless you add `--skip-write-tests`, it also changes the waveform, frequency, and amplitude on one channel, checks that each change actually took effect by reading it back, then restores the original settings when it is done.
-
-How to read the output: at the end it prints a `Summary`. If it says every command completed quickly, nothing is wrong with response time. If it lists specific commands as slow, or as never getting a reply, those exact commands are the ones worth asking about; usually only one or two commands behave this way, which points to something specific to those commands rather than a broken connection.
-
-Useful options:
-
-```
-python debug_signal_generator_response.py --trials 5
-python debug_signal_generator_response.py --skip-write-tests
-python debug_signal_generator_response.py --channel C2
-```
-
-`--trials 5` repeats each read-only question 5 times, which is useful for telling whether slowness happens every time or only occasionally. `--skip-write-tests` only asks questions; it will never change any setting on the instrument. `--channel C2` runs the write tests on channel 2 instead of channel 1.
-
-**test_syst_err_isolated.py**
-
-Run:
-
-```
-python test_syst_err_isolated.py
-```
-
-Use this only if `debug_signal_generator_response.py` reported that one specific command, `SYST:ERR?`, never got a reply. This script sends that exact command completely by itself, with nothing sent before it, to answer one narrow question: does this command fail even when nothing else could have confused the instrument first?
-
-How to read the output: `Success` means the command worked when sent alone, which points to something about an earlier command interfering with it. `No reply` (a timeout) means the command simply does not work on this instrument, no matter what came before it. That second case is exactly what this project's own signal generator does: it is a known limitation of that one specific command on this instrument, not a bug in your setup, and it does not affect anything `run_experiment.py` actually needs.
+If neither of those resolves it, see "Common Issues" further down in this file, or open an issue (see "Report Bugs" at the very bottom).
 
 ### Stage 9: Run the experiment
 
@@ -661,7 +572,7 @@ If you ask for a frequency outside the instrument's allowed range for a given wa
 
 ## Camera libraries
 
-Full documentation for the camera libraries is in [README_camera_control.md](README_camera_control.md).
+`camera_control.py`, `camera_control_inclusive.py`, and `camera_control_allied_vision.py` each hold the low level functions for one camera type (connecting, grabbing frames, subtracting, disconnecting); the pipeline files above are built directly on top of them, but you can call them yourself if you want something custom. Every function has a docstring explaining its parameters and return value; for a plain English, non-code walkthrough of the same logic, see [camera_control.md](../pseudocode/espi_full_algorithm/camera_control.md), [camera_control_inclusive.md](../pseudocode/espi_full_algorithm/camera_control_inclusive.md), and [camera_control_allied_vision.md](../pseudocode/espi_full_algorithm/camera_control_allied_vision.md) in `pseudocode/espi_full_algorithm/` at the project root.
 
 Exposure unit quick reminder:
 * Basler and Allied Vision use microseconds (`10000` means 10 ms)
@@ -714,10 +625,15 @@ python -m pytest tests/ -v
 | `test_run_experiment_gui.py` | run_experiment_gui.py dashboard: page defaults, the preview and sweep worker threads' lifecycles and error paths, stdout-based progress parsing for both pipeline print formats, results paging/toggling, nav gating, close guards |
 | `test_monitor.py` | monitor.py entry point: camera choice, settings prompts, exposure conversion, error messages |
 | `test_monitor_gui.py` | monitor_gui.py dashboard: page defaults, spin box validation, live summary, the camera/frame-subtraction worker thread's lifecycle and error paths, graph embedding, nav gating, close confirmation |
+| `test_settings_dialog.py` | run_experiment_gui.py's Settings page: load/save round trip, visibility rules, lock state while "Use Last Settings as Default" is on |
+| `test_sidebar_layout.py` | Sidebar/nav rail sizing rules shared by monitor_gui.py and run_experiment_gui.py |
 | `test_live_graphs.py` | live_graphs.py: histogram/log_histogram/3D correctness, redraw throttling, and the embedded `ax=` seam used by monitor_gui.py |
 | `test_capture_and_display.py` | Basler live preview script |
 | `test_capture_and_display_cv2.py` | USB or OpenCV live preview script |
 | `test_capture_and_display_allied.py` | Allied Vision live preview script |
+| `test_sdg_control.py` | sdg_control/ package: connecting, configuring channels, frequency changes, closing the connection |
+| `test_sdg_control_constants.py` | sdg_control/constants.py: waveform and frequency limit tables |
+| `test_sdg_control_output.py` | sdg_control/output.py: turning the signal generator's output on and off |
 
 ## What a Successful Setup Looks Like
 
@@ -754,7 +670,7 @@ the same prefix in Command Prompt or PowerShell after running
 ```
 $ python -m pytest tests/ -v
 ...
-======================= 947 passed, 21 skipped in 23.44s =======================
+======================= 972 passed, 21 skipped in 22.71s =======================
 ```
 
 The exact numbers on your machine may differ slightly from the example

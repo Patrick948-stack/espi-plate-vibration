@@ -75,6 +75,3 @@ changes the theme.
   calls `set_theme()` on it from `refresh_theme_icons()` when the theme
   changes
 - `logo.svg`: the actual vector artwork this file renders
-- `espi_logo_viewer.py`: a standalone script, not used by the main app,
-  for previewing this logo at multiple sizes on both backgrounds
-  (`python3 espi_app/espi_logo_viewer.py`)

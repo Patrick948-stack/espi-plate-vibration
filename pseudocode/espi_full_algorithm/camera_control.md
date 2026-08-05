@@ -358,6 +358,5 @@ Images are stored as 2D numpy arrays where each element is a pixel value.
 ## Related Files
 
 - camera_control_allied_vision.py - Same interface for Allied Vision cameras
-- camera/connection.py - Lower-level connection code
 - capture_and_display.py - GUI for real-time capture
 - run_experiment.py - Frequency sweep experiments

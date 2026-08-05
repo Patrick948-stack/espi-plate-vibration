@@ -150,7 +150,6 @@ When you modify a Python file, find its pseudocode here:
 | ESPI Full Algorithm/settings_manager.py | pseudocode/espi_full_algorithm/settings_manager.md |
 | ESPI Full Algorithm/theme.py | pseudocode/espi_full_algorithm/theme.md |
 | ESPI Full Algorithm/sdg_control/*.py | pseudocode/espi_full_algorithm/sdg_control.md |
-| camera/connection.py | pseudocode/camera/connection.md |
 
 ## Common Update Scenarios
 

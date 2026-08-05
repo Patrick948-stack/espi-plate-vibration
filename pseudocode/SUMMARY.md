@@ -6,7 +6,7 @@ A complete pseudocode folder documenting every major file in the ESPI Camera Con
 
 ### Files Created
 
-**28 pseudocode files in plain English:**
+**27 pseudocode files in plain English:**
 
 #### Application Framework (espi_app/)
 - main.md - Application entry point
@@ -31,9 +31,6 @@ A complete pseudocode folder documenting every major file in the ESPI Camera Con
 - sdg_control.md - Signal generator control package
 - basic_usage.md - Walkthrough of examples/basic_usage.py
 
-#### Supporting Systems
-- camera/connection.md - Low-level camera connection (Learning/camera/, not used by the two GUIs)
-
 #### Documentation & Navigation
 - README.md - High-level overview and how to use this folder
 - INDEX.md - Complete index with reading recommendations
@@ -46,7 +43,6 @@ All major modules in the project are now documented:
 
 - 8 espi_app files (PyQt6 GUI framework)
 - 19 espi_full_algorithm files (core ESPI measurement, all three camera types plus the signal generator package)
-- 1 camera file (a low-level learning exercise, not part of either GUI)
 
 ## Key Features of This Documentation
 
@@ -82,8 +78,6 @@ pseudocode/
 │   ├── run_experiment_gui.md, run_experiment.md
 │   ├── live_graphs.md, settings_dialog.md, settings_manager.md, theme.md
 │   └── sdg_control.md, basic_usage.md
-└── camera/
-    └── connection.md
 ```
 
 Matches your actual codebase layout, so documentation is always where you expect it.

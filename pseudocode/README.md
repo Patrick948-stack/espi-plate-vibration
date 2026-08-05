@@ -15,10 +15,9 @@ This is a Python application to control an ESPI (Electronic Speckle Pattern Inte
 ## Folder Structure
 
 This mirrors the actual project layout: `pseudocode/espi_app/` documents
-`espi_app/`, `pseudocode/espi_full_algorithm/` documents
+`espi_app/`, and `pseudocode/espi_full_algorithm/` documents
 `ESPI Full Algorithm/` (including its `sdg_control/` package, in one
-combined file since the package is small), and `pseudocode/camera/`
-documents the one file still worth documenting under `Learning/camera/`.
+combined file since the package is small).
 
 ```
 pseudocode/
@@ -55,8 +54,6 @@ pseudocode/
 │   ├── theme.md - Shared light/dark stylesheet builder
 │   ├── sdg_control.md - Signal generator control package
 │   └── basic_usage.md - Walkthrough of examples/basic_usage.py
-└── camera/
-    └── connection.md - Low-level camera connection (Learning/camera/, not used by the two GUIs)
 ```
 
 ## How to Use This Documentation

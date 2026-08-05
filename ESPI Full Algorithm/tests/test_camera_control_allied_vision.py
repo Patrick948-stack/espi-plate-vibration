@@ -106,6 +106,53 @@ def _make_frame(array, status=_FrameStatus.Complete):
 
 
 # ===========================================================================
+# vmbpy IMPORT GUARD
+# Found while packaging: vmbpy 1.2.2 checks the installed native VmbC
+# runtime's version the moment it is imported, and raises its own
+# VmbSystemError (not ImportError) when that native library is missing or
+# too old. camera_control_allied_vision.py's import guard only caught
+# ImportError, so a mismatched Vimba X install would crash the whole
+# module import instead of falling back to "Allied Vision unavailable"
+# the way a genuinely-not-installed vmbpy already does.
+# ===========================================================================
+
+class TestVmbpyImportGuard:
+
+    def test_non_import_error_during_vmbpy_import_is_caught(self):
+        """
+        Simulates vmbpy raising a version-mismatch style error (a real
+        Exception subclass that is deliberately NOT an ImportError) the
+        moment camera_control_allied_vision.py tries `from vmbpy import
+        VmbSystem`. Before the fix, this would propagate straight out of
+        the module import instead of setting _VIMBA_AVAILABLE = False.
+        """
+        class _FakeVersionMismatch(Exception):
+            pass
+
+        class _FaultyVmbpyStub(types.ModuleType):
+            def __getattr__(self, name):
+                raise _FakeVersionMismatch(
+                    "Invalid VmbC Version: Expected: 1.3.1, Found: 1.0.5"
+                )
+
+        real_vmbpy_stub = sys.modules["vmbpy"]
+        sys.modules["vmbpy"] = _FaultyVmbpyStub("vmbpy")
+        sys.modules.pop("camera_control_allied_vision", None)
+
+        try:
+            import camera_control_allied_vision as broken_cc_av
+            assert broken_cc_av._VIMBA_AVAILABLE is False
+        finally:
+            # Restore the working stub and re-import for every other test
+            # in this file, which all hold their own `cc_av` reference
+            # from collection time but a clean sys.modules state avoids
+            # surprises for anything that imports the module by name again.
+            sys.modules["vmbpy"] = real_vmbpy_stub
+            sys.modules.pop("camera_control_allied_vision", None)
+            import camera_control_allied_vision  # noqa: F401
+
+
+# ===========================================================================
 # SECTION 5 — IMAGE PROCESSING (pure numpy / cv2)
 # ===========================================================================
 

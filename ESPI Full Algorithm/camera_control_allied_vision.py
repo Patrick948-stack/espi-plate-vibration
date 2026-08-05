@@ -82,6 +82,15 @@ try:
 except ImportError:
     _VIMBA_AVAILABLE = False
     print("[camera_control_allied_vision] WARNING: vmbpy package not found.")
+except Exception as e:
+    # vmbpy itself can raise something other than ImportError while
+    # loading, most notably its own VmbSystemError when the installed
+    # Vimba X Runtime's native library version does not match what this
+    # vmbpy release expects. That is just as much "Allied Vision is not
+    # usable right now" as a missing package, so it gets the same
+    # graceful fallback instead of crashing this module's import.
+    _VIMBA_AVAILABLE = False
+    print(f"[camera_control_allied_vision] WARNING: vmbpy failed to load: {e}")
     print("  Download the Vimba X SDK from Allied Vision, find the .whl file")
     print("  inside its install folder, then run (replace the path with the")
     print("  real one you found):")

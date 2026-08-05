@@ -1,0 +1,26 @@
+# Packages needed only to BUILD the packaged Windows app, not to run it.
+#
+# The app's own requirements.txt (project root and ESPI Full Algorithm/)
+# stays exactly as is: those are what the app needs at runtime, and what
+# a developer working on the source code needs installed. Whoever runs
+# the PyInstaller build additionally needs the packages below, installed
+# into the same venv_physics environment that already has the app's own
+# requirements installed. Run from the project root:
+#   pip install -r packaging/requirements-build-windows.txt
+
+pyinstaller==6.21.0
+
+# Allied Vision's vmbpy bindings, not on PyPI. Vendored locally instead of
+# fetched from anywhere, see packaging/vendor/README.md for why this is
+# safe to redistribute and what it does and does not cover.
+#
+# Windows gets 1.2.2 specifically, not the older 1.0.4 used for Mac.
+# vmbpy checks the installed native Vimba X Runtime's version the moment
+# it is imported; 1.2.2 expects native runtime 1.3.1. Anyone using Allied
+# Vision on Windows needs a Vimba X SDK install that provides that native
+# version, not just any Vimba X install, see packaging/INSTALL.md.
+#
+# Path is relative to the PROJECT ROOT, not to this file's own location;
+# pip resolves paths inside a requirements file that way, not relative to
+# the file itself the way -r includes work.
+packaging/vendor/vmbpy-1.2.2-py3-none-any.whl

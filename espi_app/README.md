@@ -6,9 +6,13 @@ both of which live in `ESPI Full Algorithm/`. Instead of remembering
 which script to run for which task, you run one app and pick a mode from
 a landing page.
 
-If you are new to the project, start here. This app is the front door;
-Monitor Mode and Scan Mode are documented in detail, with their own
-screenshots, in [ESPI Full Algorithm/README.md](../ESPI%20Full%20Algorithm/README.md).
+If you are new to the project, start with the root
+[README.md](../README.md) instead of this file: it has the full,
+step by step install guide (Python, Git, a virtual environment, and so
+on) ending in the exact command that opens this app. This file is a
+deeper reference for espi_app specifically, once you already have it
+running. Monitor Mode and Scan Mode are documented in detail, with their
+own screenshots, in [ESPI Full Algorithm/README.md](../ESPI%20Full%20Algorithm/README.md).
 
 
 ## What It Looks Like
@@ -93,7 +97,8 @@ different build for their operating system.
 This section is for anyone who wants to modify the app, not just run it.
 For a plain English, file by file walkthrough of the same logic
 described below, see the `pseudocode/espi_app/` folder at the project
-root (`main.md`, `main_window.md`, `settings.md`, `settings_dialog.md`,
+root (`main.md`, `main_window.md`, `mode_card.md`, `logo.md`,
+`background_decoration.md`, `settings.md`, `settings_dialog.md`,
 `styles.md`), useful if you would rather read a description of what a
 function does before reading the actual Python.
 
@@ -150,62 +155,22 @@ find the right one:
   uses which color)? Edit `ESPI Full Algorithm/theme.py`. It is shared
   by all three windows (landing page, Monitor Mode, Scan Mode), so a
   change there applies everywhere at once.
-* **Want to change the logo?** Replace `logo.svg` and check the result
-  with `python3 espi_app/espi_logo_viewer.py`, a small standalone script
-  that shows the logo at several sizes on both a light and dark
-  background, without needing to launch the whole app.
+* **Want to change the logo?** Replace `logo.svg`, then launch the app
+  (`python -m espi_app.main`) to see it rendered on the landing page and
+  dashboard title bars by `logo.py`'s `ESPILogo`.
 
 
-## Setup (5 minutes)
+## Setup
 
-### What You Need
+The full, step by step setup guide (installing Python, Git, and a code
+editor; getting the code; creating and activating a virtual environment;
+installing dependencies; running the tests) lives in the project root's
+[README.md](../README.md), in its "Getting Started" section. Follow that
+guide from the very top if this is your first time setting this project
+up; it ends with the exact command below.
 
-1. Python 3.10 or newer (free download from
-   [python.org](https://www.python.org/downloads/) if you do not have
-   it yet)
-2. This code, already on your computer
-3. A terminal: Terminal.app on Mac, or Command Prompt / PowerShell on
-   Windows
-
-### Step 1: Open a Terminal
-
-**Mac:** Open Spotlight (Command+Space), type `Terminal`, press Enter.
-
-**Windows:** Press the Windows key, type `PowerShell`, press Enter.
-
-If you use VS Code, you can also open its built in terminal with
-`` Ctrl+` `` (Windows) or `` Cmd+` `` (Mac) instead.
-
-### Step 2: Navigate to the Project Folder
-
-```bash
-cd "Physics Research"
-```
-
-Replace the path above with wherever you saved the project if it is not
-in your home folder.
-
-### Step 3: Create and Activate a Virtual Environment
-
-A virtual environment keeps this project's packages separate from
-everything else on your computer.
-
-Mac:
-```bash
-python3 -m venv venv_physics
-source venv_physics/bin/activate
-```
-
-Windows:
-```bash
-python -m venv venv_physics
-venv_physics\Scripts\activate
-```
-
-Your terminal prompt should now start with `(venv_physics)`. That
-prefix is how you can tell the virtual environment is active.
-
-### Step 4: Install Dependencies
+Once you already have the virtual environment set up and active, the two
+commands you need from inside the project folder are:
 
 ```bash
 pip install -r requirements.txt
@@ -376,9 +341,6 @@ only.
 * `background_decoration.py`: `LandingBackground`, the landing page's
   central widget, paints a subtle corner dot decoration behind the logo
   and mode cards
-* `espi_logo_viewer.py`: a standalone script (`python3
-  espi_app/espi_logo_viewer.py`) for previewing the logo at multiple
-  sizes on both backgrounds, not used by the main app
 * `settings.py`: `SettingsManager`, reads and writes
   `~/.espi_app/settings.json`
 * `settings_dialog.py`: the Settings window

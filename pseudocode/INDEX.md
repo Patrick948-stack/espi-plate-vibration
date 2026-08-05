@@ -54,12 +54,6 @@ The actual ESPI measurement system. Handles camera capture, signal generation, i
 | [espi_full_algorithm/sdg_control.md](espi_full_algorithm/sdg_control.md) | Signal generator control package (`sdg_control/`): connecting, waveform, frequency, safety clamps |
 | [espi_full_algorithm/basic_usage.md](espi_full_algorithm/basic_usage.md) | Walkthrough of `examples/basic_usage.py`, a minimal signal generator script |
 
-### Camera Module (Low-Level Camera Demo, Not Currently Used)
-
-| File | Purpose |
-|------|---------|
-| [camera/connection.md](camera/connection.md) | Low-level camera connection and disconnection, from `Learning/camera/connection.py`. This is a standalone learning exercise, superseded by `ESPI Full Algorithm/camera_control*.py`, and is not imported by anything the two GUIs actually run. |
-
 ## Reading Order by Use Case
 
 ### Scenario 1: I want to understand the whole project

@@ -1,0 +1,62 @@
+name: Build Windows exe
+
+# Manual only, on purpose. Building the app takes longer and produces a
+# large file, unlike the plain test run in tests.yml, so this should only
+# run when someone actually wants a fresh exe, not on every single push.
+# Start it from the Actions tab on GitHub, or with:
+#   gh workflow run build-windows.yml
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install app dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r "ESPI Full Algorithm/requirements.txt"
+
+      - name: Install PyInstaller and vendored vmbpy (Allied Vision bindings)
+        run: pip install -r packaging/requirements-build-windows.txt
+
+      - name: Build ESPI.exe
+        run: |
+          pyinstaller --onefile --windowed --name ESPI --icon packaging\assets\logo.ico --paths "ESPI Full Algorithm" --distpath packaging\dist --workpath packaging\build --specpath packaging\spec espi_app\main.py
+
+      - name: Upload ESPI.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESPI-windows
+          path: packaging/dist/ESPI.exe
+
+# Allied Vision (vmbpy) support: this build DOES include it, using the
+# vmbpy 1.2.2 wheel vendored into packaging/vendor/ specifically for
+# Windows (Mac builds use the older 1.0.4 instead, see
+# requirements-build-mac.txt). That wheel only carries vmbpy's Python
+# bindings, not the actual Vimba X Runtime (drivers, GenTL producer
+# files) real camera hardware needs, and vmbpy checks that native
+# runtime's version the moment it is imported. Anyone with an actual
+# Allied Vision camera still has to install the real Vimba X SDK on
+# their own Windows machine separately (specifically one providing
+# native runtime 1.3.1, to match this vmbpy version), same as Basler's
+# pylon Runtime needing its own separate install. See
+# packaging/vendor/README.md, packaging/INSTALL.md, and
+# .claude/pyinstaller-packaging-plan.md.
+#
+# What this workflow does NOT cover:
+#   Whether the resulting exe actually opens correctly on a real Windows
+#   computer. This workflow only proves the build itself finishes without
+#   errors, the same limit described in
+#   .claude/pyinstaller-packaging-plan.md. Download the exe from this
+#   workflow's own Artifacts section afterward and run
+#   packaging/windows_diagnostic.py next to it to check the rest.
