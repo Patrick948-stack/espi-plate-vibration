@@ -63,45 +63,46 @@ ready-made app instead of setting up Python at all. One file, no
 | Mac | [ESPI-mac.zip](https://github.com/Patrick948-stack/espi-plate-vibration/releases/latest/download/ESPI-mac.zip) |
 | Windows | [ESPI.exe](https://github.com/Patrick948-stack/espi-plate-vibration/releases/latest/download/ESPI.exe) |
 
-Both links always point to the newest published version. See every past
-version on the [Releases page](https://github.com/Patrick948-stack/espi-plate-vibration/releases).
+Both links always point to the newest published version.
 
-**Mac:** double-click the downloaded zip to unzip it, producing
-`ESPI.app`. The first time you open it, macOS will refuse, usually with
-"Apple could not verify 'ESPI' is free of malware that may harm your Mac
-or compromise your privacy" (older macOS versions phrase the same block
-as "cannot be opened because the developer cannot be verified" instead;
-either wording means the same thing). This is expected and not a sign
-anything is actually wrong: it happens because there is no paid Apple
-Developer Program membership behind this app, so it is not
-Apple-notarized, only signed well enough to prove the download itself is
-intact. Work around it with either of these (only needed once):
+**Mac:** double-click the downloaded zip to unzip it — you'll get
+`ESPI.app`. The first time you try to open it, macOS will block it,
+usually with something like "Apple could not verify 'ESPI' is free of
+malware that may harm your Mac or compromise your privacy" (older
+versions of macOS phrase this as "cannot be opened because the developer
+cannot be verified" — same thing, different wording). Don't worry, this
+is expected and doesn't mean anything's actually wrong. It happens
+because there's no paid Apple Developer Program membership behind this
+app, so it isn't Apple-notarized — it's only signed enough to prove the
+download itself hasn't been tampered with. You only need to work around
+it once, using either of these:
 
 - **Right-click (or Control-click) `ESPI.app`, choose Open, then click
-  Open again** in the dialog that appears. On some macOS versions this is
-  all that's needed.
-- **If that dialog does not offer an Open option** (common on newer macOS
-  versions), go to **System Settings > Privacy & Security**, scroll down,
-  and you should see a line naming `ESPI` as blocked, with an **Open
-  Anyway** button next to it. Click it, then confirm once more (you may
-  be asked for your password or Touch ID) in the dialog that follows.
+  Open again** in the dialog that pops up. On some versions of macOS,
+  that's all it takes.
+- **If there's no Open option in that dialog** (this is common on newer
+  macOS versions), head to **System Settings > Privacy & Security**,
+  scroll down, and you'll see a line saying `ESPI` was blocked, with an
+  **Open Anyway** button next to it. Click it, then confirm once more
+  (you might get asked for your password or Touch ID) in the follow-up
+  dialog.
 
-**Windows:** double-click the downloaded `ESPI.exe`. Windows will likely
-show a blue "Windows protected your PC" warning, for the same reason as
-the Mac warning above: no paid code-signing certificate, not a sign
-anything is wrong. Click **More info**, then **Run anyway**. You only
-need to do this once. You do not need to, and should not need to, run it
-"as Administrator" for this warning specifically; that setting is
-unrelated to SmartScreen and won't make the warning go away.
+**Windows:** double-click the downloaded `ESPI.exe`. You'll likely see a
+blue "Windows protected your PC" warning — same story as on Mac, it's
+just because there's no paid code-signing certificate, not an actual
+problem. Click **More info**, then **Run anyway**. This only needs to
+happen once. You don't need to run it "as Administrator" to get past
+this warning either — that setting has nothing to do with SmartScreen
+and won't make the warning go away.
 
-One thing stays true no matter which platform you're on: the camera
-still needs its own manufacturer driver software installed separately
-(Basler pylon Software Suite, or Allied Vision Vimba X), since that
-installs real hardware drivers that cannot be bundled into a single app
-file. See `packaging/INSTALL.md` in the project source for the complete
-walkthrough, including exactly which Vimba X SDK version to install for
-Allied Vision cameras (the version matters, and differs between Mac and
-Windows).
+One thing holds true on both platforms: the camera still needs its own
+manufacturer driver software installed separately (Basler pylon Software
+Suite, or Allied Vision Vimba X), since that installs actual hardware
+drivers that can't be bundled into a single app file. Check
+`packaging/INSTALL.md` in the project source for the full walkthrough,
+including exactly which Vimba X SDK version to install for Allied Vision
+cameras — the version matters, and it's different between Mac and
+Windows.
 
 If you'd rather run from source instead (for development, or to
 customize the code), keep reading below.
@@ -386,7 +387,7 @@ Physics Research/
 │   └── README.md                     ← detailed guide for this folder
 │
 ├── tests/                             ← automated tests for the two dashboards' shared settings/behavior
-├── pseudocode/                        ← plain English walkthrough of every file above, for learning without reading raw code
+├── pseudocode/                        ← plain English walkthrough of every file above, to understand code logic for non-technical readers
 ├── requirements.txt                   ← packages espi_app itself needs: pip install -r requirements.txt
 └── README.md                          ← this file
 ```
