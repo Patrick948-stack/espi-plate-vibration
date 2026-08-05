@@ -32,7 +32,9 @@ Two things stay true no matter which computer you're on:
    this app was not purchased through the Microsoft Store and does not
    have a paid code-signing certificate, not because anything is wrong
    with it. Click **More info**, then click **Run anyway**. You should
-   only see this once.
+   only see this once. Running as Administrator, or any other permission
+   change, will not make this warning go away; "More info" then "Run
+   anyway" is the actual, complete fix for it.
 
 4. The app should now open to its main landing page, with a Monitor
    option and a Scan option.
@@ -90,13 +92,23 @@ python packaging\windows_diagnostic.py
    Applications to work.
 
 4. **Double-click `ESPI.app` to open it.** The first time, macOS will
-   likely refuse with a message like "Apple could not verify ESPI.app
-   is free of malware" or "cannot be opened because the developer
-   cannot be verified". This is expected, for the same reason as the
-   Windows warning above: no paid Apple Developer certificate. Instead
-   of double-clicking again, **right-click (or Control-click) the app,
-   choose Open, then click Open again** in the dialog that appears. You
-   should only need to do this once.
+   likely refuse, usually with "Apple could not verify 'ESPI' is free of
+   malware that may harm your Mac or compromise your privacy" (older
+   macOS versions phrase the same block as "cannot be opened because the
+   developer cannot be verified" instead; both mean the same thing).
+   This is expected, for the same reason as the Windows warning above:
+   no paid Apple Developer Program membership behind this app, so it is
+   not Apple-notarized. Work around it with either of these (only needed
+   once):
+   - **Right-click (or Control-click) the app, choose Open, then click
+     Open again** in the dialog that appears. On some macOS versions
+     this is all that's needed.
+   - **If that dialog does not offer an Open option** (common on newer
+     macOS versions), go to **System Settings > Privacy & Security**,
+     scroll down, and you should see a line naming `ESPI` as blocked,
+     with an **Open Anyway** button next to it. Click it, then confirm
+     once more (you may be asked for your password or Touch ID) in the
+     dialog that follows.
 
 5. The app should now open to its main landing page.
 

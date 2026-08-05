@@ -41,6 +41,44 @@ jobs:
         run: |
           pyinstaller --onefile --windowed --name ESPI --icon "${{ github.workspace }}\packaging\assets\logo.ico" --paths "ESPI Full Algorithm" --distpath packaging\dist --workpath packaging\build --specpath packaging\spec espi_app\main.py
 
+      - name: Smoke-test that ESPI.exe actually launches
+        # This step exists because of a real bug found on the Mac build:
+        # every previous verification only ever ran the freshly built app
+        # locally, right after building, which passed every time even
+        # though the Mac app's code signature was actually broken the
+        # whole time. The break only showed up once the app was
+        # downloaded through a browser. See
+        # .claude/pyinstaller-packaging-plan.md for the full story.
+        #
+        # This step does NOT close that exact gap for Windows: it cannot
+        # simulate a real browser download (the Mark-of-the-Web zone
+        # identifier that triggers SmartScreen), and it cannot click
+        # through a real SmartScreen prompt, since this runner has no
+        # display and no human. What it DOES catch, on a real Windows
+        # machine (this CI runner, not the Mac this project is otherwise
+        # built and tested on): the whole class of "Qt platform plugin
+        # windows could not be loaded", missing-DLL, or import-time crash
+        # bugs that PyInstaller's own build step happily finishes with
+        # exit code 0 even when the resulting exe cannot actually start.
+        # If ESPI.exe is still running a few seconds after launch, with
+        # no window ever needing to appear (QT_QPA_PLATFORM=offscreen),
+        # it did not crash on startup. If it exits on its own before
+        # that, the build is stopped here and never uploaded, the same
+        # "do not ship what was never verified" rule the Mac build script
+        # (packaging/build_mac.sh) now follows for its own signature
+        # check.
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $proc = Start-Process -FilePath "packaging\dist\ESPI.exe" -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) {
+            Write-Error "ESPI.exe exited on its own within 8 seconds (exit code $($proc.ExitCode)). It likely crashed on startup instead of showing the landing page. Since this build uses --windowed, no console traceback is visible here; rebuild locally without --windowed to see the real Python error."
+            exit 1
+          }
+          Write-Host "ESPI.exe is still running after 8 seconds (PID $($proc.Id)), no startup crash. Stopping it now."
+          Stop-Process -Id $proc.Id -Force
+
       - name: Upload ESPI.exe
         uses: actions/upload-artifact@v4
         with:
@@ -61,10 +99,17 @@ jobs:
 # packaging/vendor/README.md, packaging/INSTALL.md, and
 # .claude/pyinstaller-packaging-plan.md.
 #
-# What this workflow does NOT cover:
-#   Whether the resulting exe actually opens correctly on a real Windows
-#   computer. This workflow only proves the build itself finishes without
-#   errors, the same limit described in
-#   .claude/pyinstaller-packaging-plan.md. Download the exe from this
-#   workflow's own Artifacts section afterward and run
-#   packaging/windows_diagnostic.py next to it to check the rest.
+# What this workflow covers now, and what it still does NOT cover:
+#   The "Smoke-test" step above proves the exe actually launches and stays
+#   running on a real Windows machine (this CI runner), not just that
+#   PyInstaller finished without errors. It does NOT prove a real user's
+#   downloaded copy gets past Windows SmartScreen (that only triggers on a
+#   file carrying the Mark-of-the-Web zone identifier a real browser
+#   download adds, which this runner never adds), and it obviously cannot
+#   test real camera or signal generator hardware, since none is attached
+#   to this runner. Download the exe from this workflow's own Artifacts
+#   section and run packaging/windows_diagnostic.py next to it to check
+#   the hardware-dependent parts, and see
+#   .claude/pyinstaller-packaging-plan.md for the full story, including
+#   the Mac code-signing bug that made "only ever tested the freshly
+#   built copy locally" a real, shipped problem once already.

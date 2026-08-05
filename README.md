@@ -67,18 +67,32 @@ Both links always point to the newest published version. See every past
 version on the [Releases page](https://github.com/Patrick948-stack/espi-plate-vibration/releases).
 
 **Mac:** double-click the downloaded zip to unzip it, producing
-`ESPI.app`. The first time you open it, macOS will refuse with a message
-like "cannot be opened because the developer cannot be verified" — this
-is expected, since there is no paid Apple Developer certificate behind
-this app. Instead of double-clicking again, right-click (or
-Control-click) `ESPI.app`, choose **Open**, then click **Open** again in
-the dialog that appears. You only need to do this once.
+`ESPI.app`. The first time you open it, macOS will refuse, usually with
+"Apple could not verify 'ESPI' is free of malware that may harm your Mac
+or compromise your privacy" (older macOS versions phrase the same block
+as "cannot be opened because the developer cannot be verified" instead;
+either wording means the same thing). This is expected and not a sign
+anything is actually wrong: it happens because there is no paid Apple
+Developer Program membership behind this app, so it is not
+Apple-notarized, only signed well enough to prove the download itself is
+intact. Work around it with either of these (only needed once):
+
+- **Right-click (or Control-click) `ESPI.app`, choose Open, then click
+  Open again** in the dialog that appears. On some macOS versions this is
+  all that's needed.
+- **If that dialog does not offer an Open option** (common on newer macOS
+  versions), go to **System Settings > Privacy & Security**, scroll down,
+  and you should see a line naming `ESPI` as blocked, with an **Open
+  Anyway** button next to it. Click it, then confirm once more (you may
+  be asked for your password or Touch ID) in the dialog that follows.
 
 **Windows:** double-click the downloaded `ESPI.exe`. Windows will likely
 show a blue "Windows protected your PC" warning, for the same reason as
 the Mac warning above: no paid code-signing certificate, not a sign
 anything is wrong. Click **More info**, then **Run anyway**. You only
-need to do this once.
+need to do this once. You do not need to, and should not need to, run it
+"as Administrator" for this warning specifically; that setting is
+unrelated to SmartScreen and won't make the warning go away.
 
 One thing stays true no matter which platform you're on: the camera
 still needs its own manufacturer driver software installed separately
