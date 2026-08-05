@@ -30,8 +30,16 @@ jobs:
         run: pip install -r packaging/requirements-build-windows.txt
 
       - name: Build ESPI.exe
+        # --icon must be an absolute path. A relative one here broke a real
+        # build: combining a custom --specpath with a relative --icon makes
+        # PyInstaller re-resolve the icon path against the specpath folder
+        # instead of the working directory, doubling "packaging" into
+        # packaging\spec\packaging\assets\logo.ico, which does not exist.
+        # ${{ github.workspace }} is the checked-out repo root, an absolute
+        # path GitHub Actions always provides, sidestepping this entirely
+        # the same way "$(pwd)/..." does for the local Mac build.
         run: |
-          pyinstaller --onefile --windowed --name ESPI --icon packaging\assets\logo.ico --paths "ESPI Full Algorithm" --distpath packaging\dist --workpath packaging\build --specpath packaging\spec espi_app\main.py
+          pyinstaller --onefile --windowed --name ESPI --icon "${{ github.workspace }}\packaging\assets\logo.ico" --paths "ESPI Full Algorithm" --distpath packaging\dist --workpath packaging\build --specpath packaging\spec espi_app\main.py
 
       - name: Upload ESPI.exe
         uses: actions/upload-artifact@v4

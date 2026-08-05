@@ -52,6 +52,46 @@ Both modes are documented in full detail, with more screenshots (including the S
 
 If you would rather type answers into a terminal than click through a window, `run_experiment.py` (a full sweep) and `monitor.py` (just the live preview) run the exact same underlying logic with typed questions instead of a GUI. Both live in `ESPI Full Algorithm/` and are covered in [ESPI Full Algorithm/README.md](ESPI%20Full%20Algorithm/README.md). Most people should start with the main window above instead.
 
+## Download the app (recommended: no Python install needed)
+
+For most people, the easiest way to use this software is to download the
+ready-made app instead of setting up Python at all. One file, no
+`pip install`, nothing to build.
+
+| Platform | Download |
+| -------- | -------- |
+| Mac | [ESPI-mac.zip](https://github.com/Patrick948-stack/espi-plate-vibration/releases/latest/download/ESPI-mac.zip) |
+| Windows | [ESPI.exe](https://github.com/Patrick948-stack/espi-plate-vibration/releases/latest/download/ESPI.exe) |
+
+Both links always point to the newest published version. See every past
+version on the [Releases page](https://github.com/Patrick948-stack/espi-plate-vibration/releases).
+
+**Mac:** double-click the downloaded zip to unzip it, producing
+`ESPI.app`. The first time you open it, macOS will refuse with a message
+like "cannot be opened because the developer cannot be verified" — this
+is expected, since there is no paid Apple Developer certificate behind
+this app. Instead of double-clicking again, right-click (or
+Control-click) `ESPI.app`, choose **Open**, then click **Open** again in
+the dialog that appears. You only need to do this once.
+
+**Windows:** double-click the downloaded `ESPI.exe`. Windows will likely
+show a blue "Windows protected your PC" warning, for the same reason as
+the Mac warning above: no paid code-signing certificate, not a sign
+anything is wrong. Click **More info**, then **Run anyway**. You only
+need to do this once.
+
+One thing stays true no matter which platform you're on: the camera
+still needs its own manufacturer driver software installed separately
+(Basler pylon Software Suite, or Allied Vision Vimba X), since that
+installs real hardware drivers that cannot be bundled into a single app
+file. See `packaging/INSTALL.md` in the project source for the complete
+walkthrough, including exactly which Vimba X SDK version to install for
+Allied Vision cameras (the version matters, and differs between Mac and
+Windows).
+
+If you'd rather run from source instead (for development, or to
+customize the code), keep reading below.
+
 ## Three supported cameras
 
 | Camera                       | What you need to install                                 |
@@ -63,6 +103,8 @@ If you would rather type answers into a terminal than click through a window, `r
 You only need one camera. The program detects which one you chose and handles everything else.
 
 ## Getting Started
+
+This is the from-source path: installing Python, cloning the code, and running it directly. If you just want to use the app and downloaded it from the section above, you don't need any of this.
 
 This section walks you through everything, from an empty computer to the app's main window on screen. No programming experience is assumed. Follow the stages in order; each one has a check so you know it worked before moving on to the next.
 
